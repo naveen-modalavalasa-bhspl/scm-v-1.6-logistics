@@ -16,7 +16,7 @@ from app.models.audit import StockAudit, StockAuditItem, BinReplenishmentRule
 from app.models.approval import ApprovalWorkflow, ApprovalLevel, ApprovalRequest, ApprovalHistory, ApprovalDelegation
 from app.models.rules import BusinessRule, BusinessRuleExecution
 from app.models.accounts import ChartOfAccounts, Invoice, InvoiceItem, Payment, CreditNote, JournalEntry, JournalEntryLine, AccountLedger, AccountMapping, FiscalYear
-from app.models.asset import AssetCategory, Asset, AssetMovement
+from app.models.asset import AssetCategory, Asset, AssetMovement, AssetSpareMapping
 from app.models.system import Notification, ActivityLog, EmailLog, FileAttachment, SystemSetting, NumberSeries
 from app.models.healthcare import BatchRecall, BatchRecallTrace, RateContract, RateContractItem, VendorScorecard, ItemKit, ItemKitComponent, DepartmentBudget, LandedCost, LandedCostAllocation, DemandForecast, CarrierTracking
 from app.models.compliance import PrescriptionRecord, ColdChainLog, ESignature, ComplianceAudit

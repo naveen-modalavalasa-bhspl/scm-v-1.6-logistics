@@ -166,6 +166,7 @@ const AssetRegister = lazy(() => import('./pages/assets/AssetRegister'));
 const AssetForm = lazy(() => import('./pages/assets/AssetForm'));
 const AssetMovement = lazy(() => import('./pages/assets/AssetMovement'));
 const AssetMovementForm = lazy(() => import('./pages/assets/AssetMovementForm'));
+const AssetSpareMapping = lazy(() => import('./pages/assets/AssetSpareMapping'));
 
 /* Reports */
 const ReportsDashboard = lazy(() => import('./pages/reports/ReportsDashboard'));
@@ -552,6 +553,7 @@ const App = () => {
             <Route path="/assets/movement" element={<PermissionRoute module="assets"><AssetMovement /></PermissionRoute>} />
             <Route path="/assets/movement/new" element={<PermissionRoute module="assets"><AssetMovementForm /></PermissionRoute>} />
             <Route path="/assets/movement/:id" element={<PermissionRoute module="assets"><AssetMovementForm /></PermissionRoute>} />
+            <Route path="/assets/spare-mapping" element={<PermissionRoute module="assets"><AssetSpareMapping /></PermissionRoute>} />
 
             {/* Healthcare SCM — guarded by 'healthcare' permission */}
             <Route path="/healthcare" element={<PermissionRoute module="healthcare"><Healthcare /></PermissionRoute>} />

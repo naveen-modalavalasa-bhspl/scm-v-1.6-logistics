@@ -53,7 +53,7 @@ _ALL_KEYS: Set[str] = {
     'accounts',
     'accounts-invoices', 'accounts-payments', 'accounts-ledger',
     'accounts-credit-notes',
-    'assets', 'assets-register', 'assets-movement',
+    'assets', 'assets-register', 'assets-movement', 'assets-spare-mapping',
     'healthcare', 'healthcare-dashboard',
     'reports',
     'reports-inventory', 'reports-procurement', 'reports-consumption',

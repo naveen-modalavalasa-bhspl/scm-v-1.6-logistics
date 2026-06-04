@@ -144,6 +144,7 @@ export const MODULE_NAVS = {
     tabs: [
       { label: 'Asset Register', path: '/assets/register' },
       { label: 'Asset Movement', path: '/assets/movement' },
+      { label: 'Asset - Spare Mapping', path: '/assets/spare-mapping' },
     ],
   },
   reports: {

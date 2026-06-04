@@ -3,17 +3,210 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, field_validator
 from typing import Optional
 from decimal import Decimal
-from sqlalchemy import select, func
+from sqlalchemy import select, func, delete, or_, and_
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload, aliased
 from app.database import get_db
 from app.models.user import User
-from app.models.asset import AssetCategory, Asset, AssetMovement
+from app.models.asset import AssetCategory, Asset, AssetMovement, AssetSpareMapping
+from app.models.master import Item, ItemCategory
 from app.services.number_series import generate_number
 from app.utils.dependencies import get_current_user
 from app.utils.helpers import paginate_params, build_paginated_response, apply_search_filter
 
+
+class AssetSpareBulkMapCreate(BaseModel):
+    asset_ids: list[int]
+    spare_ids: list[int]
+    replace_existing: bool = False
+
 router = APIRouter()
+
+
+@router.get("/spare-mapping/tree")
+async def get_asset_spare_mapping_tree(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    # Fetch active item categories
+    item_cat_result = await db.execute(
+        select(ItemCategory.id, ItemCategory.parent_id, ItemCategory.code, ItemCategory.full_code, ItemCategory.name)
+        .where(ItemCategory.is_active == True)
+        .order_by(ItemCategory.full_code, ItemCategory.name)
+    )
+    categories = item_cat_result.all()
+
+    # Fetch active asset items (item_type == "asset")
+    assets_result = await db.execute(
+        select(Item.id, Item.item_code, Item.name, Item.category_id)
+        .where(Item.item_type == "asset", Item.is_active == True)
+        .order_by(Item.item_code)
+    )
+    assets = assets_result.all()
+
+    # Fetch active spare items (item_type == "spare")
+    spares_result = await db.execute(
+        select(Item.id, Item.item_code, Item.name, Item.category_id)
+        .where(Item.item_type == "spare", Item.is_active == True)
+        .order_by(Item.item_code)
+    )
+    spares = spares_result.all()
+
+    # Fetch existing mappings
+    existing_result = await db.execute(
+        select(AssetSpareMapping.asset_id, AssetSpareMapping.spare_id)
+    )
+    existing = existing_result.all()
+
+    return {
+        "assets": [{"id": a.id, "item_code": a.item_code, "name": a.name, "category_id": a.category_id} for a in assets],
+        "spares": [{"id": s.id, "item_code": s.item_code, "name": s.name, "category_id": s.category_id} for s in spares],
+        "categories": [
+            {"id": c.id, "parent_id": c.parent_id, "code": c.code, "full_code": c.full_code, "name": c.name}
+            for c in categories
+        ],
+        "existing": [{"asset_id": e[0], "spare_id": e[1]} for e in existing]
+    }
+
+
+@router.get("/spare-mappings")
+async def list_asset_spare_mappings(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(200, ge=1, le=1000),
+    search: str = Query(None),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    offset, limit = paginate_params(page, page_size)
+    
+    asset_alias = aliased(Item)
+    spare_alias = aliased(Item)
+    
+    q = (
+        select(
+            AssetSpareMapping.id,
+            AssetSpareMapping.created_at,
+            asset_alias.id.label("asset_id"),
+            asset_alias.item_code.label("asset_code"),
+            asset_alias.name.label("asset_name"),
+            spare_alias.id.label("spare_id"),
+            spare_alias.item_code.label("spare_code"),
+            spare_alias.name.label("spare_name")
+        )
+        .join(asset_alias, AssetSpareMapping.asset_id == asset_alias.id)
+        .join(spare_alias, AssetSpareMapping.spare_id == spare_alias.id)
+    )
+    count_q = (
+        select(func.count(AssetSpareMapping.id))
+        .join(asset_alias, AssetSpareMapping.asset_id == asset_alias.id)
+        .join(spare_alias, AssetSpareMapping.spare_id == spare_alias.id)
+    )
+    
+    if search:
+        like = f"%{search}%"
+        condition = or_(
+            asset_alias.name.ilike(like),
+            asset_alias.item_code.ilike(like),
+            spare_alias.name.ilike(like),
+            spare_alias.item_code.ilike(like)
+        )
+        q = q.where(condition)
+        count_q = count_q.where(condition)
+        
+    total = (await db.execute(count_q)).scalar() or 0
+    rows = (await db.execute(q.order_by(AssetSpareMapping.created_at.desc(), AssetSpareMapping.id.desc()).offset(offset).limit(limit))).all()
+    
+    items = []
+    for r in rows:
+        items.append({
+            "id": r.id,
+            "created_at": r.created_at,
+            "asset_id": r.asset_id,
+            "asset_code": r.asset_code,
+            "asset_name": r.asset_name,
+            "spare_id": r.spare_id,
+            "spare_code": r.spare_code,
+            "spare_name": r.spare_name
+        })
+        
+    return build_paginated_response(items, total, page, page_size)
+
+
+@router.post("/spare-mappings/bulk", status_code=201)
+async def bulk_map_asset_spares(
+    payload: AssetSpareBulkMapCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    asset_ids = payload.asset_ids
+    spare_ids = payload.spare_ids
+    
+    if not asset_ids or not spare_ids:
+        raise HTTPException(status_code=422, detail="Select at least one asset and one spare")
+        
+    # Verify active asset items
+    valid_assets_res = await db.execute(
+        select(Item.id).where(Item.id.in_(asset_ids), Item.item_type == "asset", Item.is_active == True)
+    )
+    valid_assets = set(valid_assets_res.scalars().all())
+    
+    # Verify active spare items
+    valid_spares_res = await db.execute(
+        select(Item.id).where(Item.id.in_(spare_ids), Item.item_type == "spare", Item.is_active == True)
+    )
+    valid_spares = set(valid_spares_res.scalars().all())
+    
+    missing_assets = [aid for aid in asset_ids if aid not in valid_assets]
+    missing_spares = [sid for sid in spare_ids if sid not in valid_spares]
+    
+    if missing_assets or missing_spares:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": "Only active asset items and valid active spare items can be mapped",
+                "missing_asset_ids": missing_assets,
+                "missing_spare_ids": missing_spares
+            }
+        )
+        
+    if payload.replace_existing:
+        await db.execute(
+            delete(AssetSpareMapping).where(AssetSpareMapping.asset_id.in_(asset_ids))
+        )
+        
+    # Fetch current mappings to prevent duplicate insertions
+    existing_rows = (await db.execute(
+        select(AssetSpareMapping.asset_id, AssetSpareMapping.spare_id)
+        .where(AssetSpareMapping.asset_id.in_(asset_ids))
+    )).all()
+    existing = {(r[0], r[1]) for r in existing_rows}
+    
+    created = 0
+    for asset_id in asset_ids:
+        for spare_id in spare_ids:
+            if (asset_id, spare_id) not in existing:
+                mapping = AssetSpareMapping(asset_id=asset_id, spare_id=spare_id)
+                db.add(mapping)
+                created += 1
+                
+    await db.flush()
+    return {"success": True, "message": f"Successfully mapped {created} asset-spare relationship(s)"}
+
+
+@router.delete("/spare-mappings/{mapping_id}")
+async def delete_asset_spare_mapping(
+    mapping_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    result = await db.execute(select(AssetSpareMapping).where(AssetSpareMapping.id == mapping_id))
+    mapping = result.scalar_one_or_none()
+    if not mapping:
+        raise HTTPException(status_code=404, detail="Mapping not found")
+    await db.delete(mapping)
+    await db.flush()
+    return {"success": True, "message": "Asset-spare mapping deleted"}
+
 
 
 class AssetCategoryCreate(BaseModel):
@@ -645,3 +838,6 @@ async def list_asset_movements(
         "movement_date": m.movement_date, "reason": m.reason,
         "created_by": m.created_by, "created_at": m.created_at,
     } for m in movements]
+
+
+

@@ -328,6 +328,7 @@ export const MENU_CONFIG = [
     children: [
       { key: 'assets-register', label: 'Asset Register', path: '/assets/register' },
       { key: 'assets-movement', label: 'Asset Movement', path: '/assets/movement' },
+      { key: 'assets-spare-mapping', label: 'Asset - Spare Mapping', path: '/assets/spare-mapping' },
     ],
   },
   {
