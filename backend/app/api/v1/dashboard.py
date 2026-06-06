@@ -180,7 +180,7 @@ async def get_dashboard_alerts(
     overdue_po_q = (
         select(PurchaseOrder.id, PurchaseOrder.po_number, PurchaseOrder.expected_delivery_date)
         .where(
-            PurchaseOrder.status.in_(["approved", "partially_received"]),
+            PurchaseOrder.status.in_(["approved", "accepted", "partially_received"]),
             PurchaseOrder.expected_delivery_date < date.today(),
         )
         .order_by(PurchaseOrder.expected_delivery_date.asc())
@@ -195,7 +195,7 @@ async def get_dashboard_alerts(
     overdue_po_count_q = (
         select(func.count(PurchaseOrder.id))
         .where(
-            PurchaseOrder.status.in_(["approved", "partially_received"]),
+            PurchaseOrder.status.in_(["approved", "accepted", "partially_received"]),
             PurchaseOrder.expected_delivery_date < date.today(),
         )
     )
@@ -289,11 +289,11 @@ async def get_procurement_summary(
     if await _is_field_only(db, current_user.id):
         return {
             "material_requests": {"draft": 0, "pending_approval": 0, "approved": 0, "ordered": 0},
-            "purchase_orders": {"draft": 0, "pending_approval": 0, "approved": 0, "partially_received": 0},
+            "purchase_orders": {"draft": 0, "pending_approval": 0, "approved": 0, "accepted": 0, "rejected": 0, "partially_received": 0},
             "grns": {"draft": 0, "pending_qi": 0, "putaway_pending": 0},
         }
     mr_statuses = ["draft", "pending_approval", "approved", "ordered"]
-    po_statuses = ["draft", "pending_approval", "approved", "partially_received"]
+    po_statuses = ["draft", "pending_approval", "approved", "accepted", "rejected", "partially_received"]
     grn_statuses = ["draft", "pending_qi", "putaway_pending"]
 
     mr_rows = (await db.execute(

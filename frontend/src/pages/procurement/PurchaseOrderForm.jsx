@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   Button, Card, Descriptions, Tabs, Table, Spin, Space, message,
   Tag, Empty, Typography, Divider, Progress, Popconfirm, Steps, Timeline,
-  Row, Col,
+  Row, Col, Tooltip, Select,
 } from 'antd';
 import {
   ArrowLeftOutlined, PrinterOutlined, CheckOutlined,
@@ -11,6 +11,7 @@ import {
   CarryOutOutlined, AuditOutlined, CheckCircleOutlined, PaperClipOutlined,
 } from '@ant-design/icons';
 import { useParams, useNavigate } from 'react-router-dom';
+import dayjs from 'dayjs';
 import { useReactToPrint } from 'react-to-print';
 import PageHeader from '../../components/PageHeader';
 import { PurchaseOrderPrint } from '../../components/PrintTemplates';
@@ -27,6 +28,7 @@ const PO_STATUS_STEPS = [
   { key: 'draft', title: 'Draft', icon: <AuditOutlined /> },
   { key: 'pending_approval', title: 'Pending Approval', icon: <SendOutlined /> },
   { key: 'approved', title: 'Approved', icon: <CheckOutlined /> },
+  { key: 'accepted', title: 'Accepted by Supplier', icon: <CheckCircleOutlined /> },
   { key: 'partially_received', title: 'Partially Received', icon: <InboxOutlined /> },
   { key: 'received', title: 'Received', icon: <CarryOutOutlined /> },
   { key: 'closed', title: 'Closed', icon: <CheckCircleOutlined /> },
@@ -49,6 +51,27 @@ const PurchaseOrderForm = () => {
 
   // Action states
   const [actionLoading, setActionLoading] = useState(false);
+
+  const isAmendLocked = (() => {
+    if (!po?.supplier_delivery_date) return false;
+    const now = dayjs();
+    const deliveryDate = dayjs(po.supplier_delivery_date);
+    return now.isAfter(deliveryDate.subtract(2, 'day'));
+  })();
+
+  const handleAmendPO = async () => {
+    setActionLoading(true);
+    try {
+      const res = await api.post(`/procurement/purchase-orders/${id}/amend`);
+      const newId = res.data?.id;
+      message.success(res.data?.message || 'PO Amendment created successfully');
+      navigate(`/procurement/purchase-orders?edit_id=${newId}`);
+    } catch (err) {
+      message.error(getErrorMessage(err));
+    } finally {
+      setActionLoading(false);
+    }
+  };
 
   const handlePrint = useReactToPrint({
     content: () => printRef.current,
@@ -241,15 +264,29 @@ const PurchaseOrderForm = () => {
               </Button>
             </Popconfirm>
           )}
-          {['approved', 'partially_received'].includes(po.status) && (
+          {['approved', 'accepted', 'partially_received'].includes(po.status) && (
             <Button type="primary" icon={<PlusOutlined />} onClick={handleCreateGRN}>
               Create GRN
             </Button>
           )}
-          {['approved', 'partially_received', 'received'].includes(po.status) && (
+          {['approved', 'accepted', 'partially_received', 'received'].includes(po.status) && (
             <Button icon={<DollarOutlined />} onClick={handleCreateInvoice}>
               Create Invoice
             </Button>
+          )}
+          {['approved', 'accepted', 'rejected'].includes(po.status) && (
+            <Tooltip title={isAmendLocked ? "Cannot amend: amendments are locked within 2 days of supplier delivery date" : "Amend this PO to create a new version"}>
+              <Button
+                type="default"
+                danger
+                icon={<PlusOutlined />}
+                disabled={isAmendLocked}
+                onClick={handleAmendPO}
+                loading={actionLoading}
+              >
+                Amend PO
+              </Button>
+            </Tooltip>
           )}
           {!['closed', 'cancelled', 'received'].includes(po.status) && (
             <Popconfirm
@@ -273,7 +310,11 @@ const PurchaseOrderForm = () => {
 
       {/* Status Timeline */}
       <Card style={{ marginBottom: 16 }}>
-        {isCancelled ? (
+        {po.status === 'rejected' ? (
+          <div style={{ textAlign: 'center', padding: '8px 0' }}>
+            <Tag color="red" style={{ fontSize: 14, padding: '4px 16px' }}>This Purchase Order has been Rejected by the Supplier</Tag>
+          </div>
+        ) : isCancelled ? (
           <div style={{ textAlign: 'center', padding: '8px 0' }}>
             <Tag color="red" style={{ fontSize: 14, padding: '4px 16px' }}>This Purchase Order has been Cancelled</Tag>
           </div>
@@ -295,7 +336,23 @@ const PurchaseOrderForm = () => {
         <Row gutter={24}>
           <Col xs={24} lg={16}>
             <Descriptions bordered size="small" column={{ xs: 1, sm: 2, md: 3 }}>
-              <Descriptions.Item label="PO Number"><Text strong>{po.po_number}</Text></Descriptions.Item>
+              <Descriptions.Item label="PO Number">
+                <Space>
+                  <Text strong>{po.po_number}</Text>
+                  {po.versions && po.versions.length > 1 && (
+                    <Select
+                      value={po.id}
+                      style={{ width: 140 }}
+                      onChange={(val) => navigate(`/procurement/purchase-orders/${val}`)}
+                      options={po.versions.map((v) => ({
+                        label: `V${v.version_number} (${v.status.replace(/_/g, ' ')})`,
+                        value: v.id,
+                      }))}
+                      size="small"
+                    />
+                  )}
+                </Space>
+              </Descriptions.Item>
               <Descriptions.Item label="PO Date">{formatDate(po.po_date)}</Descriptions.Item>
               <Descriptions.Item label="Status"><StatusTag status={po.status} /></Descriptions.Item>
               <Descriptions.Item label="Vendor" span={2}>
@@ -303,6 +360,9 @@ const PurchaseOrderForm = () => {
                 {po.vendor_code && <Text type="secondary"> ({po.vendor_code})</Text>}
               </Descriptions.Item>
               <Descriptions.Item label="Expected Delivery">{formatDate(po.expected_delivery_date)}</Descriptions.Item>
+              <Descriptions.Item label="Supplier Delivery Date">
+                {po.supplier_delivery_date ? formatDate(po.supplier_delivery_date) : 'Not confirmed'}
+              </Descriptions.Item>
               <Descriptions.Item label="MR Reference">{po.mr_number || po.mr_reference || '-'}</Descriptions.Item>
               <Descriptions.Item label="Quotation Ref">{po.quotation_number || po.quotation_reference || '-'}</Descriptions.Item>
               <Descriptions.Item label="Project">{po.project_name || po.project || '-'}</Descriptions.Item>
@@ -394,158 +454,252 @@ const PurchaseOrderForm = () => {
                 <span><FileDoneOutlined /> Items ({poItems.length})</span>
               ),
               children: (
-                <Table
-                  dataSource={poItems}
-                  rowKey={(r) => r.id || r.item_id}
-                  size="small"
-                  pagination={false}
-                  scroll={{ x: 'max-content' }}
-                  columns={[
-                    { title: '#', width: 40, render: (_, __, idx) => idx + 1 },
-                    {
-                      title: 'Item Code',
-                      dataIndex: 'item_code',
-                      key: 'code',
-                      width: 120,
-                      render: (v, r) => v || (r.item && r.item.item_code) || '-',
-                    },
-                    {
-                      title: 'Item Name',
-                      dataIndex: 'item_name',
-                      key: 'name',
-                      width: 220,
-                      render: (v, r) => v || (r.item && (r.item.item_name || r.item.name)) || '-',
-                    },
-                    {
-                      title: 'UOM',
-                      dataIndex: 'uom',
-                      key: 'uom',
-                      width: 70,
-                      render: (v, r) => v || r.unit || '-',
-                    },
-                    {
-                      title: 'Ordered Qty',
-                      dataIndex: 'qty',
-                      key: 'qty',
-                      width: 100,
-                      align: 'right',
-                      render: (v, r) => v || r.quantity || 0,
-                    },
-                    {
-                      title: 'Received Qty',
-                      dataIndex: 'received_qty',
-                      key: 'received',
-                      width: 120,
-                      align: 'right',
-                      render: (receivedQty, record) => {
-                        const ordered = record.qty || record.quantity || 0;
-                        const received = receivedQty || 0;
-                        const pct = ordered > 0 ? Math.round((received / ordered) * 100) : 0;
-                        return (
-                          <div>
-                            <Text>{received} / {ordered}</Text>
-                            <Progress
-                              percent={pct}
-                              size="small"
-                              status={pct >= 100 ? 'success' : 'active'}
-                              showInfo={false}
-                              strokeColor={pct >= 100 ? '#52c41a' : '#eb2f96'}
-                            />
-                          </div>
-                        );
+                <div>
+                  <Table
+                    dataSource={poItems}
+                    rowKey={(r) => r.id || r.item_id}
+                    size="small"
+                    pagination={false}
+                    scroll={{ x: 'max-content' }}
+                    columns={[
+                      { title: '#', width: 40, render: (_, __, idx) => idx + 1 },
+                      {
+                        title: 'Item Code',
+                        dataIndex: 'item_code',
+                        key: 'code',
+                        width: 120,
+                        render: (v, r) => v || (r.item && r.item.item_code) || '-',
                       },
-                    },
-                    {
-                      title: 'Rate',
-                      dataIndex: 'rate',
-                      key: 'rate',
-                      width: 100,
-                      align: 'right',
-                      render: (v, r) => formatCurrency(v || r.unit_price),
-                    },
-                    {
-                      title: 'Disc%',
-                      dataIndex: 'discount_percent',
-                      key: 'disc',
-                      width: 70,
-                      align: 'right',
-                      render: (v, r) => `${v || r.discount_pct || 0}%`,
-                    },
-                    {
-                      title: 'CGST%',
-                      dataIndex: 'cgst_percent',
-                      key: 'cgst',
-                      width: 70,
-                      align: 'right',
-                      render: (v, r) => `${v || r.cgst_rate || 0}%`,
-                    },
-                    {
-                      title: 'SGST%',
-                      dataIndex: 'sgst_percent',
-                      key: 'sgst',
-                      width: 70,
-                      align: 'right',
-                      render: (v, r) => `${v || r.sgst_rate || 0}%`,
-                    },
-                    {
-                      title: 'IGST%',
-                      dataIndex: 'igst_percent',
-                      key: 'igst',
-                      width: 70,
-                      align: 'right',
-                      render: (v, r) => `${v || r.igst_rate || 0}%`,
-                    },
-                    {
-                      title: 'Tax Amount',
-                      dataIndex: 'tax_amount',
-                      key: 'tax_amt',
-                      width: 100,
-                      align: 'right',
-                      render: (v) => formatCurrency(v),
-                    },
-                    {
-                      title: 'Amount',
-                      dataIndex: 'amount',
-                      key: 'amount',
-                      width: 120,
-                      align: 'right',
-                      render: (v, r) => <Text strong>{formatCurrency(v || r.total)}</Text>,
-                    },
-                  ]}
-                  summary={(pageData) => {
-                    let itemsTotal = 0;
-                    pageData.forEach((r) => {
-                      itemsTotal += parseFloat(r.amount || r.total || 0);
-                    });
-                    
-                    let vCost = 0;
-                    if (po.remarks) {
-                      const match = po.remarks.match(/Includes vehicle cost:\s*(\d+(\.\d+)?)/);
-                      if (match) vCost = parseFloat(match[1]);
-                    }
+                      {
+                        title: 'Item Name',
+                        dataIndex: 'item_name',
+                        key: 'name',
+                        width: 220,
+                        render: (v, r) => {
+                          const name = v || (r.item && (r.item.item_name || r.item.name)) || '-';
+                          const isNew = po.comparison && po.comparison.added_item_ids && po.comparison.added_item_ids.includes(r.item_id);
+                          return (
+                            <Space>
+                              <span>{name}</span>
+                              {isNew && <Tag color="green" style={{ fontWeight: 600 }}>NEW</Tag>}
+                            </Space>
+                          );
+                        },
+                      },
+                      {
+                        title: 'UOM',
+                        dataIndex: 'uom',
+                        key: 'uom',
+                        width: 70,
+                        render: (v, r) => v || r.unit || '-',
+                      },
+                      {
+                        title: 'Ordered Qty',
+                        dataIndex: 'qty',
+                        key: 'qty',
+                        width: 100,
+                        align: 'right',
+                        render: (v, r) => {
+                          const qty = v || r.quantity || 0;
+                          const mod = po.comparison && po.comparison.modified_items && po.comparison.modified_items[String(r.item_id)];
+                          if (mod && mod.old_qty !== qty) {
+                            return (
+                              <span style={{ color: '#fa8c16', fontWeight: 600 }}>
+                                {qty} <span style={{ fontSize: '11px', textDecoration: 'line-through', opacity: 0.7, color: '#8c8c8c' }}>(was {mod.old_qty})</span>
+                              </span>
+                            );
+                          }
+                          return qty;
+                        },
+                      },
+                      {
+                        title: 'Received Qty',
+                        dataIndex: 'received_qty',
+                        key: 'received',
+                        width: 120,
+                        align: 'right',
+                        render: (receivedQty, record) => {
+                          const ordered = record.qty || record.quantity || 0;
+                          const received = receivedQty || 0;
+                          const pct = ordered > 0 ? Math.round((received / ordered) * 100) : 0;
+                          return (
+                            <div>
+                              <Text>{received} / {ordered}</Text>
+                              <Progress
+                                percent={pct}
+                                size="small"
+                                status={pct >= 100 ? 'success' : 'active'}
+                                showInfo={false}
+                                strokeColor={pct >= 100 ? '#52c41a' : '#eb2f96'}
+                              />
+                            </div>
+                          );
+                        },
+                      },
+                      {
+                        title: 'Rate',
+                        dataIndex: 'rate',
+                        key: 'rate',
+                        width: 100,
+                        align: 'right',
+                        render: (v, r) => {
+                          const rate = v || r.unit_price || 0;
+                          const mod = po.comparison && po.comparison.modified_items && po.comparison.modified_items[String(r.item_id)];
+                          if (mod && mod.old_rate !== rate) {
+                            return (
+                              <span style={{ color: '#fa8c16', fontWeight: 600 }}>
+                                {formatCurrency(rate)} <span style={{ fontSize: '11px', textDecoration: 'line-through', opacity: 0.7, color: '#8c8c8c' }}>(was {formatCurrency(mod.old_rate)})</span>
+                              </span>
+                            );
+                          }
+                          return formatCurrency(rate);
+                        },
+                      },
+                      {
+                        title: 'Disc%',
+                        dataIndex: 'discount_percent',
+                        key: 'disc',
+                        width: 70,
+                        align: 'right',
+                        render: (v, r) => `${v || r.discount_pct || 0}%`,
+                      },
+                      {
+                        title: 'CGST%',
+                        dataIndex: 'cgst_percent',
+                        key: 'cgst',
+                        width: 70,
+                        align: 'right',
+                        render: (v, r) => `${v || r.cgst_rate || 0}%`,
+                      },
+                      {
+                        title: 'SGST%',
+                        dataIndex: 'sgst_percent',
+                        key: 'sgst',
+                        width: 70,
+                        align: 'right',
+                        render: (v, r) => `${v || r.sgst_rate || 0}%`,
+                      },
+                      {
+                        title: 'IGST%',
+                        dataIndex: 'igst_percent',
+                        key: 'igst',
+                        width: 70,
+                        align: 'right',
+                        render: (v, r) => `${v || r.igst_rate || 0}%`,
+                      },
+                      {
+                        title: 'Tax Amount',
+                        dataIndex: 'tax_amount',
+                        key: 'tax_amt',
+                        width: 100,
+                        align: 'right',
+                        render: (v) => formatCurrency(v),
+                      },
+                      {
+                        title: 'Amount',
+                        dataIndex: 'amount',
+                        key: 'amount',
+                        width: 120,
+                        align: 'right',
+                        render: (v, r) => <Text strong>{formatCurrency(v || r.total)}</Text>,
+                      },
+                    ]}
+                    summary={(pageData) => {
+                      let itemsTotal = 0;
+                      pageData.forEach((r) => {
+                        itemsTotal += parseFloat(r.amount || r.total || 0);
+                      });
+                      
+                      let vCost = 0;
+                      if (po.remarks) {
+                        const match = po.remarks.match(/Includes vehicle cost:\s*(\d+(\.\d+)?)/);
+                        if (match) vCost = parseFloat(match[1]);
+                      }
 
-                    return (
-                      <Table.Summary>
-                        {vCost > 0 && (
-                          <>
-                            <Table.Summary.Row>
-                              <Table.Summary.Cell colSpan={12} align="right"><Text type="secondary">Items Subtotal:</Text></Table.Summary.Cell>
-                              <Table.Summary.Cell align="right"><Text type="secondary">{formatCurrency(itemsTotal)}</Text></Table.Summary.Cell>
-                            </Table.Summary.Row>
-                            <Table.Summary.Row>
-                              <Table.Summary.Cell colSpan={12} align="right"><Text type="secondary">Vehicle / Logistics Cost:</Text></Table.Summary.Cell>
-                              <Table.Summary.Cell align="right"><Text type="secondary">+{formatCurrency(vCost)}</Text></Table.Summary.Cell>
-                            </Table.Summary.Row>
-                          </>
-                        )}
-                        <Table.Summary.Row>
-                          <Table.Summary.Cell colSpan={12} align="right"><Text strong>Grand Total:</Text></Table.Summary.Cell>
-                          <Table.Summary.Cell align="right"><Text strong style={{ color: '#eb2f96' }}>{formatCurrency(po.grand_total)}</Text></Table.Summary.Cell>
-                        </Table.Summary.Row>
-                      </Table.Summary>
-                    );
-                  }}
-                />
+                      return (
+                        <Table.Summary>
+                          {vCost > 0 && (
+                            <>
+                              <Table.Summary.Row>
+                                <Table.Summary.Cell colSpan={12} align="right"><Text type="secondary">Items Subtotal:</Text></Table.Summary.Cell>
+                                <Table.Summary.Cell align="right"><Text type="secondary">{formatCurrency(itemsTotal)}</Text></Table.Summary.Cell>
+                              </Table.Summary.Row>
+                              <Table.Summary.Row>
+                                <Table.Summary.Cell colSpan={12} align="right"><Text type="secondary">Vehicle / Logistics Cost:</Text></Table.Summary.Cell>
+                                <Table.Summary.Cell align="right"><Text type="secondary">+{formatCurrency(vCost)}</Text></Table.Summary.Cell>
+                              </Table.Summary.Row>
+                            </>
+                          )}
+                          <Table.Summary.Row>
+                            <Table.Summary.Cell colSpan={12} align="right"><Text strong>Grand Total:</Text></Table.Summary.Cell>
+                            <Table.Summary.Cell align="right"><Text strong style={{ color: '#eb2f96' }}>{formatCurrency(po.grand_total)}</Text></Table.Summary.Cell>
+                          </Table.Summary.Row>
+                        </Table.Summary>
+                      );
+                    }}
+                  />
+                  {po.comparison && po.comparison.removed_items && po.comparison.removed_items.length > 0 && (
+                    <div style={{ marginTop: 24 }}>
+                      <Divider orientation="left" plain>
+                        <span style={{ color: '#ff4d4f', fontWeight: 600 }}>Removed Items (Compared to V{po.comparison.parent_version})</span>
+                      </Divider>
+                      <Table
+                        dataSource={po.comparison.removed_items}
+                        rowKey="item_id"
+                        size="small"
+                        pagination={false}
+                        scroll={{ x: 'max-content' }}
+                        columns={[
+                          { title: '#', width: 40, render: (_, __, idx) => idx + 1 },
+                          {
+                            title: <span style={{ color: '#ff4d4f' }}>Item Code</span>,
+                            dataIndex: 'item_code',
+                            key: 'code',
+                            width: 120,
+                            render: (v) => <span style={{ textDecoration: 'line-through', color: '#ff4d4f', opacity: 0.8 }}>{v || '-'}</span>,
+                          },
+                          {
+                            title: <span style={{ color: '#ff4d4f' }}>Item Name</span>,
+                            dataIndex: 'item_name',
+                            key: 'name',
+                            width: 220,
+                            render: (v) => <span style={{ textDecoration: 'line-through', color: '#ff4d4f', opacity: 0.8 }}>{v || '-'}</span>,
+                          },
+                          {
+                            title: <span style={{ color: '#ff4d4f' }}>UOM</span>,
+                            dataIndex: 'uom_name',
+                            key: 'uom',
+                            width: 70,
+                            render: (v) => <span style={{ textDecoration: 'line-through', color: '#ff4d4f', opacity: 0.8 }}>{v || '-'}</span>,
+                          },
+                          {
+                            title: <span style={{ color: '#ff4d4f' }}>Qty (Removed)</span>,
+                            dataIndex: 'qty',
+                            key: 'qty',
+                            width: 100,
+                            align: 'right',
+                            render: (v) => <span style={{ textDecoration: 'line-through', color: '#ff4d4f', opacity: 0.8 }}>{v}</span>,
+                          },
+                          {
+                            title: <span style={{ color: '#ff4d4f' }}>Rate</span>,
+                            dataIndex: 'rate',
+                            key: 'rate',
+                            width: 100,
+                            align: 'right',
+                            render: (v) => <span style={{ textDecoration: 'line-through', color: '#ff4d4f', opacity: 0.8 }}>{formatCurrency(v)}</span>,
+                          },
+                          {
+                            title: <span style={{ color: '#ff4d4f' }}>Total</span>,
+                            key: 'total',
+                            width: 120,
+                            align: 'right',
+                            render: (_, r) => <span style={{ textDecoration: 'line-through', color: '#ff4d4f', opacity: 0.8 }}>{formatCurrency((r.qty || 0) * (r.rate || 0))}</span>,
+                          },
+                        ]}
+                      />
+                    </div>
+                  )}
+                </div>
               ),
             },
             {

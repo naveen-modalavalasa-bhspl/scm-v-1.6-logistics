@@ -53,7 +53,7 @@ async def compute_for_vendor(
             PurchaseOrder.vendor_id == vendor_id,
             PurchaseOrder.po_date >= period_start,
             PurchaseOrder.po_date <= period_end,
-            PurchaseOrder.status.in_(["approved", "partially_received", "received", "closed"]),
+            PurchaseOrder.status.in_(["approved", "accepted", "partially_received", "received", "closed"]),
         )
     )
     po_rows = pos_q.all()

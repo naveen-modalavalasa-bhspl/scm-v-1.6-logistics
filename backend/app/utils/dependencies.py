@@ -443,6 +443,38 @@ async def user_warehouse_ids(db: AsyncSession, user_id: int) -> List[int]:
     return [row[0] for row in result.all()]
 
 
+async def get_warehouse_and_descendants(db: AsyncSession, warehouse_ids: List[int]) -> List[int]:
+    """Retrieve the given warehouse IDs along with all their child/descendant warehouse IDs recursively."""
+    if not warehouse_ids:
+        return []
+    
+    from app.models.warehouse import Warehouse
+    # Load active parent-child relationships
+    result = await db.execute(
+        select(Warehouse.id, Warehouse.parent_id).where(Warehouse.is_active == True)
+    )
+    all_whs = result.all()
+    
+    parent_to_children = {}
+    for wh_id, parent_id in all_whs:
+        if parent_id is not None:
+            if parent_id not in parent_to_children:
+                parent_to_children[parent_id] = []
+            parent_to_children[parent_id].append(wh_id)
+            
+    descendants = set(warehouse_ids)
+    queue = list(warehouse_ids)
+    while queue:
+        curr = queue.pop(0)
+        children = parent_to_children.get(curr, [])
+        for child in children:
+            if child not in descendants:
+                descendants.add(child)
+                queue.append(child)
+                
+    return list(descendants)
+
+
 # =============================================================
 # Carrier portal authentication
 # =============================================================

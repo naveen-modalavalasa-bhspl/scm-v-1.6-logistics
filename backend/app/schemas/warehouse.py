@@ -316,7 +316,6 @@ class MaterialIssueCreate(BaseModel):
     issue_date: date
     department: Optional[str] = None
     issued_to: Optional[int] = None
-    cost_center: Optional[str] = None
     remarks: Optional[str] = None
     items: List[MaterialIssueItemCreate]
 
@@ -347,7 +346,6 @@ class MaterialIssueUpdate(BaseModel):
     issue_date: Optional[date] = None
     department: Optional[str] = None
     issued_to: Optional[int] = None
-    cost_center: Optional[str] = None
     remarks: Optional[str] = None
     items: Optional[List[MaterialIssueItemCreate]] = None
 
@@ -396,7 +394,6 @@ class MaterialIssueResponse(BaseModel):
     department: Optional[str] = None
     issued_to: Optional[int] = None
     issued_to_name: Optional[str] = None
-    cost_center: Optional[str] = None
     status: str
     remarks: Optional[str] = None
     issued_by: Optional[int] = None

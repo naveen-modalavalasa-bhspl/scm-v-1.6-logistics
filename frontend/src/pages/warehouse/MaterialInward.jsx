@@ -51,12 +51,20 @@ const MaterialInward = () => {
   const fetchActivePOs = async () => {
     setFetchingPoList(true);
     try {
+      // FIX-INWARD-001: include 'accepted' status (supplier-acknowledged POs)
+      // so the newest versions show up. The backend already filters is_current=True.
       const res = await api.get('/procurement/purchase-orders', {
-        params: { page_size: 500, status: 'approved,partially_received' }
+        params: { page_size: 500, status: 'approved,accepted,partially_received' }
       });
       const data = res.data;
       const list = data.items || data.data || (Array.isArray(data) ? data : []);
-      setPoList(list.map((po) => ({ label: po.po_number, value: po.po_number })));
+      // Store both label (po_number) and value (po_number) for the select dropdown.
+      // The fetch-po endpoint looks up by po_number.
+      setPoList(list.map((po) => ({
+        label: `${po.po_number}${po.supplier_acknowledgement === 'accepted' ? ' ✓' : ''}`,
+        value: po.po_number,
+        po_id: po.id,
+      })));
     } catch { /* silent */ }
     finally { setFetchingPoList(false); }
   };

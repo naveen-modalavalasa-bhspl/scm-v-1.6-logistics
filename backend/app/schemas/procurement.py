@@ -206,7 +206,7 @@ class QuotationResponse(BaseModel):
     id: int
     rfq_id: Optional[int] = None
     rfq_number: Optional[str] = None
-    quotation_number: str
+    quotation_number: Optional[str] = None
     mr_id: Optional[int] = None
     vendor_id: int
     quotation_date: datetime
@@ -284,11 +284,11 @@ class POItemCreate(BaseModel):
     item_id: int
     qty: Decimal
     uom_id: int
-    rate: Decimal
-    discount_pct: Decimal = Decimal("0")
-    cgst_rate: Decimal = Decimal("0")
-    sgst_rate: Decimal = Decimal("0")
-    igst_rate: Decimal = Decimal("0")
+    rate: Optional[Decimal] = None
+    discount_pct: Optional[Decimal] = Decimal("0")
+    cgst_rate: Optional[Decimal] = Decimal("0")
+    sgst_rate: Optional[Decimal] = Decimal("0")
+    igst_rate: Optional[Decimal] = Decimal("0")
 
     @field_validator("qty")
     @classmethod
@@ -372,6 +372,11 @@ class POUpdate(BaseModel):
     status: Optional[str] = None
     remarks: Optional[str] = None
     attachment_url: Optional[str] = None
+    billing_address: Optional[str] = None
+    shipping_address: Optional[str] = None
+    discount_type: Optional[str] = None
+    discount_value: Optional[Decimal] = None
+    items: Optional[List[POItemCreate]] = None
 
 class POItemResponse(BaseModel):
     id: int
@@ -383,7 +388,7 @@ class POItemResponse(BaseModel):
     returned_qty: Decimal
     uom_id: int
     uom_name: Optional[str] = None
-    rate: Decimal
+    rate: Optional[Decimal] = Decimal("0")
     discount_pct: Decimal
     cgst_rate: Decimal
     sgst_rate: Decimal
@@ -424,6 +429,13 @@ class POResponse(BaseModel):
     created_by: Optional[int] = None
     created_at: Optional[datetime] = None
     items: List[POItemResponse] = []
+    version_number: str
+    parent_po_id: Optional[int] = None
+    supplier_delivery_date: Optional[datetime] = None
+    is_current: bool
+    base_po_number: Optional[str] = None
+    versions: List[dict] = []
+    comparison: Optional[dict] = None
     model_config = {"from_attributes": True}
 
 class POListResponse(BaseModel):
@@ -439,4 +451,9 @@ class POListResponse(BaseModel):
     supplier_acknowledgement: Optional[str] = "pending"
     created_at: Optional[datetime] = None
     items: List[POItemResponse] = []
+    version_number: str
+    parent_po_id: Optional[int] = None
+    supplier_delivery_date: Optional[datetime] = None
+    is_current: bool
+    base_po_number: Optional[str] = None
     model_config = {"from_attributes": True}

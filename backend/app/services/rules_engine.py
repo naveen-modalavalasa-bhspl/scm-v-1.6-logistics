@@ -244,7 +244,7 @@ async def action_create_indent(db: AsyncSession, config: dict, context: dict) ->
         if item_obj:
             uom_id = item_obj.primary_uom_id
 
-    indent_no = await generate_number(db, "indent", "indent")
+    indent_no = await generate_number(db, "indent", "unapproved_indent", pad_length=7)
     # BUG-HC-102 fix: don't silently masquerade as user_id=1. Resolve the
     # creator strictly from explicit config (or context "user_id"). If
     # neither is provided, fall back to the dedicated system user (resolved

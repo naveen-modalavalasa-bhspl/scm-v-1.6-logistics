@@ -109,8 +109,8 @@ async def on_order_qty(
             PurchaseOrderItem.item_id == item_id,
             # BUG-FIN-073: don't count "pending_approval" POs as on-order;
             # they may not actually convert into deliveries. Only firm
-            # commitments (approved + partially_received) reduce demand.
-            PurchaseOrder.status.in_(["approved", "partially_received"]),
+            # commitments (approved + accepted + partially_received) reduce demand.
+            PurchaseOrder.status.in_(["approved", "accepted", "partially_received"]),
         )
     )
     if warehouse_id:
@@ -515,7 +515,7 @@ async def convert_run_to_pos(
     # downstream "overdue PO" alerting works on auto-generated POs too.
     pos_created = []
     for vendor_id, mri_rows in by_vendor.items():
-        po_number = await generate_number(db, "procurement", "purchase_order")
+        po_number = await generate_number(db, "procurement", "unapproved_purchase_order", pad_length=7)
         max_lead = max((mri.lead_time_days or 0) for mri in mri_rows) if mri_rows else 0
         po_date = datetime.now(timezone.utc)
         expected = po_date + timedelta(days=int(max_lead)) if max_lead else None

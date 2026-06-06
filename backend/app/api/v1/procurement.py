@@ -166,7 +166,7 @@ async def create_material_request(
 ):
     if not payload.items:
         raise HTTPException(status_code=422, detail="At least one item is required")
-    mr_number = await generate_number(db, "procurement", "material_request")
+    mr_number = await generate_number(db, "procurement", "unapproved_material_request", pad_length=7)
     # Handle department_id → department mapping
     department = payload.department or payload.department_id or None
     mr = MaterialRequest(
@@ -274,8 +274,10 @@ async def approve_material_request(
     mr.status = "approved"
     mr.approved_by = current_user.id
     mr.approved_date = datetime.now(timezone.utc)
+    approved_number = await generate_number(db, "procurement", "material_request", pad_length=7)
+    mr.mr_number = approved_number
     await db.flush()
-    return {"success": True, "message": "Material request approved"}
+    return {"success": True, "message": f"Material request approved (new number: {approved_number})"}
 
 
 # ==================== QUOTATIONS ====================
@@ -430,7 +432,7 @@ async def create_rfq(
     current_user: User = Depends(require_any_role(*QUOTATION_ROLES)),
 ):
     await ensure_rfq_schema(db)
-    rfq_number = await generate_number(db, "procurement", "rfq")
+    rfq_number = await generate_number(db, "procurement", "rfq", pad_length=7)
     
     # 1. Create RFQ Sourcing Event
     rfq = RFQ(
@@ -470,11 +472,10 @@ async def create_rfq(
             status="invited",
         ))
         
-        quotation_number = await generate_number(db, "procurement", "quotation")
         q = Quotation(
             rfq_id=rfq.id,
             rfq_number=rfq_number,
-            quotation_number=quotation_number,
+            quotation_number=None,
             mr_id=payload.mr_id,
             vendor_id=vendor_id,
             quotation_date=payload.rfq_date,
@@ -641,7 +642,7 @@ async def create_quotation(
     await ensure_rfq_schema(db)
     if not payload.items:
         raise HTTPException(status_code=422, detail="At least one item is required")
-    q_number = await generate_number(db, "procurement", "quotation")
+    q_number = await generate_number(db, "procurement", "quotation", pad_length=7)
     total_cgst = Decimal("0")
     total_sgst = Decimal("0")
     total_igst = Decimal("0")
@@ -834,6 +835,7 @@ async def list_purchase_orders(
     status: str = Query(None),
     vendor_id: int = Query(None),
     project_id: int = Query(None),
+    all_versions: bool = Query(False),
     db: AsyncSession = Depends(get_db),
     # R-001: read-level RBAC. Warehouse staff also need PO visibility (CR_08/09)
     # so we allow either procurement.view or warehouse.view permission.
@@ -853,6 +855,10 @@ async def list_purchase_orders(
         selectinload(PurchaseOrder.items).selectinload(PurchaseOrderItem.uom),
     )
     count_query = select(func.count(PurchaseOrder.id))
+
+    if not all_versions:
+        query = query.where(PurchaseOrder.is_current == True)
+        count_query = count_query.where(PurchaseOrder.is_current == True)
 
     if status:
         # Bug fix: support comma-separated status (e.g. "approved,partially_received")
@@ -877,6 +883,39 @@ async def list_purchase_orders(
     result = await db.execute(query.offset(offset).limit(limit).order_by(PurchaseOrder.id.desc()))
     pos = result.scalars().all()
 
+    # Batch-fetch all historical (is_current=False) versions for the current page
+    # so we can nest them as Ant Design tree `children` without extra N+1 queries.
+    base_numbers = list({po.base_po_number for po in pos if po.base_po_number})
+    history_map: dict[str, list] = {}
+    if base_numbers and not all_versions:
+        hist_result = await db.execute(
+            select(PurchaseOrder).options(
+                selectinload(PurchaseOrder.vendor),
+                selectinload(PurchaseOrder.items).selectinload(PurchaseOrderItem.item),
+                selectinload(PurchaseOrder.items).selectinload(PurchaseOrderItem.uom),
+            )
+            .where(
+                PurchaseOrder.base_po_number.in_(base_numbers),
+                PurchaseOrder.is_current == False,  # noqa: E712
+            )
+            .order_by(PurchaseOrder.version_number.desc())
+        )
+        for hist_po in hist_result.scalars().all():
+            key = hist_po.base_po_number
+            if key not in history_map:
+                history_map[key] = []
+            h_data = POListResponse.model_validate(hist_po).model_dump()
+            h_data["vendor_name"] = hist_po.vendor.name if hist_po.vendor else None
+            for i, item in enumerate(hist_po.items):
+                if i < len(h_data.get("items", [])):
+                    if item.item:
+                        h_data["items"][i]["item_name"] = item.item.name
+                        h_data["items"][i]["item_code"] = item.item.item_code
+                    if item.uom:
+                        h_data["items"][i]["uom_name"] = item.uom.name
+            h_data["is_history_row"] = True
+            history_map[key].append(h_data)
+
     response_items = []
     for po in pos:
         data = POListResponse.model_validate(po).model_dump()
@@ -888,6 +927,10 @@ async def list_purchase_orders(
                     data["items"][i]["item_code"] = item.item.item_code
                 if item.uom:
                     data["items"][i]["uom_name"] = item.uom.name
+        data["is_history_row"] = False
+        # Attach previous versions as Ant Design tree children (version tree)
+        if not all_versions and po.base_po_number and po.base_po_number in history_map:
+            data["children"] = history_map[po.base_po_number]
         response_items.append(data)
     return build_paginated_response(response_items, total, page, page_size)
 
@@ -974,6 +1017,87 @@ async def get_purchase_order(
                 data["items"][i]["uom_name"] = item.uom.name
                 # Frontend reads `uom` (not uom_name) on PO detail
                 data["items"][i]["uom"] = item.uom.name
+
+    # Load all versions
+    versions_list = []
+    root_po_id = po.id
+    temp = po
+    while temp.parent_po_id is not None:
+        p_res = await db.execute(select(PurchaseOrder).where(PurchaseOrder.id == temp.parent_po_id))
+        parent_row = p_res.scalar_one_or_none()
+        if not parent_row:
+            break
+        temp = parent_row
+        root_po_id = temp.id
+
+    tree_query = select(PurchaseOrder.id, PurchaseOrder.version_number, PurchaseOrder.status).where(
+        (PurchaseOrder.id == root_po_id) | 
+        (PurchaseOrder.parent_po_id == root_po_id) |
+        (PurchaseOrder.base_po_number == po.base_po_number) |
+        (PurchaseOrder.base_po_number == temp.base_po_number)
+    ).order_by(PurchaseOrder.version_number.desc())
+
+    tree_res = await db.execute(tree_query)
+    versions_list = [{"id": r[0], "version_number": r[1], "status": r[2]} for r in tree_res.all()]
+
+    # Remove duplicates
+    seen = set()
+    unique_versions = []
+    for v in versions_list:
+        if v["id"] not in seen:
+            seen.add(v["id"])
+            unique_versions.append(v)
+    versions_list = unique_versions
+
+    comparison = None
+    if po.parent_po_id:
+        parent_result = await db.execute(
+            select(PurchaseOrder)
+            .options(selectinload(PurchaseOrder.items).selectinload(PurchaseOrderItem.item),
+                     selectinload(PurchaseOrder.items).selectinload(PurchaseOrderItem.uom))
+            .where(PurchaseOrder.id == po.parent_po_id)
+        )
+        parent_po = parent_result.scalar_one_or_none()
+        if parent_po:
+            curr_items = {item.item_id: item for item in po.items}
+            par_items = {item.item_id: item for item in parent_po.items}
+
+            modified_items = {}
+            added_item_ids = []
+            removed_items = []
+
+            for item_id, c_item in curr_items.items():
+                if item_id not in par_items:
+                    added_item_ids.append(item_id)
+                else:
+                    p_item = par_items[item_id]
+                    if c_item.qty != p_item.qty or c_item.rate != p_item.rate:
+                        modified_items[item_id] = {
+                            "old_qty": float(p_item.qty or 0),
+                            "old_rate": float(p_item.rate or 0)
+                        }
+
+            for item_id, p_item in par_items.items():
+                if item_id not in curr_items:
+                    removed_items.append({
+                        "item_id": item_id,
+                        "item_code": p_item.item.item_code if p_item.item else None,
+                        "item_name": p_item.item.name if p_item.item else None,
+                        "qty": float(p_item.qty or 0),
+                        "rate": float(p_item.rate or 0),
+                        "uom_name": p_item.uom.name if p_item.uom else None
+                    })
+
+            comparison = {
+                "has_parent": True,
+                "parent_version": parent_po.version_number,
+                "modified_items": {str(k): v for k, v in modified_items.items()},
+                "added_item_ids": added_item_ids,
+                "removed_items": removed_items
+            }
+
+    data["versions"] = versions_list
+    data["comparison"] = comparison
     return data
 
 
@@ -1218,7 +1342,8 @@ async def create_purchase_order(
     total_discount = Decimal("0")
 
     # BUG-PRO-001 fix: generate po_number before constructing PO (was undefined NameError)
-    po_number = await generate_number(db, "procurement", "purchase_order")
+    base_upo = await generate_number(db, "procurement", "unapproved_purchase_order", pad_length=7)
+    po_number = f"{base_upo}-V1.0"
 
     # BUG-PRO-013 fix: refuse a CGST/SGST PO when the vendor has no GSTIN. CGST/SGST
     # are intra-state taxes that legally require a registered GSTIN on both sides;
@@ -1253,25 +1378,39 @@ async def create_purchase_order(
         # never persisted it, so PO uploads were silently dropped.
         attachment_url=payload.attachment_url,
         created_by=current_user.id,
+        version_number="1.0",
+        base_po_number=base_upo,
+        is_current=True,
     )
     db.add(po)
     await db.flush()
 
+    # Track if ALL items have explicit rates (supplier-to-fill POs may have rate=None)
+    all_rates_set = all(item.rate is not None for item in payload.items)
+
     for item in payload.items:
-        base = item.qty * item.rate
-        discount = base * item.discount_pct / 100
+        # BUG-SUPPLIER-RATE fix: rate may be None when procurement team creates PO
+        # and expects supplier to fill in pricing during acknowledgment.
+        rate = item.rate if item.rate is not None else Decimal("0")
+        discount_pct = item.discount_pct if item.discount_pct is not None else Decimal("0")
+        cgst_rate = item.cgst_rate if item.cgst_rate is not None else Decimal("0")
+        sgst_rate = item.sgst_rate if item.sgst_rate is not None else Decimal("0")
+        igst_rate = item.igst_rate if item.igst_rate is not None else Decimal("0")
+
+        base = item.qty * rate
+        discount = base * discount_pct / 100
         net = base - discount
-        cgst = net * item.cgst_rate / 100
-        sgst = net * item.sgst_rate / 100
-        igst = net * item.igst_rate / 100
+        cgst = net * cgst_rate / 100
+        sgst = net * sgst_rate / 100
+        igst = net * igst_rate / 100
         item_tax = cgst + sgst + igst
         amount = net + item_tax
 
         poi = PurchaseOrderItem(
             po_id=po.id, item_id=item.item_id, qty=item.qty,
-            uom_id=item.uom_id, rate=item.rate, discount_pct=item.discount_pct,
-            cgst_rate=item.cgst_rate, sgst_rate=item.sgst_rate,
-            igst_rate=item.igst_rate, tax_amount=item_tax, amount=amount,
+            uom_id=item.uom_id, rate=rate, discount_pct=discount_pct,
+            cgst_rate=cgst_rate, sgst_rate=sgst_rate,
+            igst_rate=igst_rate, tax_amount=item_tax, amount=amount,
             # BUG-PRO-018 fix: initialise these explicitly. The model defaults to 0
             # but relying on column defaults left freshly-inserted rows briefly
             # NULL in some flows (bulk-insert paths that skipped server defaults).
@@ -1313,10 +1452,9 @@ async def create_purchase_order(
     except Exception:
         logger.exception("min_order_value check failed (non-HTTP); continuing")
 
-    # BUG-PRO-021 fix: refuse zero-value POs. A 0 grand_total PO is either a
-    # data-entry mistake (qty/rate=0 across the board) or a deliberate attempt
-    # to create a placeholder PO that would slip past every spend control.
-    if po.grand_total is None or Decimal(str(po.grand_total)) <= 0:
+    # BUG-PRO-021 fix: refuse zero-value POs ONLY when all rates are provided.
+    # If supplier is expected to fill rates during acknowledgment, allow grand_total=0.
+    if all_rates_set and (po.grand_total is None or Decimal(str(po.grand_total)) <= 0):
         raise HTTPException(
             status_code=400,
             detail="PO grand_total must be > 0 — review item qty/rate values",
@@ -1354,20 +1492,117 @@ async def update_purchase_order(
             status_code=400,
             detail=f"Cannot edit PO in '{po.status}' status — only drafts may be amended via PUT",
         )
-    # BUG-PRO-033 fix: whitelist editable fields. Never accept status / numbering /
-    # totals / tax / qty / audit fields via PUT — those are flipped only by the
-    # /submit, /approve, /cancel, GRN, and creation flows.
+    # For draft purchase orders, we allow editing basic fields, addresses, discounts, and the item list.
     _PO_PUT_ALLOWED = {
         "expected_delivery_date",
-        "delivery_address",
+        "billing_address",
+        "shipping_address",
         "notes",
         "attachment_url",
         "remarks",
+        "discount_type",
+        "discount_value",
     }
     for k, v in payload.model_dump(exclude_unset=True).items():
-        if k not in _PO_PUT_ALLOWED:
-            continue
-        setattr(po, k, v)
+        if k in _PO_PUT_ALLOWED:
+            setattr(po, k, v)
+
+    if payload.items is not None:
+        from app.models.procurement import PurchaseOrderItem
+        from sqlalchemy import delete
+        
+        # Delete existing items of this PO
+        await db.execute(
+            delete(PurchaseOrderItem).where(PurchaseOrderItem.po_id == po.id)
+        )
+        await db.flush()
+
+        # Insert new/updated items
+        for item in payload.items:
+            # BUG-SUPPLIER-RATE fix: rate may be None when procurement team creates
+            # the draft and expects supplier to fill pricing during acknowledgment.
+            _rate = item.rate if item.rate is not None else Decimal("0")
+            _disc_pct = item.discount_pct if item.discount_pct is not None else Decimal("0")
+            _cgst = item.cgst_rate if item.cgst_rate is not None else Decimal("0")
+            _sgst = item.sgst_rate if item.sgst_rate is not None else Decimal("0")
+            _igst = item.igst_rate if item.igst_rate is not None else Decimal("0")
+
+            new_item = PurchaseOrderItem(
+                po_id=po.id,
+                item_id=item.item_id,
+                qty=item.qty,
+                received_qty=Decimal("0"),
+                returned_qty=Decimal("0"),
+                uom_id=item.uom_id,
+                rate=_rate,
+                discount_pct=_disc_pct,
+                cgst_rate=_cgst,
+                sgst_rate=_sgst,
+                igst_rate=_igst,
+                tax_amount=Decimal("0"),
+                amount=Decimal("0")
+            )
+            
+            # Recalculate line-level values
+            base = new_item.qty * new_item.rate
+            disc = base * new_item.discount_pct / Decimal("100")
+            net = base - disc
+            cgst = net * new_item.cgst_rate / Decimal("100")
+            sgst = net * new_item.sgst_rate / Decimal("100")
+            igst = net * new_item.igst_rate / Decimal("100")
+            new_item.tax_amount = cgst + sgst + igst
+            new_item.amount = net + new_item.tax_amount
+            
+            db.add(new_item)
+        
+        await db.flush()
+
+        # Recalculate PO header totals
+        items_rows = (await db.execute(
+            select(PurchaseOrderItem).where(PurchaseOrderItem.po_id == po.id)
+        )).scalars().all()
+        
+        sub_t = Decimal("0")
+        tax_t = Decimal("0")
+        cgst_t = Decimal("0")
+        sgst_t = Decimal("0")
+        igst_t = Decimal("0")
+        disc_t = Decimal("0")
+        for it in items_rows:
+            qty = Decimal(str(it.qty or 0))
+            rate = Decimal(str(it.rate or 0))
+            disc_pct = Decimal(str(it.discount_pct or 0))
+            base = qty * rate
+            disc = base * disc_pct / Decimal("100")
+            net = base - disc
+            cgst = net * Decimal(str(it.cgst_rate or 0)) / Decimal("100")
+            sgst = net * Decimal(str(it.sgst_rate or 0)) / Decimal("100")
+            igst = net * Decimal(str(it.igst_rate or 0)) / Decimal("100")
+            
+            sub_t += base
+            disc_t += disc
+            cgst_t += cgst
+            sgst_t += sgst
+            igst_t += igst
+            tax_t += (cgst + sgst + igst)
+        
+        po.subtotal = sub_t
+        po.discount_amount = disc_t
+        po.cgst_amount = cgst_t
+        po.sgst_amount = sgst_t
+        po.igst_amount = igst_t
+        po.tax_amount = tax_t
+
+        # Parse vehicle/freight cost from remarks if present
+        vehicle_cost = Decimal("0")
+        if po.remarks:
+            import re
+            match = re.search(r"Includes vehicle cost:\s*(\d+(\.\d+)?)", po.remarks)
+            if match:
+                vehicle_cost = Decimal(match.group(1))
+        
+        po.grand_total = sub_t - disc_t + tax_t + vehicle_cost
+
     await db.flush()
     return {"success": True, "message": "Purchase order updated"}
 
@@ -1426,7 +1661,12 @@ async def submit_po_for_approval(
     po.igst_amount = igst_t
     po.tax_amount = tax_t
     po.grand_total = sub_t + tax_t
-    if Decimal(str(po.grand_total or 0)) <= 0:
+    # BUG-SUPPLIER-RATE fix: allow submitting POs where supplier will fill in rates
+    # during acknowledgment. Only block zero-total when at least one rate > 0 is expected.
+    items_have_nonzero_rate = any(
+        Decimal(str(it.rate or 0)) > 0 for it in items_rows
+    )
+    if items_have_nonzero_rate and Decimal(str(po.grand_total or 0)) <= 0:
         raise HTTPException(
             status_code=400,
             detail="PO grand_total must be > 0 — review item qty/rate values",
@@ -1450,7 +1690,7 @@ async def submit_po_for_approval(
     po.status = "pending_approval"
     approval = await submit_for_approval(
         db, "procurement", "purchase_order", po.id, po.po_number,
-        current_user.id, po.project_id, float(po.grand_total),
+        current_user.id, po.project_id, float(po.grand_total or 0),
         department=getattr(po, "department", None),
         extra={
             "vendor_id": po.vendor_id,
@@ -1478,10 +1718,14 @@ async def approve_purchase_order(
     if po.status != "pending_approval":
         raise HTTPException(status_code=400, detail=f"Cannot approve PO in '{po.status}' status")
 
-    # BUG-PRO-030 fix: refuse approval of zero/null grand_total POs. The previous
-    # code passed `float(po.grand_total or 0)` to the e-sign payload silently;
-    # an approver's signature should never be attached to a 0-value PO.
-    if po.grand_total is None or Decimal(str(po.grand_total)) <= 0:
+    # BUG-PRO-030 / BUG-SUPPLIER-RATE fix: refuse approval of zero/null grand_total POs
+    # UNLESS this is a supplier-to-fill-rate PO (all rates are 0/None intentionally).
+    # Check if at least one item has a rate > 0 — if so, grand_total must be positive.
+    _po_items_check = (await db.execute(
+        select(PurchaseOrderItem).where(PurchaseOrderItem.po_id == po.id)
+    )).scalars().all()
+    _has_nonzero_rate = any(Decimal(str(it.rate or 0)) > 0 for it in _po_items_check)
+    if _has_nonzero_rate and (po.grand_total is None or Decimal(str(po.grand_total)) <= 0):
         raise HTTPException(
             status_code=400,
             detail="Cannot approve PO with grand_total <= 0",
@@ -1578,6 +1822,34 @@ async def approve_purchase_order(
         raise
     except Exception:
         logger.exception("Three-quote rule check failed on approve for PO %s", po.id)
+
+    # Generate or reuse the final approved PO number
+    if po.parent_po_id:
+        parent_po = (await db.execute(select(PurchaseOrder).where(PurchaseOrder.id == po.parent_po_id))).scalar_one_or_none()
+        if not parent_po:
+            raise HTTPException(status_code=400, detail="Parent Purchase Order not found")
+        approved_po_number = f"{parent_po.base_po_number}-V{po.version_number}"
+        po.po_number = approved_po_number
+        po.base_po_number = parent_po.base_po_number
+    else:
+        approved_base = await generate_number(db, "procurement", "purchase_order", pad_length=7)
+        approved_po_number = f"{approved_base}-V1.0"
+        po.po_number = approved_po_number
+        po.base_po_number = approved_base
+
+    po.is_current = True
+
+    # Mark all other versions of this PO as not current
+    from sqlalchemy import update
+    await db.execute(
+        update(PurchaseOrder)
+        .where(PurchaseOrder.base_po_number == po.base_po_number, PurchaseOrder.id != po.id)
+        .values(is_current=False)
+    )
+
+    if ar_row:
+        ar_row.document_number = approved_po_number
+    await db.flush()
 
     # Wave 8 — state-transition compliance gate (e-sign required for approval).
     # BUG-PRO-026 fix: do NOT swallow non-HTTPException failures here. Compliance
@@ -1683,7 +1955,7 @@ async def cancel_purchase_order(
         )
     reason = str(reason).strip()
 
-    was_approved = po.status == "approved"
+    was_approved = po.status in ("approved", "accepted")
     po.status = "cancelled"
     # Wave 5 — persist cancellation audit on the PO row itself
     # (BUG-PRO-038 full fix). The legacy remarks-append is preserved so
@@ -1782,11 +2054,11 @@ async def short_close_purchase_order(
     po = result.scalar_one_or_none()
     if not po:
         raise HTTPException(status_code=404, detail="Purchase order not found")
-    if po.status not in ("approved", "partially_received"):
+    if po.status not in ("approved", "accepted", "partially_received"):
         raise HTTPException(
             status_code=400,
             detail=(
-                f"Only approved or partially_received POs can be short-closed "
+                f"Only approved, accepted, or partially_received POs can be short-closed "
                 f"(current: {po.status})"
             ),
         )
@@ -1825,6 +2097,125 @@ async def short_close_purchase_order(
         logger.exception("Failed to write ComplianceAudit row for PO %s short-close", po.id)
 
     return {"success": True, "message": "Purchase order short-closed"}
+
+
+@router.post("/purchase-orders/{po_id}/amend", dependencies=[Depends(require_key("procurement-purchase-orders"))])
+async def amend_purchase_order(
+    po_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_any_role(*PO_CREATOR_ROLES)),
+):
+    """Create a new draft version of an approved or accepted Purchase Order."""
+    from datetime import timedelta
+    result = await db.execute(
+        select(PurchaseOrder)
+        .options(selectinload(PurchaseOrder.items))
+        .where(PurchaseOrder.id == po_id)
+    )
+    po = result.scalar_one_or_none()
+    if not po:
+        raise HTTPException(status_code=404, detail="Purchase order not found")
+
+    # BUG-AMEND fix: only approved or accepted POs can be amended.
+    # Rejected POs (supplier rejected) cannot be amended — a new PO must be created.
+    if po.status not in ("approved", "accepted"):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Only approved or supplier-accepted Purchase Orders can be amended. "
+                f"Current status: '{po.status}'. "
+                f"If the supplier rejected this PO, create a new PO instead."
+            )
+        )
+
+    # Verify 2-days rule if delivery date is confirmed
+    if po.supplier_delivery_date:
+        now = datetime.now(timezone.utc)
+        delivery_date = po.supplier_delivery_date
+        if delivery_date.tzinfo is None:
+            delivery_date = delivery_date.replace(tzinfo=timezone.utc)
+        if now > delivery_date - timedelta(days=2):
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot amend Purchase Order: amendments are locked within 2 days of the supplier's confirmed delivery date."
+            )
+
+    # Increment version
+    try:
+        current_ver = float(po.version_number or "1.0")
+    except ValueError:
+        current_ver = 1.0
+    new_version = f"{current_ver + 0.01:.2f}"
+
+    # Formulate temporary UPO number
+    if po.base_po_number:
+        base_upo = po.base_po_number.replace("/PO/", "/UPO/")
+    else:
+        base_upo = po.po_number.replace("/PO/", "/UPO/").split("-V")[0]
+
+    upo_number = f"{base_upo}-V{new_version}"
+
+    # Clone header
+    new_po = PurchaseOrder(
+        po_number=upo_number,
+        vendor_id=po.vendor_id,
+        mr_id=po.mr_id,
+        quotation_id=po.quotation_id,
+        project_id=po.project_id,
+        warehouse_id=po.warehouse_id,
+        po_date=datetime.now(timezone.utc).date(),
+        expected_delivery_date=po.expected_delivery_date,
+        billing_address=po.billing_address,
+        shipping_address=po.shipping_address,
+        subtotal=po.subtotal,
+        discount_amount=po.discount_amount,
+        cgst_amount=po.cgst_amount,
+        sgst_amount=po.sgst_amount,
+        igst_amount=po.igst_amount,
+        tax_amount=po.tax_amount,
+        grand_total=po.grand_total,
+        payment_terms_days=po.payment_terms_days,
+        payment_terms=po.payment_terms,
+        currency=po.currency,
+        status="draft",
+        remarks=f"Amendment created from version {po.version_number} of {po.base_po_number or po.po_number}",
+        created_by=current_user.id,
+        version_number=new_version,
+        parent_po_id=po.id,
+        supplier_delivery_date=po.supplier_delivery_date,
+        is_current=True,
+        base_po_number=po.base_po_number or base_upo.replace("/UPO/", "/PO/")
+    )
+
+    db.add(new_po)
+    await db.flush()
+
+    # Clone items
+    for item in po.items:
+        new_item = PurchaseOrderItem(
+            po_id=new_po.id,
+            item_id=item.item_id,
+            qty=item.qty,
+            received_qty=Decimal("0"),
+            returned_qty=Decimal("0"),
+            uom_id=item.uom_id,
+            rate=item.rate,
+            discount_pct=item.discount_pct,
+            cgst_rate=item.cgst_rate,
+            sgst_rate=item.sgst_rate,
+            igst_rate=item.igst_rate,
+            tax_amount=item.tax_amount,
+            amount=item.amount
+        )
+        db.add(new_item)
+
+    await db.flush()
+    return {
+        "success": True,
+        "message": f"PO amendment version {new_version} created successfully",
+        "id": new_po.id,
+        "po_number": new_po.po_number
+    }
 
 
 class FromQuotationPayload(BaseModel):
@@ -1950,7 +2341,8 @@ async def create_po_from_quotation(
             ]
             shipping_address = "\n".join([str(p) for p in ship_parts if p])
 
-    po_number = await generate_number(db, "procurement", "purchase_order")
+    base_upo = await generate_number(db, "procurement", "unapproved_purchase_order", pad_length=7)
+    po_number = f"{base_upo}-V1.0"
     subtotal = Decimal("0")
     total_tax = Decimal("0")
 
@@ -1972,6 +2364,9 @@ async def create_po_from_quotation(
         payment_terms_days=30,
         remarks=f"Created from quotation {quotation.quotation_number}",
         created_by=current_user.id,
+        version_number="1.0",
+        base_po_number=base_upo,
+        is_current=True,
     )
     db.add(po)
     await db.flush()
@@ -2191,7 +2586,8 @@ async def create_split_po(
                 ]
                 shipping_address = "\n".join([str(p) for p in ship_parts if p])
 
-        po_number = await generate_number(db, "procurement", "purchase_order")
+        base_upo = await generate_number(db, "procurement", "unapproved_purchase_order", pad_length=7)
+        po_number = f"{base_upo}-V1.0"
         subtotal = Decimal("0")
         total_tax = Decimal("0")
 
@@ -2209,6 +2605,9 @@ async def create_split_po(
             payment_terms_days=30,
             remarks=f"Consolidated Split-PO raised from RFQ {payload.rfq_number}",
             created_by=current_user.id,
+            version_number="1.0",
+            base_po_number=base_upo,
+            is_current=True,
         )
         db.add(po)
         await db.flush()

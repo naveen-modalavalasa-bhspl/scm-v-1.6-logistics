@@ -56,31 +56,38 @@ async def get_stock_balances(
     )
     count_query = select(func.count(StockBalance.id))
 
-    from app.utils.dependencies import user_is_managerial, user_warehouse_ids
-    is_managerial = await user_is_managerial(db, current_user.id)
+    from app.utils.dependencies import user_is_managerial, user_warehouse_ids, get_user_role_codes, get_warehouse_and_descendants
+    from app.models.warehouse import Warehouse as _Wh
 
-    if is_managerial:
-        # 2026-05-06: vehicle model — virtual warehouses (vehicles / mobile
-        # units) never hold persistent inventory. Always exclude them from
-        # stock balance queries to prevent confusing zero-rows for managers.
-        from app.models.warehouse import Warehouse as _Wh
+    role_codes = await get_user_role_codes(db, current_user.id)
+    is_admin = bool({"super_admin", "admin"} & set(role_codes))
+    assigned_whs = await user_warehouse_ids(db, current_user.id)
+
+    if is_admin:
+        # Admins see all real warehouses (excluding virtual)
         real_wh_subq = select(_Wh.id).where(_Wh.type != "virtual").subquery()
         query = query.where(StockBalance.warehouse_id.in_(select(real_wh_subq)))
         count_query = count_query.where(StockBalance.warehouse_id.in_(select(real_wh_subq)))
-    else:
-        # R-005: warehouse-scope isolation. Non-managerial users only see stock
-        # in warehouses assigned to them (including virtual ones). Specific
-        # warehouse_id query param must also be in their assigned set.
-        scoped_wh = await user_warehouse_ids(db, current_user.id)
+    elif assigned_whs:
+        # Non-admins who have warehouse mappings see their mapped warehouses + children recursively
+        scoped_wh = await get_warehouse_and_descendants(db, assigned_whs)
         print(f"DEBUG: user_id={current_user.id}, warehouse_id={warehouse_id}, scoped_wh={scoped_wh}")
-        if not scoped_wh:
-            # No warehouses assigned → no stock visible
-            return build_paginated_response([], 0, page, page_size)
         if warehouse_id is not None and warehouse_id not in scoped_wh:
             print(f"DEBUG: Authorization failed. {warehouse_id} not in {scoped_wh}")
             raise HTTPException(status_code=403, detail="Not authorized to view stock for this warehouse")
         query = query.where(StockBalance.warehouse_id.in_(scoped_wh))
         count_query = count_query.where(StockBalance.warehouse_id.in_(scoped_wh))
+    else:
+        # No mapped warehouses:
+        # If they are managerial, they can see all real warehouses
+        is_managerial = await user_is_managerial(db, current_user.id)
+        if is_managerial:
+            real_wh_subq = select(_Wh.id).where(_Wh.type != "virtual").subquery()
+            query = query.where(StockBalance.warehouse_id.in_(select(real_wh_subq)))
+            count_query = count_query.where(StockBalance.warehouse_id.in_(select(real_wh_subq)))
+        else:
+            # Non-managerial with no warehouses assigned see nothing
+            return build_paginated_response([], 0, page, page_size)
 
     # Handle single item_id or comma-separated list (e.g., "335,337,349")
     if item_id:
@@ -129,8 +136,7 @@ async def get_stock_balances(
         query = query.where(StockBalance.available_qty > 0)
         count_query = count_query.where(StockBalance.available_qty > 0)
 
-    total = (await db.execute(count_query)).scalar()
-    result = await db.execute(query.offset(offset).limit(limit))
+    result = await db.execute(query)
     balances = result.scalars().all()
 
     # BUG-INV-122: enrich each row with is_low_stock / is_below_reorder /
@@ -208,6 +214,7 @@ async def get_stock_balances(
         if hasattr(b, 'item') and b.item:
             data["item_name"] = b.item.name
             data["item_code"] = b.item.item_code
+            data["item_type"] = b.item.item_type
             data["has_serial"] = bool(b.item.has_serial)
             # Include uom_id + uom_name so Stock Audit and Material Issue
             # forms can pre-fill UOM when auto-loading from stock.
@@ -220,6 +227,7 @@ async def get_stock_balances(
         else:
             data["item_name"] = None
             data["item_code"] = None
+            data["item_type"] = None
             data["has_serial"] = False
             data["uom_id"] = None
             data["is_below_reorder"] = False
@@ -265,7 +273,125 @@ async def get_stock_balances(
         data["is_expiring_soon"] = bool(exp is not None and today <= exp <= expiring_window)
         response_items.append(data)
 
-    return build_paginated_response(response_items, total, page, page_size)
+    # Grouping all items by (item_id, warehouse_id) and calculating weighted average cost (WAC)
+    grouped_items = []
+    item_groups = {}  # (item_id, warehouse_id) -> list of dicts
+
+    for item in response_items:
+        key = (item["item_id"], item["warehouse_id"])
+        if key not in item_groups:
+            item_groups[key] = []
+        item_groups[key].append(item)
+
+    from decimal import ROUND_HALF_UP
+    for (item_id, warehouse_id), group_list in item_groups.items():
+        first = group_list[0]
+        
+        total_avail = sum(item["available_qty"] or Decimal("0") for item in group_list)
+        total_reserved = sum(item["reserved_qty"] or Decimal("0") for item in group_list)
+        total_transit = sum(item["transit_qty"] or Decimal("0") for item in group_list)
+        total_qty = sum(item["total_qty"] or Decimal("0") for item in group_list)
+        total_value = sum(item["stock_value"] or Decimal("0") for item in group_list)
+        
+        if total_qty > Decimal("0"):
+            valuation_rate = (total_value / total_qty).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+        else:
+            valuation_rate = Decimal("0")
+            
+        # Unique batches
+        batches = []
+        for item in group_list:
+            if item.get("batch_number"):
+                batches.append(item["batch_number"])
+        batches = sorted(list(set(batches)))
+        batch_name = ", ".join(batches) if batches else None
+        
+        # Expiry and Mfg dates: earliest non-null
+        expiry_dates = []
+        mfg_dates = []
+        for item in group_list:
+            if item.get("expiry_date"):
+                expiry_dates.append(item["expiry_date"])
+            if item.get("manufacturing_date"):
+                mfg_dates.append(item["manufacturing_date"])
+        
+        earliest_expiry = min(expiry_dates) if expiry_dates else None
+        earliest_mfg = min(mfg_dates) if mfg_dates else None
+        
+        # Bins, Racks, Locations
+        bins = []
+        racks = []
+        locations = []
+        for item in group_list:
+            if item.get("bin_code"):
+                bins.append(item["bin_code"])
+            if item.get("rack"):
+                racks.append(item["rack"])
+            if item.get("location"):
+                locations.append(item["location"])
+                
+        bin_code = ", ".join(sorted(list(set(bins)))) if bins else None
+        bin_name = bin_code
+        rack = ", ".join(sorted(list(set(racks)))) if racks else None
+        location = ", ".join(sorted(list(set(locations)))) if locations else None
+        
+        # Merge serial numbers
+        all_serials = []
+        for item in group_list:
+            if item.get("serial_numbers"):
+                all_serials.extend(item["serial_numbers"])
+        all_serials = sorted(list(set(all_serials)))
+        
+        # Flags
+        is_below_reorder = any(item.get("is_below_reorder", False) for item in group_list)
+        is_low_stock = any(item.get("is_low_stock", False) for item in group_list)
+        is_expiring_soon = any(item.get("is_expiring_soon", False) for item in group_list)
+        
+        # Last updated: max ISO string
+        last_updated_dates = [item["last_updated"] for item in group_list if item.get("last_updated")]
+        last_updated = max(last_updated_dates) if last_updated_dates else None
+
+        grouped_item = {
+            "id": f"grouped_{item_id}_{warehouse_id}",
+            "item_id": item_id,
+            "warehouse_id": warehouse_id,
+            "bin_id": None,
+            "batch_id": None,
+            "available_qty": total_avail,
+            "reserved_qty": total_reserved,
+            "transit_qty": total_transit,
+            "total_qty": total_qty,
+            "valuation_rate": valuation_rate,
+            "stock_value": total_value,
+            "last_updated": last_updated,
+            "serial_numbers": all_serials,
+            "item_name": first.get("item_name"),
+            "item_code": first.get("item_code"),
+            "item_type": first.get("item_type"),
+            "has_serial": first.get("has_serial"),
+            "uom_id": first.get("uom_id"),
+            "is_below_reorder": is_below_reorder,
+            "is_low_stock": is_low_stock,
+            "warehouse_name": first.get("warehouse_name"),
+            "batch_name": batch_name,
+            "batch_number": batch_name,
+            "expiry_date": earliest_expiry,
+            "manufacturing_date": earliest_mfg,
+            "bin_name": bin_name,
+            "bin_code": bin_code,
+            "rack": rack,
+            "rack_id": None,
+            "location": location,
+            "is_expiring_soon": is_expiring_soon,
+        }
+        grouped_items.append(grouped_item)
+
+    # Sort merged list to keep stable pagination
+    grouped_items.sort(key=lambda x: (x.get("item_code") or "", x.get("warehouse_name") or ""))
+
+    total = len(grouped_items)
+    paginated_items = grouped_items[offset:offset + page_size]
+    return build_paginated_response(paginated_items, total, page, page_size)
 
 
 # ==================== STOCK LEDGER ====================

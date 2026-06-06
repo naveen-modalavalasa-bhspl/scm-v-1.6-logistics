@@ -803,7 +803,7 @@ async def delete_grn(
             )
             po_items = poi_result.scalars().all()
             any_received = any((pi.received_qty or 0) > 0 for pi in po_items)
-            po.status = "partially_received" if any_received else "approved"
+            po.status = "partially_received" if any_received else ("accepted" if po.supplier_acknowledgement == "accepted" else "approved")
 
     grn.status = "cancelled"
     await db.flush()
@@ -2503,8 +2503,8 @@ async def list_material_issues(
         query = query.where(MaterialIssue.department == department)
         count_query = count_query.where(MaterialIssue.department == department)
 
-    query = apply_search_filter(query, MaterialIssue, search, ["issue_number", "department", "cost_center"])
-    count_query = apply_search_filter(count_query, MaterialIssue, search, ["issue_number", "department", "cost_center"])
+    query = apply_search_filter(query, MaterialIssue, search, ["issue_number", "department"])
+    count_query = apply_search_filter(count_query, MaterialIssue, search, ["issue_number", "department"])
 
     total = (await db.execute(count_query)).scalar()
     # CR_16: include batch so we can return batch_number + expiry_date for the
@@ -2514,6 +2514,7 @@ async def list_material_issues(
         selectinload(MaterialIssue.items).selectinload(MaterialIssueItem.item),
         selectinload(MaterialIssue.items).selectinload(MaterialIssueItem.uom),
         selectinload(MaterialIssue.warehouse),
+        selectinload(MaterialIssue.destination_warehouse),
         selectinload(MaterialIssue.issued_to_user),
     )
     result = await db.execute(query.offset(offset).limit(limit).order_by(MaterialIssue.id.desc()))
@@ -2548,6 +2549,7 @@ async def list_material_issues(
             "indent_id": mi.indent_id,
             "indent_number": indent.indent_number if indent else None,
             "warehouse_id": mi.warehouse_id,
+            "destination_warehouse_id": mi.destination_warehouse_id,
             "issue_date": mi.issue_date,
             "department": mi.department,
             "issued_to": mi.issued_to,
@@ -2556,7 +2558,7 @@ async def list_material_issues(
                 or mi.issued_to_user.username
             ) if mi.issued_to_user else None,
             "warehouse_name": mi.warehouse.name if mi.warehouse else None,
-            "cost_center": mi.cost_center,
+            "destination_warehouse_name": mi.destination_warehouse.name if mi.destination_warehouse else None,
             "status": mi.status,
             "remarks": mi.remarks,
             "issued_by": mi.issued_by,
@@ -2809,7 +2811,6 @@ async def create_material_issue(
                 issue_date=payload.issue_date,
                 department=payload.department,
                 issued_to=payload.issued_to,
-                cost_center=payload.cost_center,
                 remarks=payload.remarks,
                 status="draft",
                 issued_by=current_user.id,
@@ -2924,8 +2925,6 @@ async def update_material_issue(
         mi.department = payload.department
     if payload.issued_to is not None:
         mi.issued_to = payload.issued_to
-    if payload.cost_center is not None:
-        mi.cost_center = payload.cost_center
     if payload.remarks is not None:
         mi.remarks = payload.remarks
 
@@ -3382,6 +3381,19 @@ async def dispatch_material_issue(
             "rate": (ledger_row.rate if ledger_row else None) or item.rate or Decimal("0"),
         })
 
+        # 3. For inter-warehouse transfers, increase the transit_qty in the source warehouse
+        if mi.destination_warehouse_id and mi.destination_warehouse_id != mi.warehouse_id:
+            from app.services.stock_service import _get_or_create_balance
+            src_balance = await _get_or_create_balance(
+                db,
+                item_id=item.item_id,
+                warehouse_id=mi.warehouse_id,
+                bin_id=item.bin_id,
+                batch_id=item.batch_id,
+                lock=True,
+            )
+            src_balance.transit_qty = (src_balance.transit_qty or Decimal("0")) + Decimal(str(item.qty))
+
     mi.status = "dispatched"
     mi.dispatched_at = datetime.now(timezone.utc)
 
@@ -3465,6 +3477,19 @@ async def cancel_material_issue(
         # Reverse stock ledger — push qty back IN with the same valuation
         reverse_gl_items: list[dict] = []
         for item in mi.items:
+            # Revert transit_qty on source warehouse
+            if mi.destination_warehouse_id and mi.destination_warehouse_id != mi.warehouse_id:
+                from app.services.stock_service import _get_or_create_balance
+                src_balance = await _get_or_create_balance(
+                    db,
+                    item_id=item.item_id,
+                    warehouse_id=mi.warehouse_id,
+                    bin_id=item.bin_id,
+                    batch_id=item.batch_id,
+                    lock=True,
+                )
+                src_balance.transit_qty = max(Decimal("0"), (src_balance.transit_qty or Decimal("0")) - Decimal(str(item.qty)))
+
             ledger_row = await post_stock_ledger(
                 db,
                 item_id=item.item_id,
@@ -3604,8 +3629,20 @@ async def acknowledge_material_issue(
 
     # Post stock ledger entries at the destination warehouse if destination_warehouse_id is set
     if mi.destination_warehouse_id:
-        from app.services.stock_service import post_stock_ledger
+        from app.services.stock_service import post_stock_ledger, _get_or_create_balance
         for item in mi.items:
+            # Decrement transit_qty in source warehouse
+            if mi.destination_warehouse_id != mi.warehouse_id:
+                src_balance = await _get_or_create_balance(
+                    db,
+                    item_id=item.item_id,
+                    warehouse_id=mi.warehouse_id,
+                    bin_id=item.bin_id,
+                    batch_id=item.batch_id,
+                    lock=True,
+                )
+                src_balance.transit_qty = max(Decimal("0"), (src_balance.transit_qty or Decimal("0")) - Decimal(str(item.qty)))
+
             await post_stock_ledger(
                 db,
                 item_id=item.item_id,

@@ -554,7 +554,7 @@ async def create_indent(
 ):
     if not payload.items:
         raise HTTPException(status_code=422, detail="At least one item is required")
-    indent_number = await generate_number(db, "indent", "indent")
+    indent_number = await generate_number(db, "indent", "unapproved_indent", pad_length=7)
     department = payload.department or payload.department_id or None
     indent_date = payload.indent_date or datetime.now().date()
 
@@ -1343,7 +1343,7 @@ async def convert_indent_to_mr(
             ),
         )
 
-    mr_number = await gen_num(db, "procurement", "material_request")
+    mr_number = await gen_num(db, "procurement", "unapproved_material_request", pad_length=7)
     mr = MaterialRequest(
         mr_number=mr_number,
         indent_id=indent.id,

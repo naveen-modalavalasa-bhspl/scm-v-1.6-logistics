@@ -89,18 +89,18 @@ async def process_dispatch_stock_deduction(db: AsyncSession, d: DispatchOrder, c
             created_by=created_by_id,
         )
 
-        # 3. For inter-warehouse transfers, increase the transit_qty in the destination warehouse
+        # 3. For inter-warehouse transfers, increase the transit_qty in the source warehouse
         if d.destination_warehouse_id and d.destination_warehouse_id != d.warehouse_id:
             from app.services.stock_service import _get_or_create_balance
-            dest_balance = await _get_or_create_balance(
+            src_balance = await _get_or_create_balance(
                 db,
                 item_id=item.material_id,
-                warehouse_id=d.destination_warehouse_id,
+                warehouse_id=d.warehouse_id,
                 bin_id=bin_id,
                 batch_id=batch_id,
                 lock=True,
             )
-            dest_balance.transit_qty = (dest_balance.transit_qty or Decimal("0")) + Decimal(str(item.dispatched_quantity))
+            src_balance.transit_qty = (src_balance.transit_qty or Decimal("0")) + Decimal(str(item.dispatched_quantity))
 
     # Automatically transition the linked MaterialIssue status to "dispatched"
     if d.material_issue_id:

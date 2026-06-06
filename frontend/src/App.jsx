@@ -75,6 +75,7 @@ const CategoryAttributeMapping = lazy(() => import('./pages/masters/CategoryAttr
 const Specs = lazy(() => import('./pages/masters/Specs'));
 const UserGroups = lazy(() => import('./pages/masters/UserGroups'));
 const OrganizationStructure = lazy(() => import('./pages/masters/OrganizationStructure'));
+const BOMs = lazy(() => import('./pages/masters/BOMs'));
 const Lms = lazy(() => import('./pages/lms/Lms'));
 
 /* Procurement */
@@ -437,6 +438,7 @@ const App = () => {
             <Route path="/masters/users" element={<KeyRoute requiredKey="masters-users"><Users /></KeyRoute>} />
             <Route path="/masters/user-groups" element={<KeyRoute requiredKey="masters-user-groups"><UserGroups /></KeyRoute>} />
             <Route path="/masters/organization-structure" element={<KeyRoute requiredKey="masters-organization-structure"><OrganizationStructure /></KeyRoute>} />
+            <Route path="/masters/boms" element={<KeyRoute requiredKey="masters-boms"><BOMs /></KeyRoute>} />
 
             {/* Procurement — guarded by 'procurement' permission */}
             <Route path="/procurement" element={<Navigate to="/procurement/material-requests" replace />} />

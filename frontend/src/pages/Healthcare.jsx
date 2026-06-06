@@ -1034,6 +1034,14 @@ const Kits = () => {
   const [form] = Form.useForm();
   const [submitting, setSubmitting] = useState(false);
   const [kitItemOpts, setKitItemOpts] = useState([]);
+
+  // Consume Kit Modal State
+  const [consumeModalOpen, setConsumeModalOpen] = useState(false);
+  const [selectedKit, setSelectedKit] = useState(null);
+  const [consumeForm] = Form.useForm();
+  const [warehouses, setWarehouses] = useState([]);
+  const [consuming, setConsuming] = useState(false);
+
   const searchKitItems = useCallback(async (q = '') => {
     try {
       const r = await api.get('/masters/items', { params: { search: q, page_size: 50 } });
@@ -1050,31 +1058,65 @@ const Kits = () => {
     setLoading(false);
   }, []);
 
-  useEffect(() => { fetchKits(); }, [fetchKits]);
+  const fetchWarehouses = useCallback(async () => {
+    try {
+      const r = await api.get('/masters/warehouses', { params: { page_size: 200 } });
+      setWarehouses(r.data.items || r.data.data || []);
+    } catch { /* silent */ }
+  }, []);
+
+  useEffect(() => {
+    fetchKits();
+    fetchWarehouses();
+  }, [fetchKits, fetchWarehouses]);
 
   const handleCreate = async (vals) => {
     setSubmitting(true);
     try {
-      await api.post('/healthcare/kits', vals);
+      const payload = {
+        name: vals.kit_name,
+        kit_code: vals.kit_code,
+        kit_type: vals.kit_type || 'custom',
+        components: (vals.components || []).map((comp) => ({
+          item_id: comp.item_id,
+          qty: Number(comp.quantity || 0),
+          uom_id: comp.uom_id || null,
+          is_optional: comp.is_optional || false,
+          remarks: comp.remarks || null,
+        })),
+      };
+      await api.post('/healthcare/kits', payload);
       message.success('Kit created');
       setDrawerOpen(false); form.resetFields(); fetchKits();
     } catch (e) { message.error(getErrorMessage(e)); }
     setSubmitting(false);
   };
 
-  const handleConsume = async (kit) => {
-    Modal.confirm({
-      title: `Consume Kit: ${kit.kit_name || kit.name}?`,
-      content: 'This will deduct all component items from inventory.',
-      okText: 'Consume', okType: 'danger',
-      onOk: async () => {
-        try {
-          await api.post(`/healthcare/kits/${kit.id}/consume`);
-          message.success('Kit consumed successfully');
-          fetchKits();
-        } catch (e) { message.error(getErrorMessage(e)); }
-      },
-    });
+  const openConsumeModal = (kit) => {
+    setSelectedKit(kit);
+    consumeForm.resetFields();
+    setConsumeModalOpen(true);
+  };
+
+  const handleConsumeSubmit = async (vals) => {
+    setConsuming(true);
+    try {
+      const payload = {
+        warehouse_id: vals.warehouse_id,
+        department: vals.department || null,
+        patient_name: vals.patient_name || null,
+        qty: Number(vals.qty || 1),
+        prescriber_name: vals.prescriber_name || null,
+        prescriber_license: vals.prescriber_license || null,
+      };
+      await api.post(`/healthcare/kits/${selectedKit.id}/consume`, payload);
+      message.success('Kit consumed successfully');
+      setConsumeModalOpen(false);
+      fetchKits();
+    } catch (e) {
+      message.error(getErrorMessage(e));
+    }
+    setConsuming(false);
   };
 
   const typeColor = { surgical: 'purple', procedure: 'blue', emergency: 'red', custom: 'default' };
@@ -1089,7 +1131,7 @@ const Kits = () => {
     { title: 'Status', dataIndex: 'is_active', key: 'active', width: 90, align: 'center',
       render: (v) => v !== false ? <Tag color="green">Active</Tag> : <Tag color="red">Inactive</Tag> },
     { title: 'Actions', key: 'act', width: 120,
-      render: (_, r) => <Button size="small" type="primary" ghost icon={<MedicineBoxOutlined />} onClick={(e) => { e.stopPropagation(); handleConsume(r); }}>Consume</Button> },
+      render: (_, r) => <Button size="small" type="primary" ghost icon={<MedicineBoxOutlined />} onClick={(e) => { e.stopPropagation(); openConsumeModal(r); }}>Consume</Button> },
   ];
 
   return (
@@ -1137,6 +1179,50 @@ const Kits = () => {
           </Form.List>
         </Form>
       </Drawer>
+
+      <Modal
+        title={`Consume Kit: ${selectedKit?.kit_name || selectedKit?.name}`}
+        open={consumeModalOpen}
+        onCancel={() => setConsumeModalOpen(false)}
+        onOk={() => consumeForm.submit()}
+        confirmLoading={consuming}
+        okText="Consume"
+        okButtonProps={{ danger: true }}
+      >
+        <Form form={consumeForm} layout="vertical" onFinish={handleConsumeSubmit}>
+          <Form.Item name="warehouse_id" label="Warehouse" rules={[{ required: true, message: 'Please select a warehouse' }]}>
+            <Select placeholder="Select warehouse..." options={warehouses.map((w) => ({ label: w.name, value: w.id }))} />
+          </Form.Item>
+          <Row gutter={12}>
+            <Col span={12}>
+              <Form.Item name="qty" label="Quantity" initialValue={1} rules={[{ required: true, type: 'number', min: 1 }]}>
+                <InputNumber min={1} style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="department" label="Department">
+                <Input placeholder="e.g. ICU, Pharmacy" />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Form.Item name="patient_name" label="Patient Name">
+            <Input placeholder="Patient Name (optional)" />
+          </Form.Item>
+          <Divider orientation="left" plain style={{ margin: '12px 0' }}>Prescriber Info (Required for Rx/Narcotics)</Divider>
+          <Row gutter={12}>
+            <Col span={12}>
+              <Form.Item name="prescriber_name" label="Prescriber Name">
+                <Input placeholder="Dr. Jane Doe" />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="prescriber_license" label="License / Registration No.">
+                <Input placeholder="LIC12345" />
+              </Form.Item>
+            </Col>
+          </Row>
+        </Form>
+      </Modal>
     </div>
   );
 };

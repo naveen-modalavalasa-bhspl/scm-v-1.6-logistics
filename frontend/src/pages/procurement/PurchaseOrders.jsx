@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Button, Drawer, Form, Input, InputNumber, Select, Space, DatePicker,
   Popconfirm, message, Row, Col, Table, Card, Descriptions,
@@ -8,6 +8,7 @@ import {
   PlusOutlined, EditOutlined, DeleteOutlined, EyeOutlined,
   SendOutlined, CheckOutlined, CloseCircleOutlined,
   MinusCircleOutlined, DownloadOutlined, UploadOutlined,
+  HistoryOutlined,
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import dayjs from 'dayjs';
@@ -49,6 +50,17 @@ const PurchaseOrders = () => {
   // Attachment
   const [attachmentUrl, setAttachmentUrl] = useState('');
   const [fileList, setFileList] = useState([]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const editId = params.get('edit_id');
+    if (editId) {
+      // Clear the query parameter from URL so it doesn't trigger again on reload
+      const newUrl = window.location.pathname;
+      window.history.replaceState({}, document.title, newUrl);
+      handleEdit({ id: parseInt(editId, 10) });
+    }
+  }, []);
 
   const loadLookups = useCallback(async () => {
     try {
@@ -123,19 +135,23 @@ const PurchaseOrders = () => {
   const [discountType, setDiscountType] = useState('percent'); // 'percent' or 'amount'
   const [discountValue, setDiscountValue] = useState(0);
 
-  const createEmptyItem = () => ({
-    key: Date.now() + Math.random(),
-    item_id: null,
-    item_name: '',
-    qty: 1,
-    uom: '',
-    rate: 0,
-    cgst_percent: 9,
-    sgst_percent: 9,
-    igst_percent: 0,
-    tax_amount: 0,
-    amount: 0,
-  });
+  const createEmptyItem = () => {
+    const vendorGstin = (selectedVendor?.gst_number || '').trim();
+    const hasGstin = !!vendorGstin;
+    return {
+      key: Date.now() + Math.random(),
+      item_id: null,
+      item_name: '',
+      qty: 1,
+      uom: '',
+      rate: 0,
+      cgst_percent: hasGstin ? 9 : 0,
+      sgst_percent: hasGstin ? 9 : 0,
+      igst_percent: hasGstin ? 0 : 18,
+      tax_amount: 0,
+      amount: 0,
+    };
+  };
 
   const fetchPOs = useCallback(
     async (params) => {
@@ -174,14 +190,32 @@ const PurchaseOrders = () => {
     try {
       const res = await api.get(`/procurement/purchase-orders/${record.id}`);
       const data = res.data;
+      setEditingPO(data);
       form.setFieldsValue({
         ...data,
         po_date: data.po_date ? dayjs(data.po_date) : null,
         expected_delivery_date: data.expected_delivery_date ? dayjs(data.expected_delivery_date) : null,
       });
 
-      if (data.vendor) {
-        setSelectedVendor(data.vendor);
+      // Resolve the full vendor object so gst_number / drug_license_number
+      // are available for the frontend validation checks in handleSubmit.
+      // Try the already-loaded vendors dropdown first (zero extra network call).
+      // Fall back to a direct GET if the vendor isn't in the list (e.g. inactive
+      // or beyond the page_size:200 limit). setSelectedVendor is called with the
+      // full vendor record so all downstream field validations work correctly.
+      if (data.vendor_id) {
+        const fromList = vendors.find((opt) => opt.value === data.vendor_id);
+        if (fromList?.vendor) {
+          setSelectedVendor(fromList.vendor);
+        } else {
+          try {
+            const vRes = await api.get(`/masters/vendors/${data.vendor_id}`);
+            setSelectedVendor(vRes.data || null);
+          } catch {
+            // Non-fatal: frontend GSTIN/DL checks will be skipped; backend enforces.
+            setSelectedVendor(null);
+          }
+        }
       }
 
       // BUG-PRO-142 fix: route the per-row maths through `recalcItem` instead
@@ -340,16 +374,14 @@ const PurchaseOrders = () => {
         let ig = item.igst_rate || item.igst_percent || 0;
         const taxRate = item.tax_rate || 0;
 
-        if (cg === 0 && sg === 0 && ig === 0 && taxRate > 0) {
-          if (hasGstin) {
-            cg = taxRate / 2;
-            sg = taxRate / 2;
-            ig = 0;
-          } else {
-            cg = 0;
-            sg = 0;
-            ig = taxRate;
-          }
+        if (!hasGstin) {
+          ig = ig > 0 ? ig : (cg + sg > 0 ? cg + sg : taxRate);
+          cg = 0;
+          sg = 0;
+        } else if (cg === 0 && sg === 0 && ig === 0 && taxRate > 0) {
+          cg = taxRate / 2;
+          sg = taxRate / 2;
+          ig = 0;
         }
 
         const row = {
@@ -454,9 +486,11 @@ const PurchaseOrders = () => {
   const handleSubmit = async (submitAction = 'draft') => {
     try {
       const values = await form.validateFields();
-      const validItems = poItems.filter((i) => i.item_id && i.rate > 0);
+      // BUG-SUPPLIER-RATE fix: include items where rate is null (supplier fills later)
+      // Only filter out items with no item_id selected
+      const validItems = poItems.filter((i) => i.item_id);
       if (validItems.length === 0) {
-        message.error('Please add at least one item with a rate');
+        message.error('Please add at least one item');
         return;
       }
 
@@ -494,20 +528,24 @@ const PurchaseOrders = () => {
         }
       }
 
-      // BUG-PRO-143 fix: GSTIN-vs-tax cross check. If the vendor has no GSTIN,
-      // refuse to send CGST/SGST values — those must be IGST or zero. Mirrors
-      // the backend BUG-PRO-013 check so the user gets immediate feedback.
-      const vendorGstin = (selectedVendor?.gst_number || '').trim();
-      if (!vendorGstin) {
-        const hasIntra = validItems.some((it) =>
-          (Number(it.cgst_percent) || 0) > 0 || (Number(it.sgst_percent) || 0) > 0
-        );
-        if (hasIntra) {
-          message.error(
-            'Vendor has no GSTIN — CGST/SGST cannot be applied. ' +
-            'Use IGST or update the vendor first.'
+      // BUG-PRO-143 fix: GSTIN-vs-tax cross check. Only apply this frontend
+      // guard when `selectedVendor` has been loaded AND we can confirm it has
+      // no GSTIN. If selectedVendor is null (vendor not yet resolved, e.g.
+      // during edit-open), skip this check — the backend is the authoritative
+      // gate and will reject invalid CGST/SGST payloads with a clear message.
+      if (selectedVendor !== null) {
+        const vendorGstin = (selectedVendor?.gst_number || '').trim();
+        if (!vendorGstin) {
+          const hasIntra = validItems.some((it) =>
+            (Number(it.cgst_percent) || 0) > 0 || (Number(it.sgst_percent) || 0) > 0
           );
-          return;
+          if (hasIntra) {
+            message.error(
+              'Vendor has no GSTIN — CGST/SGST cannot be applied. ' +
+              'Use IGST or update the vendor first.'
+            );
+            return;
+          }
         }
       }
 
@@ -536,7 +574,8 @@ const PurchaseOrders = () => {
           item_id: item.item_id,
           qty: item.qty,
           uom_id: item.uom_id || (typeof item.uom === 'number' ? item.uom : null),
-          rate: item.rate,
+          // BUG-SUPPLIER-RATE fix: send null when rate is not set (supplier fills during acknowledgment)
+          rate: (item.rate === null || item.rate === undefined || item.rate === '') ? null : item.rate,
           discount_pct: 0,
           cgst_rate: item.cgst_percent || item.cgst_rate || 0,
           sgst_rate: item.sgst_percent || item.sgst_rate || 0,
@@ -678,16 +717,14 @@ const PurchaseOrders = () => {
                 let ig = parseFloat(item.igst_rate || item.igst_percent || 0);
                 const tax = parseFloat(item.tax_rate || 0);
 
-                if (cg === 0 && sg === 0 && ig === 0 && tax > 0) {
-                  if (hasGstin) {
-                    cg = tax / 2;
-                    sg = tax / 2;
-                    ig = 0;
-                  } else {
-                    cg = 0;
-                    sg = 0;
-                    ig = tax;
-                  }
+                if (!hasGstin) {
+                  ig = ig > 0 ? ig : (cg + sg > 0 ? cg + sg : tax);
+                  cg = 0;
+                  sg = 0;
+                } else if (cg === 0 && sg === 0 && ig === 0 && tax > 0) {
+                  cg = tax / 2;
+                  sg = tax / 2;
+                  ig = 0;
                 }
 
                 updatePoItem(record.key, 'cgst_percent', cg);
@@ -754,14 +791,34 @@ const PurchaseOrders = () => {
 
   const columns = [
     {
+      title: 'Version',
+      dataIndex: 'version_number',
+      key: 'version',
+      width: 90,
+      render: (v, record) => (
+        <Tag
+          color={record.is_history_row ? 'default' : 'blue'}
+          style={{ fontFamily: 'monospace', fontSize: 11 }}
+        >
+          {record.is_history_row ? <HistoryOutlined style={{ marginRight: 3 }} /> : null}
+          v{v || '1.0'}
+        </Tag>
+      ),
+    },
+    {
       title: 'PO Number',
       dataIndex: 'po_number',
       key: 'po_number',
-      width: 150,
+      width: 200,
       sorter: true,
       fixed: 'left',
       render: (text, record) => (
-        <a onClick={() => navigate(`/procurement/purchase-orders/${record.id}`)}>{text}</a>
+        <a
+          onClick={() => navigate(`/procurement/purchase-orders/${record.id}`)}
+          style={{ color: record.is_history_row ? '#888' : undefined }}
+        >
+          {text}
+        </a>
       ),
     },
     {
@@ -789,6 +846,14 @@ const PurchaseOrders = () => {
       render: (v) => formatDate(v),
     },
     {
+      title: 'Supplier Delivery Date',
+      dataIndex: 'supplier_delivery_date',
+      key: 'supplier_delivery_date',
+      width: 140,
+      sorter: true,
+      render: (v) => formatDate(v),
+    },
+    {
       title: 'Grand Total',
       dataIndex: 'grand_total',
       key: 'grand_total',
@@ -809,7 +874,16 @@ const PurchaseOrders = () => {
       key: 'actions',
       width: 180,
       fixed: 'right',
-      render: (_, record) => (
+      render: (_, record) => {
+        // History rows are read-only — no actions allowed
+        if (record.is_history_row) {
+          return (
+            <Tooltip title="Read-only — this is a previous version">
+              <Tag color="default" style={{ fontSize: 11 }}>Archived</Tag>
+            </Tooltip>
+          );
+        }
+        return (
         <Space size="small">
           <Button
             type="link"
@@ -849,7 +923,8 @@ const PurchaseOrders = () => {
             </>
           )}
         </Space>
-      ),
+        );
+      },
     },
   ];
 
@@ -865,6 +940,8 @@ const PurchaseOrders = () => {
           { label: 'Draft', value: 'draft' },
           { label: 'Pending Approval', value: 'pending_approval' },
           { label: 'Approved', value: 'approved' },
+          { label: 'Accepted by Supplier', value: 'accepted' },
+          { label: 'Rejected by Supplier', value: 'rejected' },
           { label: 'Partially Received', value: 'partially_received' },
           { label: 'Received', value: 'received' },
           { label: 'Closed', value: 'closed' },
@@ -891,7 +968,12 @@ const PurchaseOrders = () => {
         searchPlaceholder="Search by PO number or vendor..."
         exportFileName="purchase_orders"
         toolbar={toolbar}
-        scroll={{ x: 1400 }}
+        scroll={{ x: 1500 }}
+        onRow={(record) => ({
+          style: record.is_history_row
+            ? { background: '#fafafa', color: '#8c8c8c' }
+            : {},
+        })}
       />
 
       {/* Create / Edit Drawer */}

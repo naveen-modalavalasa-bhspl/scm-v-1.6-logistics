@@ -534,12 +534,19 @@ async def stock_balance_breakdown(
         joinedload(StockBalance.bin).joinedload(WarehouseBin.rack).joinedload(WarehouseRack.line).joinedload(WarehouseLine.location),
     ).where(StockBalance.item_id == item_id)
 
-    from app.utils.dependencies import user_is_managerial, user_warehouse_ids
-    if not await user_is_managerial(db, current_user.id):
-        scoped = await user_warehouse_ids(db, current_user.id)
-        if not scoped:
-            return {"items": []}
-        q = q.where(StockBalance.warehouse_id.in_(scoped))
+    from app.utils.dependencies import user_is_managerial, user_warehouse_ids, get_user_role_codes, get_warehouse_and_descendants
+    role_codes = await get_user_role_codes(db, current_user.id)
+    is_admin = bool({"super_admin", "admin"} & set(role_codes))
+    assigned_whs = await user_warehouse_ids(db, current_user.id)
+
+    if not is_admin:
+        if assigned_whs:
+            scoped = await get_warehouse_and_descendants(db, assigned_whs)
+            q = q.where(StockBalance.warehouse_id.in_(scoped))
+        else:
+            is_managerial = await user_is_managerial(db, current_user.id)
+            if not is_managerial:
+                return {"items": []}
     
     rows = (await db.execute(q)).scalars().all()
     

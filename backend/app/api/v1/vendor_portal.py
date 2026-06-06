@@ -7,7 +7,7 @@ Suppliers can:
 
 This mirrors carrier_portal.py but wires into the procurement module instead of logistics.
 """
-from datetime import datetime, time, timezone
+from datetime import datetime, time, timezone, date
 from decimal import Decimal
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
@@ -280,6 +280,9 @@ async def supplier_submit_or_update_quote(
     else:
         grand_total = total_amount + total_tax
         
+    if not existing.quotation_number:
+        from app.services.number_series import generate_number
+        existing.quotation_number = await generate_number(db, "procurement", "quotation", pad_length=7)
     existing.grand_total = grand_total
     existing.status = "submitted"
     existing.quotation_date = datetime.now(timezone.utc)
@@ -375,15 +378,15 @@ async def supplier_list_purchase_orders(
         )
         .where(
             PurchaseOrder.vendor_id == vendor_id,
-            PurchaseOrder.status.in_(("approved", "partially_received", "received", "closed", "cancelled"))
+            PurchaseOrder.is_current == True,
+            PurchaseOrder.status.in_(("approved", "accepted", "rejected", "partially_received", "received", "closed", "cancelled"))
         )
         .order_by(PurchaseOrder.id.desc())
     )
     pos = res.scalars().all()
-    
-    items_list = []
-    for po in pos:
-        items_list.append({
+
+    def _po_to_dict(po, is_history: bool = False):
+        return {
             "id": po.id,
             "po_number": po.po_number,
             "po_date": po.po_date.isoformat() if po.po_date else None,
@@ -394,9 +397,41 @@ async def supplier_list_purchase_orders(
             "grand_total": float(po.grand_total or 0),
             "status": po.status,
             "supplier_acknowledgement": po.supplier_acknowledgement or "pending",
+            "supplier_delivery_date": po.supplier_delivery_date.isoformat() if po.supplier_delivery_date else None,
             "remarks": po.remarks,
             "warehouse_name": po.warehouse.name if po.warehouse else None,
-        })
+            "version_number": po.version_number,
+            "base_po_number": po.base_po_number,
+            "is_history_row": is_history,
+        }
+
+    # Batch-load historical versions (is_current=False) so we can nest them as tree children.
+    base_numbers = list({po.base_po_number for po in pos if po.base_po_number})
+    history_map: dict[str, list] = {}
+    if base_numbers:
+        hist_res = await db.execute(
+            select(PurchaseOrder)
+            .options(selectinload(PurchaseOrder.warehouse))
+            .where(
+                PurchaseOrder.vendor_id == vendor_id,
+                PurchaseOrder.base_po_number.in_(base_numbers),
+                PurchaseOrder.is_current == False,  # noqa: E712
+            )
+            .order_by(PurchaseOrder.version_number.desc())
+        )
+        for hist_po in hist_res.scalars().all():
+            key = hist_po.base_po_number
+            if key not in history_map:
+                history_map[key] = []
+            history_map[key].append(_po_to_dict(hist_po, is_history=True))
+
+    items_list = []
+    for po in pos:
+        row = _po_to_dict(po, is_history=False)
+        if po.base_po_number and po.base_po_number in history_map:
+            row["children"] = history_map[po.base_po_number]
+        items_list.append(row)
+
     return {"items": items_list, "total": len(items_list)}
 
 
@@ -458,13 +493,29 @@ async def supplier_get_purchase_order(
         "billing_address": po.billing_address,
         "shipping_address": po.shipping_address,
         "warehouse_name": po.warehouse.name if po.warehouse else None,
+        "version_number": po.version_number,
+        "supplier_delivery_date": po.supplier_delivery_date.isoformat() if po.supplier_delivery_date else None,
         "items": items_list,
     }
+
+
+from typing import List, Optional
+
+class SupplierAcknowledgeItem(BaseModel):
+    item_id: int
+    rate: Decimal
+    discount_pct: Decimal = Decimal("0")
+    # BUG-SUPPLIER-RATE fix: supplier can set tax rates when procurement left them blank
+    cgst_rate: Optional[Decimal] = None
+    sgst_rate: Optional[Decimal] = None
+    igst_rate: Optional[Decimal] = None
 
 
 class SupplierAcknowledgePO(BaseModel):
     action: str  # "accept" or "reject"
     remarks: Optional[str] = None
+    delivery_date: Optional[date] = None
+    items: Optional[List[SupplierAcknowledgeItem]] = None
 
 
 @router.post("/purchase-orders/{po_id}/acknowledge", response_model=dict)
@@ -475,6 +526,7 @@ async def supplier_acknowledge_po(
     current_vendor: VendorUser = Depends(get_current_vendor_user),
 ):
     """Supplier accepts or rejects the Purchase Order."""
+    from pydantic import BaseModel
     vendor_id = current_vendor.vendor_id
     res = await db.execute(
         select(PurchaseOrder).where(
@@ -487,10 +539,93 @@ async def supplier_acknowledge_po(
         raise HTTPException(404, "Purchase Order not found")
         
     if payload.action == "accept":
+        if not payload.delivery_date:
+            raise HTTPException(400, "Delivery date is required when accepting the Purchase Order.")
         po.supplier_acknowledgement = "accepted"
+        po.status = "accepted"
+        po.supplier_delivery_date = datetime.combine(payload.delivery_date, time.min).replace(tzinfo=timezone.utc)
+        
+        # If supplier provided updated rates, apply them to the PO items
+        if payload.items:
+            item_res = await db.execute(
+                select(PurchaseOrderItem).where(PurchaseOrderItem.po_id == po.id)
+            )
+            po_items = item_res.scalars().all()
+            po_items_map = {item.item_id: item for item in po_items}
+            
+            for item_input in payload.items:
+                if item_input.item_id in po_items_map:
+                    item_row = po_items_map[item_input.item_id]
+                    item_row.rate = item_input.rate
+                    item_row.discount_pct = item_input.discount_pct
+
+                    # BUG-SUPPLIER-RATE fix: apply supplier-provided tax rates
+                    # when they were originally zero (supplier fills pricing).
+                    if item_input.cgst_rate is not None:
+                        item_row.cgst_rate = item_input.cgst_rate
+                    if item_input.sgst_rate is not None:
+                        item_row.sgst_rate = item_input.sgst_rate
+                    if item_input.igst_rate is not None:
+                        item_row.igst_rate = item_input.igst_rate
+                    
+                    # Recalculate line total amount and tax amount
+                    base = item_row.qty * item_row.rate
+                    disc = base * item_row.discount_pct / Decimal("100")
+                    net = base - disc
+                    cgst = net * item_row.cgst_rate / Decimal("100")
+                    sgst = net * item_row.sgst_rate / Decimal("100")
+                    igst = net * item_row.igst_rate / Decimal("100")
+                    item_row.tax_amount = cgst + sgst + igst
+                    item_row.amount = net + item_row.tax_amount
+            
+            await db.flush()
+            
+            # Recalculate PO header totals
+            sub_t = Decimal("0")
+            tax_t = Decimal("0")
+            cgst_t = Decimal("0")
+            sgst_t = Decimal("0")
+            igst_t = Decimal("0")
+            disc_t = Decimal("0")
+            for it in po_items:
+                qty = Decimal(str(it.qty or 0))
+                rate = Decimal(str(it.rate or 0))
+                disc_pct = Decimal(str(it.discount_pct or 0))
+                base = qty * rate
+                disc = base * disc_pct / Decimal("100")
+                net = base - disc
+                cgst = net * Decimal(str(it.cgst_rate or 0)) / Decimal("100")
+                sgst = net * Decimal(str(it.sgst_rate or 0)) / Decimal("100")
+                igst = net * Decimal(str(it.igst_rate or 0)) / Decimal("100")
+                
+                sub_t += base
+                disc_t += disc
+                cgst_t += cgst
+                sgst_t += sgst
+                igst_t += igst
+                tax_t += (cgst + sgst + igst)
+            
+            po.subtotal = sub_t
+            po.discount_amount = disc_t
+            po.cgst_amount = cgst_t
+            po.sgst_amount = sgst_t
+            po.igst_amount = igst_t
+            po.tax_amount = tax_t
+
+            # Parse vehicle cost from remarks
+            vehicle_cost = Decimal("0")
+            if po.remarks:
+                import re
+                match = re.search(r"Includes vehicle cost:\s*(\d+(\.\d+)?)", po.remarks)
+                if match:
+                    vehicle_cost = Decimal(match.group(1))
+            
+            po.grand_total = sub_t - disc_t + tax_t + vehicle_cost
+            
         action_desc = "accepted"
     elif payload.action == "reject":
         po.supplier_acknowledgement = "rejected"
+        po.status = "rejected"
         action_desc = "rejected"
         po.remarks = (po.remarks or "") + f" | [REJECTED BY SUPPLIER] {payload.remarks or 'No reason given'}"
     else:

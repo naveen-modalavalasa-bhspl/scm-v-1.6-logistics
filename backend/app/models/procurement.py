@@ -120,7 +120,7 @@ class Quotation(Base):
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     rfq_id = Column(BigInteger, ForeignKey("rfqs.id", ondelete="CASCADE"), nullable=True)
     rfq_number = Column(String(50), index=True)
-    quotation_number = Column(String(50), unique=True, nullable=False)
+    quotation_number = Column(String(50), unique=True, nullable=True)
     mr_id = Column(BigInteger, ForeignKey("material_requests.id"))
     vendor_id = Column(BigInteger, ForeignKey("vendors.id"), nullable=False)
     quotation_date = Column(DateTime, nullable=False)
@@ -197,7 +197,7 @@ class PurchaseOrder(Base):
     # Wave 5 — text payment terms + transactional currency (BUG-PRO-007/139).
     payment_terms = Column(Text)
     currency = Column(String(3), default="INR", nullable=False)
-    status = Column(Enum("draft", "pending_approval", "approved", "partially_received", "received", "closed", "cancelled", name="po_status_enum"), default="draft")
+    status = Column(Enum("draft", "pending_approval", "approved", "accepted", "rejected", "partially_received", "received", "closed", "cancelled", name="po_status_enum"), default="draft")
     remarks = Column(Text)
     attachment_url = Column(String(500))
     approved_by = Column(BigInteger)
@@ -210,6 +210,13 @@ class PurchaseOrder(Base):
     cancel_reason = Column(Text)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    
+    # Versioning & Supplier Delivery Date flow
+    version_number = Column(String(20), default="1.0", nullable=False)
+    parent_po_id = Column(BigInteger, ForeignKey("purchase_orders.id"), nullable=True)
+    supplier_delivery_date = Column(DateTime, nullable=True)
+    is_current = Column(Boolean, default=True, nullable=False)
+    base_po_number = Column(String(50), nullable=True)
 
     vendor = relationship("Vendor")
     material_request = relationship("MaterialRequest")

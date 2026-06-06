@@ -336,13 +336,13 @@ async def stock_balance_summary_alias(
     today = _date.today()
     expiring_window = today + _td(days=30)
     q_low = (
-        select(func.count())
+        select(func.count(StockBalance.id))
         .select_from(StockBalance)
         .join(_Item, _Item.id == StockBalance.item_id)
         .where(_Item.reorder_level > 0, StockBalance.total_qty < _Item.reorder_level)
     )
     q_exp = (
-        select(func.count())
+        select(func.count(StockBalance.id))
         .select_from(StockBalance)
         .join(_Batch, _Batch.id == StockBalance.batch_id)
         .where(
@@ -352,15 +352,23 @@ async def stock_balance_summary_alias(
             StockBalance.total_qty > 0,
         )
     )
-    if not await user_is_managerial(db, current_user.id):
-        scoped = await user_warehouse_ids(db, current_user.id)
-        if not scoped:
-            return {"total_items": 0, "total_value": 0.0,
-                    "low_stock_alerts": 0, "expiring_soon": 0}
-        q_total = q_total.where(StockBalance.warehouse_id.in_(scoped))
-        q_value = q_value.where(StockBalance.warehouse_id.in_(scoped))
-        q_low = q_low.where(StockBalance.warehouse_id.in_(scoped))
-        q_exp = q_exp.where(StockBalance.warehouse_id.in_(scoped))
+    from app.utils.dependencies import get_user_role_codes, get_warehouse_and_descendants
+    role_codes = await get_user_role_codes(db, current_user.id)
+    is_admin = bool({"super_admin", "admin"} & set(role_codes))
+    assigned_whs = await user_warehouse_ids(db, current_user.id)
+
+    if not is_admin:
+        if assigned_whs:
+            scoped = await get_warehouse_and_descendants(db, assigned_whs)
+            q_total = q_total.where(StockBalance.warehouse_id.in_(scoped))
+            q_value = q_value.where(StockBalance.warehouse_id.in_(scoped))
+            q_low = q_low.where(StockBalance.warehouse_id.in_(scoped))
+            q_exp = q_exp.where(StockBalance.warehouse_id.in_(scoped))
+        else:
+            is_managerial = await user_is_managerial(db, current_user.id)
+            if not is_managerial:
+                return {"total_items": 0, "total_value": 0.0, "total_stock_value": 0.0,
+                        "low_stock_alerts": 0, "expiring_soon": 0}
     total = (await db.execute(q_total)).scalar() or 0
     value = (await db.execute(q_value)).scalar() or 0
     try:
@@ -371,7 +379,7 @@ async def stock_balance_summary_alias(
         expiring = (await db.execute(q_exp)).scalar() or 0
     except Exception:
         expiring = 0
-    return {"total_items": total, "total_value": float(value),
+    return {"total_items": total, "total_value": float(value), "total_stock_value": float(value),
             "low_stock_alerts": int(low), "expiring_soon": int(expiring)}
 
 

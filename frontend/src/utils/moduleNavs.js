@@ -26,6 +26,7 @@ export const MODULE_NAVS = {
       { label: 'User Groups',   path: '/masters/user-groups' },
       { label: 'Org Structure', path: '/masters/organization-structure' },
       { label: 'Price Lists',   path: '/masters/price-lists' },
+      { label: 'BOM',           path: '/masters/boms' },
     ],
   },
   procurement: {

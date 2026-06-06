@@ -374,7 +374,7 @@ async def pending_po_report(db: AsyncSession) -> List[Dict]:
             PurchaseOrder.status, Vendor.name.label("vendor_name"),
         )
         .join(Vendor, PurchaseOrder.vendor_id == Vendor.id)
-        .where(PurchaseOrder.status.in_(["approved", "partially_received"]))
+        .where(PurchaseOrder.status.in_(["approved", "accepted", "partially_received"]))
         .order_by(PurchaseOrder.expected_delivery_date.asc())
     )
     result = await db.execute(query)
@@ -858,7 +858,7 @@ async def dashboard_kpis(db: AsyncSession, warehouse_id: Optional[int] = None) -
 
     # BUG-FIN-117: scope POs/MRs/GRNs by warehouse_id when supplied.
     open_po_q = select(func.count(PurchaseOrder.id)).where(
-        PurchaseOrder.status.in_(["approved", "partially_received"])
+        PurchaseOrder.status.in_(["approved", "accepted", "partially_received"])
     )
     if warehouse_id:
         open_po_q = open_po_q.where(PurchaseOrder.warehouse_id == warehouse_id)
