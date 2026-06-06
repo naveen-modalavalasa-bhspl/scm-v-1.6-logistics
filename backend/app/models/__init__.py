@@ -1,5 +1,5 @@
 from app.models.user import Organization, Project, Role, Permission, RolePermission, User, UserRole, UserProject, UserWarehouse, TokenBlocklist, PasswordHistory
-from app.models.master import UOMCategory, UOM, UOMConversion, ItemCategory, Item, PriceList, PriceListItem, Vendor, VendorCategory, VendorItem, VendorContract, VendorRating, Customer, Brand, ItemAttribute, ItemAttributeValue, SpecCategory, Spec, ItemSpec, ItemSpecValue, UserGroup, UserGroupMember, UserGroupPermission
+from app.models.master import UOMCategory, UOM, UOMConversion, ItemCategory, Item, PriceList, PriceListItem, Vendor, VendorCategory, VendorItem, VendorContract, VendorRating, Customer, Brand, ItemAttribute, ItemAttributeValue, SpecCategory, Spec, ItemSpec, ItemSpecValue, UserGroup, UserGroupMember, UserGroupPermission, BOM, BOMComponent
 from app.models.warehouse import Warehouse, WarehouseLocation, WarehouseLine, WarehouseRack, WarehouseBin, Batch, SerialNumber, MaterialInward, MaterialInwardItem
 from app.models.stock import StockLedger, StockBalance
 from app.models.barcode import BarcodeRegistry, ScanLog
@@ -16,7 +16,7 @@ from app.models.audit import StockAudit, StockAuditItem, BinReplenishmentRule
 from app.models.approval import ApprovalWorkflow, ApprovalLevel, ApprovalRequest, ApprovalHistory, ApprovalDelegation
 from app.models.rules import BusinessRule, BusinessRuleExecution
 from app.models.accounts import ChartOfAccounts, Invoice, InvoiceItem, Payment, CreditNote, JournalEntry, JournalEntryLine, AccountLedger, AccountMapping, FiscalYear
-from app.models.asset import AssetCategory, Asset, AssetMovement
+from app.models.asset import AssetCategory, Asset, AssetMovement, AssetSpareMapping
 from app.models.system import Notification, ActivityLog, EmailLog, FileAttachment, SystemSetting, NumberSeries
 from app.models.healthcare import BatchRecall, BatchRecallTrace, RateContract, RateContractItem, VendorScorecard, ItemKit, ItemKitComponent, DepartmentBudget, LandedCost, LandedCostAllocation, DemandForecast, CarrierTracking
 from app.models.compliance import PrescriptionRecord, ColdChainLog, ESignature, ComplianceAudit

@@ -942,7 +942,7 @@ async def auto_reorder(
                 continue
 
             reorder_qty = row.reorder_qty if row.reorder_qty and row.reorder_qty > 0 else row.reorder_level
-            mr_number = await generate_number(db, "procurement", "material_request")
+            mr_number = await generate_number(db, "procurement", "unapproved_material_request", pad_length=7)
 
             mr = MaterialRequest(
                 mr_number=mr_number,

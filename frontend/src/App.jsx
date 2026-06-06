@@ -75,6 +75,7 @@ const CategoryAttributeMapping = lazy(() => import('./pages/masters/CategoryAttr
 const Specs = lazy(() => import('./pages/masters/Specs'));
 const UserGroups = lazy(() => import('./pages/masters/UserGroups'));
 const OrganizationStructure = lazy(() => import('./pages/masters/OrganizationStructure'));
+const BOMs = lazy(() => import('./pages/masters/BOMs'));
 const Lms = lazy(() => import('./pages/lms/Lms'));
 
 /* Procurement */
@@ -166,6 +167,7 @@ const AssetRegister = lazy(() => import('./pages/assets/AssetRegister'));
 const AssetForm = lazy(() => import('./pages/assets/AssetForm'));
 const AssetMovement = lazy(() => import('./pages/assets/AssetMovement'));
 const AssetMovementForm = lazy(() => import('./pages/assets/AssetMovementForm'));
+const AssetSpareMapping = lazy(() => import('./pages/assets/AssetSpareMapping'));
 
 /* Reports */
 const ReportsDashboard = lazy(() => import('./pages/reports/ReportsDashboard'));
@@ -436,6 +438,7 @@ const App = () => {
             <Route path="/masters/users" element={<KeyRoute requiredKey="masters-users"><Users /></KeyRoute>} />
             <Route path="/masters/user-groups" element={<KeyRoute requiredKey="masters-user-groups"><UserGroups /></KeyRoute>} />
             <Route path="/masters/organization-structure" element={<KeyRoute requiredKey="masters-organization-structure"><OrganizationStructure /></KeyRoute>} />
+            <Route path="/masters/boms" element={<KeyRoute requiredKey="masters-boms"><BOMs /></KeyRoute>} />
 
             {/* Procurement — guarded by 'procurement' permission */}
             <Route path="/procurement" element={<Navigate to="/procurement/material-requests" replace />} />
@@ -552,6 +555,7 @@ const App = () => {
             <Route path="/assets/movement" element={<PermissionRoute module="assets"><AssetMovement /></PermissionRoute>} />
             <Route path="/assets/movement/new" element={<PermissionRoute module="assets"><AssetMovementForm /></PermissionRoute>} />
             <Route path="/assets/movement/:id" element={<PermissionRoute module="assets"><AssetMovementForm /></PermissionRoute>} />
+            <Route path="/assets/spare-mapping" element={<PermissionRoute module="assets"><AssetSpareMapping /></PermissionRoute>} />
 
             {/* Healthcare SCM — guarded by 'healthcare' permission */}
             <Route path="/healthcare" element={<PermissionRoute module="healthcare"><Healthcare /></PermissionRoute>} />

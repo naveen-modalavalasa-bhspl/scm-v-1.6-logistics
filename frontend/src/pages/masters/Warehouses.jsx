@@ -518,17 +518,48 @@ const Warehouses = () => {
                     ]}
                   >
                     <List.Item.Meta
-                      avatar={<HomeOutlined style={{ fontSize: 18, color: '#eb2f96' }} />}
-                      title={wh.name || wh.warehouse_name}
+                      avatar={<HomeOutlined style={{ fontSize: 18, color: '#eb2f96', marginTop: 4 }} />}
+                      title={
+                        <Tooltip title={wh.name || wh.warehouse_name} placement="topLeft">
+                          <div style={{
+                            fontWeight: 600,
+                            fontSize: '13px',
+                            color: '#262626',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                          }}>
+                            {wh.name || wh.warehouse_name}
+                          </div>
+                        </Tooltip>
+                      }
                       description={
-                        <Space size={4}>
-                          {wh.warehouse_type && <Tag style={{ fontSize: 10 }}>{wh.warehouse_type}</Tag>}
-                          {wh.code && <span style={{ fontSize: 11, color: '#999' }}>{wh.code}</span>}
-                          {wh.parent_name && <Tag color="purple" style={{ fontSize: 10 }}>Parent: {wh.parent_name}</Tag>}
-                          <Tag color={wh.status === 'active' || wh.is_active ? 'green' : 'red'} style={{ fontSize: 10 }}>
-                            {wh.status === 'active' || wh.is_active ? 'Active' : 'Inactive'}
-                          </Tag>
-                        </Space>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '4px', overflow: 'hidden' }}>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', alignItems: 'center' }}>
+                            {wh.warehouse_type && (
+                              <Tag style={{ fontSize: '10px', lineHeight: '16px', margin: 0, padding: '0 4px', textTransform: 'capitalize' }}>
+                                {wh.warehouse_type}
+                              </Tag>
+                            )}
+                            {wh.code && (
+                              <span style={{ fontSize: '11px', color: '#8c8c8c', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100px' }} title={wh.code}>
+                                {wh.code}
+                              </span>
+                            )}
+                          </div>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', alignItems: 'center' }}>
+                            {wh.parent_name && (
+                              <Tooltip title={`Parent: ${wh.parent_name}`} placement="topLeft">
+                                <Tag color="purple" style={{ fontSize: '10px', lineHeight: '16px', margin: 0, padding: '0 4px', maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  Parent: {wh.parent_name}
+                                </Tag>
+                              </Tooltip>
+                            )}
+                            <Tag color={wh.status === 'active' || wh.is_active ? 'green' : 'red'} style={{ fontSize: '10px', lineHeight: '16px', margin: 0, padding: '0 4px' }}>
+                              {wh.status === 'active' || wh.is_active ? 'Active' : 'Inactive'}
+                            </Tag>
+                          </div>
+                        </div>
                       }
                     />
                   </List.Item>

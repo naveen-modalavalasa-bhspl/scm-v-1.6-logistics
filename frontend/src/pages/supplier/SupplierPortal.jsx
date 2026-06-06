@@ -220,10 +220,12 @@ export default function SupplierPortal() {
   const [changePassLoading, setChangePassLoading] = useState(false);
   const [quoteForm] = Form.useForm();
   const [passForm] = Form.useForm();
+  const [poReviewForm] = Form.useForm();
   const { changePassword } = useVendorAuthStore();
 
   /* Purchase Order Acknowledgment states */
   const [purchaseOrders, setPurchaseOrders] = useState([]);
+  const [currentPoItems, setCurrentPoItems] = useState([]);
   const [poLoading, setPoLoading] = useState(false);
   const [poModalVisible, setPoModalVisible] = useState(false);
   const [selectedPo, setSelectedPo] = useState(null);
@@ -232,6 +234,7 @@ export default function SupplierPortal() {
   const [poActionLoading, setPoActionLoading] = useState(false);
   const [rejectReasonVisible, setRejectReasonVisible] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
+  const [committedDeliveryDate, setCommittedDeliveryDate] = useState(null);
 
   /* Must change password on first login */
   const mustChange = user?.must_change_password;
@@ -265,11 +268,19 @@ export default function SupplierPortal() {
     setPoModalVisible(true);
     setRejectReasonVisible(false);
     setRejectReason('');
+    setCommittedDeliveryDate(null);
     setSelectedPoDetails(null);
+    setCurrentPoItems([]);
+    poReviewForm.resetFields();
     try {
       setPoDetailsLoading(true);
       const res = await vendorApi.get(`/supplier/purchase-orders/${po.id}`);
-      setSelectedPoDetails(res.data || null);
+      const data = res.data || null;
+      setSelectedPoDetails(data);
+      setCurrentPoItems(data?.items || []);
+      if (data && data.items) {
+        poReviewForm.setFieldsValue({ items: data.items });
+      }
     } catch (err) {
       message.error(err?.response?.data?.detail || 'Failed to fetch Purchase Order details');
       setPoModalVisible(false);
@@ -278,13 +289,57 @@ export default function SupplierPortal() {
     }
   };
 
-  const handleAcknowledgePO = async (poId, action, remarks = '') => {
+  const handlePoReviewValuesChange = (_, allValues) => {
+    const items = allValues.items || [];
+    const updated = items.map((item, idx) => {
+      const original = (selectedPoDetails?.items || [])[idx] || {};
+      const qty = Number(item.qty ?? original.qty ?? 0);
+      const rate = Number(item.rate ?? original.rate ?? 0);
+      const disc = Number(item.discount_pct ?? original.discount_pct ?? 0);
+      // BUG-SUPPLIER-RATE fix: use editable tax rates from form, fallback to original
+      const cgst = Number(item.cgst_rate ?? original.cgst_rate ?? 0);
+      const sgst = Number(item.sgst_rate ?? original.sgst_rate ?? 0);
+      const igst = Number(item.igst_rate ?? original.igst_rate ?? 0);
+      
+      const gross = qty * rate;
+      const discAmt = gross * (disc / 100);
+      const net = gross - discAmt;
+      const taxAmt = net * ((cgst + sgst + igst) / 100);
+      const amount = Number((net + taxAmt).toFixed(2));
+      return {
+        ...original,
+        ...item,
+        cgst_rate: cgst,
+        sgst_rate: sgst,
+        igst_rate: igst,
+        amount,
+      };
+    });
+    setCurrentPoItems(updated);
+  };
+
+  const handleAcknowledgePO = async (poId, action, remarks = '', deliveryDate = null, items = null) => {
     try {
       setPoActionLoading(true);
-      const res = await vendorApi.post(`/supplier/purchase-orders/${poId}/acknowledge`, {
+      const payload = {
         action,
         remarks,
-      });
+      };
+      if (action === 'accept') {
+        payload.delivery_date = deliveryDate;
+        if (items) {
+          payload.items = items.map((it) => ({
+            item_id: it.item_id,
+            rate: it.rate || 0,
+            discount_pct: it.discount_pct || 0,
+            // BUG-SUPPLIER-RATE fix: include tax rates so supplier can set GST
+            cgst_rate: it.cgst_rate || 0,
+            sgst_rate: it.sgst_rate || 0,
+            igst_rate: it.igst_rate || 0,
+          }));
+        }
+      }
+      const res = await vendorApi.post(`/supplier/purchase-orders/${poId}/acknowledge`, payload);
       message.success(res.data?.message || `Purchase order ${action}ed successfully!`);
       setPoModalVisible(false);
       fetchPurchaseOrders();
@@ -623,11 +678,30 @@ export default function SupplierPortal() {
   /* ── PO Columns ── */
   const poColumns = [
     {
+      title: 'Version',
+      dataIndex: 'version_number',
+      key: 'version',
+      width: 90,
+      render: (v, record) => (
+        <Tag
+          color={record.is_history_row ? 'default' : 'blue'}
+          style={{ fontFamily: 'monospace', fontSize: 11 }}
+          icon={record.is_history_row ? <ExclamationCircleOutlined style={{ fontSize: 10 }} /> : null}
+        >
+          v{v || '1.0'}
+        </Tag>
+      ),
+    },
+    {
       title: 'PO Number',
       dataIndex: 'po_number',
       key: 'po_number',
-      width: 160,
-      render: (text) => <Text strong style={{ fontFamily: 'monospace', color: '#0284c7' }}>{text}</Text>,
+      width: 200,
+      render: (text, record) => (
+        <Text strong style={{ fontFamily: 'monospace', color: record.is_history_row ? '#888' : '#0284c7' }}>
+          {text}
+        </Text>
+      ),
     },
     {
       title: 'PO Date',
@@ -656,7 +730,7 @@ export default function SupplierPortal() {
         });
         let vCost = 0;
         if (r.remarks) {
-          const match = r.remarks.match(/Includes vehicle cost:\s*(\d+(\.\d+)?)/);
+          const match = r.remarks.match(/Includes vehicle cost:\s*(\d+(\.\d+)?)/)
           if (match) vCost = parseFloat(match[1]);
         }
         const calcGrand = Math.max(parseFloat(v || 0), itemsTotal + vCost);
@@ -682,20 +756,37 @@ export default function SupplierPortal() {
       },
     },
     {
+      title: 'Supplier Delivery Date',
+      dataIndex: 'supplier_delivery_date',
+      key: 'supplier_delivery_date',
+      width: 140,
+      render: fmtDate,
+    },
+    {
       title: 'Actions',
       key: 'actions',
       width: 180,
-      render: (_, record) => (
-        <Button
-          type="primary"
-          ghost
-          size="small"
-          icon={<FileSearchOutlined />}
-          onClick={() => handleOpenPoDetails(record)}
-        >
-          {record.supplier_acknowledgement === 'pending' ? 'Review & Acknowledge' : 'View Details'}
-        </Button>
-      ),
+      render: (_, record) => {
+        // History rows are read-only — no acknowledge action available
+        if (record.is_history_row) {
+          return (
+            <Tooltip title="Read-only — this is a previous version">
+              <Tag color="default" style={{ fontSize: 11 }}>Archived</Tag>
+            </Tooltip>
+          );
+        }
+        return (
+          <Button
+            type="primary"
+            ghost
+            size="small"
+            icon={<FileSearchOutlined />}
+            onClick={() => handleOpenPoDetails(record)}
+          >
+            {record.supplier_acknowledgement === 'pending' ? 'Review & Acknowledge' : 'View Details'}
+          </Button>
+        );
+      },
     },
   ];
 
@@ -750,6 +841,149 @@ export default function SupplierPortal() {
       key: 'amount',
       align: 'right',
       render: (v) => <Text strong style={{ fontFamily: 'monospace' }}>{fmt(v)}</Text>,
+    },
+  ];
+
+  const poReviewItemColumns = [
+    {
+      title: 'Item',
+      key: 'item',
+      render: (_, r) => (
+        <Space direction="vertical" size={0}>
+          <Text strong>{r.item_name || '—'}</Text>
+          <Text style={{ color: '#64748b', fontSize: '11px', fontFamily: 'monospace' }}>{r.item_code}</Text>
+        </Space>
+      ),
+    },
+    {
+      title: 'Ordered Qty',
+      key: 'qty',
+      align: 'right',
+      render: (_, r) => <Text style={{ fontFamily: 'monospace' }}>{r.qty} {r.uom_name || 'Units'}</Text>,
+    },
+    {
+      title: 'Unit Rate',
+      key: 'rate',
+      align: 'right',
+      width: 130,
+      render: (_, r, idx) => (
+        <Form.Item
+          name={['items', idx, 'rate']}
+          rules={[{ required: true, message: 'Rate required' }]}
+          style={{ margin: 0 }}
+          initialValue={r.rate && r.rate > 0 ? r.rate : undefined}
+        >
+          <InputNumber
+            min={0}
+            step={0.01}
+            prefix="₹"
+            style={{ width: '100%' }}
+            placeholder="Enter rate"
+          />
+        </Form.Item>
+      ),
+    },
+    {
+      title: 'Discount %',
+      key: 'discount_pct',
+      align: 'right',
+      width: 90,
+      render: (_, r, idx) => (
+        <Form.Item
+          name={['items', idx, 'discount_pct']}
+          style={{ margin: 0 }}
+          initialValue={r.discount_pct || 0}
+        >
+          <InputNumber min={0} max={100} step={0.5} style={{ width: '100%' }} />
+        </Form.Item>
+      ),
+    },
+    {
+      title: 'IGST %',
+      key: 'igst_rate',
+      align: 'right',
+      width: 85,
+      render: (_, r, idx) => (
+        <Form.Item
+          name={['items', idx, 'igst_rate']}
+          style={{ margin: 0 }}
+          initialValue={r.igst_rate || 0}
+        >
+          <InputNumber
+            min={0}
+            max={28}
+            step={0.5}
+            style={{ width: '100%' }}
+            onChange={(val) => {
+              if (val > 0) {
+                const itemsVal = poReviewForm.getFieldValue('items') || [];
+                itemsVal[idx] = { ...itemsVal[idx], cgst_rate: 0, sgst_rate: 0 };
+                poReviewForm.setFieldsValue({ items: itemsVal });
+              }
+            }}
+          />
+        </Form.Item>
+      ),
+    },
+    {
+      title: 'CGST %',
+      key: 'cgst_rate',
+      align: 'right',
+      width: 85,
+      render: (_, r, idx) => (
+        <Form.Item
+          name={['items', idx, 'cgst_rate']}
+          style={{ margin: 0 }}
+          initialValue={r.cgst_rate || 0}
+        >
+          <InputNumber
+            min={0}
+            max={14}
+            step={0.5}
+            style={{ width: '100%' }}
+            onChange={(val) => {
+              if (val > 0) {
+                const itemsVal = poReviewForm.getFieldValue('items') || [];
+                itemsVal[idx] = { ...itemsVal[idx], igst_rate: 0 };
+                poReviewForm.setFieldsValue({ items: itemsVal });
+              }
+            }}
+          />
+        </Form.Item>
+      ),
+    },
+    {
+      title: 'SGST %',
+      key: 'sgst_rate',
+      align: 'right',
+      width: 85,
+      render: (_, r, idx) => (
+        <Form.Item
+          name={['items', idx, 'sgst_rate']}
+          style={{ margin: 0 }}
+          initialValue={r.sgst_rate || 0}
+        >
+          <InputNumber
+            min={0}
+            max={14}
+            step={0.5}
+            style={{ width: '100%' }}
+            onChange={(val) => {
+              if (val > 0) {
+                const itemsVal = poReviewForm.getFieldValue('items') || [];
+                itemsVal[idx] = { ...itemsVal[idx], igst_rate: 0 };
+                poReviewForm.setFieldsValue({ items: itemsVal });
+              }
+            }}
+          />
+        </Form.Item>
+      ),
+    },
+    {
+      title: 'Line Total',
+      key: 'amount',
+      align: 'right',
+      render: (_, r) => <Text strong style={{ fontFamily: 'monospace' }}>{fmt(r.amount)}</Text>,
     },
   ];
 
@@ -1000,8 +1234,14 @@ export default function SupplierPortal() {
                         columns={poColumns}
                         rowKey="id"
                         pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (t) => `${t} Purchase Orders` }}
-                        scroll={{ x: 900 }}
-                        rowClassName={(r) => r.supplier_acknowledgement === 'pending' ? 'po-row-pending' : ''}
+                        scroll={{ x: 1050 }}
+                        rowClassName={(r) => [
+                          r.supplier_acknowledgement === 'pending' ? 'po-row-pending' : '',
+                          r.is_history_row ? 'po-row-history' : '',
+                        ].filter(Boolean).join(' ')}
+                        onRow={(r) => ({
+                          style: r.is_history_row ? { background: '#fafafa', color: '#8c8c8c' } : {},
+                        })}
                       />
                     )}
                   </Spin>
@@ -1263,29 +1503,34 @@ export default function SupplierPortal() {
       >
         <Spin spinning={poDetailsLoading} tip="Loading Purchase Order Details...">
           {selectedPoDetails && (
-            <div>
-              <Descriptions bordered size="small" column={{ xs: 1, sm: 2, md: 3 }} style={{ marginBottom: 20 }}>
-                <Descriptions.Item label="PO Number">
-                  <Text strong style={{ fontFamily: 'monospace' }}>{selectedPoDetails.po_number}</Text>
-                </Descriptions.Item>
-                <Descriptions.Item label="PO Date">{fmtDate(selectedPoDetails.po_date)}</Descriptions.Item>
-                <Descriptions.Item label="Expected Delivery">{fmtDate(selectedPoDetails.expected_delivery_date)}</Descriptions.Item>
-                <Descriptions.Item label="Warehouse">{selectedPoDetails.warehouse_name || '—'}</Descriptions.Item>
-                <Descriptions.Item label="Grand Total">
-                  {(() => {
-                    let itemsTotal = 0;
-                    (selectedPoDetails.items || []).forEach(({ amount }) => {
-                      itemsTotal += parseFloat(amount || 0);
-                    });
-                    let vCost = 0;
-                    if (selectedPoDetails.remarks) {
-                      const match = selectedPoDetails.remarks.match(/Includes vehicle cost:\s*(\d+(\.\d+)?)/);
-                      if (match) vCost = parseFloat(match[1]);
-                    }
-                    const calcGrand = Math.max(parseFloat(selectedPoDetails.grand_total || 0), itemsTotal + vCost);
-                    return <Text strong style={{ color: '#15803d', fontFamily: 'monospace' }}>{fmt(calcGrand)}</Text>;
-                  })()}
-                </Descriptions.Item>
+            <Form form={poReviewForm} onValuesChange={handlePoReviewValuesChange} component={false}>
+              <div>
+                <Descriptions bordered size="small" column={{ xs: 1, sm: 2, md: 3 }} style={{ marginBottom: 20 }}>
+                  <Descriptions.Item label="PO Number">
+                    <Text strong style={{ fontFamily: 'monospace' }}>{selectedPoDetails.po_number}</Text>
+                  </Descriptions.Item>
+                  <Descriptions.Item label="PO Date">{fmtDate(selectedPoDetails.po_date)}</Descriptions.Item>
+                  <Descriptions.Item label="Expected Delivery">{fmtDate(selectedPoDetails.expected_delivery_date)}</Descriptions.Item>
+                  <Descriptions.Item label="Supplier Delivery Date">{fmtDate(selectedPoDetails.supplier_delivery_date)}</Descriptions.Item>
+                  <Descriptions.Item label="Warehouse">{selectedPoDetails.warehouse_name || '—'}</Descriptions.Item>
+                  <Descriptions.Item label="Grand Total">
+                    {(() => {
+                      let itemsTotal = 0;
+                      const itemsToUse = selectedPoDetails.supplier_acknowledgement === 'pending' ? currentPoItems : (selectedPoDetails.items || []);
+                      itemsToUse.forEach(({ amount }) => {
+                        itemsTotal += parseFloat(amount || 0);
+                      });
+                      let vCost = 0;
+                      if (selectedPoDetails.remarks) {
+                        const match = selectedPoDetails.remarks.match(/Includes vehicle cost:\s*(\d+(\.\d+)?)/);
+                        if (match) vCost = parseFloat(match[1]);
+                      }
+                      const calcGrand = selectedPoDetails.supplier_acknowledgement === 'pending'
+                        ? (itemsTotal + vCost)
+                        : Math.max(parseFloat(selectedPoDetails.grand_total || 0), itemsTotal + vCost);
+                      return <Text strong style={{ color: '#15803d', fontFamily: 'monospace' }}>{fmt(calcGrand)}</Text>;
+                    })()}
+                  </Descriptions.Item>
                 <Descriptions.Item label="Acknowledgment Status">
                   {(() => {
                     let color = 'gold';
@@ -1336,8 +1581,8 @@ export default function SupplierPortal() {
               </Text>
               
               <Table
-                dataSource={selectedPoDetails.items || []}
-                columns={poItemColumns}
+                dataSource={selectedPoDetails.supplier_acknowledgement === 'pending' ? currentPoItems : (selectedPoDetails.items || [])}
+                columns={selectedPoDetails.supplier_acknowledgement === 'pending' ? poReviewItemColumns : poItemColumns}
                 rowKey="id"
                 pagination={false}
                 size="small"
@@ -1356,7 +1601,9 @@ export default function SupplierPortal() {
                     }
                   }
                   
-                  const calculatedGrandTotal = Math.max(parseFloat(selectedPoDetails.grand_total || 0), itemsTotal + vehicleCost);
+                  const calculatedGrandTotal = selectedPoDetails.supplier_acknowledgement === 'pending'
+                    ? (itemsTotal + vehicleCost)
+                    : Math.max(parseFloat(selectedPoDetails.grand_total || 0), itemsTotal + vehicleCost);
 
                   return (
                     <>
@@ -1408,6 +1655,21 @@ export default function SupplierPortal() {
                     <Text>
                       ⚠️ <strong>Review Required:</strong> Please verify the quantities and rates raised above. You must acknowledge this PO to proceed.
                     </Text>
+                    {!rejectReasonVisible && (
+                      <div style={{ marginTop: 8 }}>
+                        <div style={{ marginBottom: 6 }}>
+                          <span style={{ color: '#ff4d4f', marginRight: 4 }}>*</span>
+                          <strong>Committed Delivery Date:</strong>
+                        </div>
+                        <DatePicker
+                          style={{ width: 250 }}
+                          value={committedDeliveryDate}
+                          onChange={(val) => setCommittedDeliveryDate(val)}
+                          disabledDate={(current) => current && current.isBefore(dayjs().startOf('day'))}
+                          placeholder="Select Committed Delivery Date"
+                        />
+                      </div>
+                    )}
                     {rejectReasonVisible && (
                       <div style={{ width: '100%' }}>
                         <Text strong style={{ display: 'block', marginBottom: 6 }}>Rejection Remarks / Justification (Required):</Text>
@@ -1466,14 +1728,30 @@ export default function SupplierPortal() {
                           type="primary"
                           style={{ background: '#16a34a', borderColor: '#16a34a' }}
                           loading={poActionLoading}
-                          onClick={() => {
-                            Modal.confirm({
-                              title: 'Accept this Purchase Order?',
-                              content: 'By accepting, you commit to fulfilling this order under the specified quantities, pricing, and expected delivery date.',
-                              okText: 'Accept PO',
-                              okButtonProps: { style: { background: '#16a34a', borderColor: '#16a34a' } },
-                              onOk: () => handleAcknowledgePO(selectedPoDetails.id, 'accept'),
-                            });
+                          disabled={!committedDeliveryDate}
+                          onClick={async () => {
+                            if (!committedDeliveryDate) {
+                              message.warning('Please select a committed delivery date first');
+                              return;
+                            }
+                            try {
+                              const formVals = await poReviewForm.validateFields();
+                              Modal.confirm({
+                                title: 'Accept this Purchase Order?',
+                                content: `By accepting, you commit to fulfilling this order under the specified quantities, pricing, and your committed delivery date of ${committedDeliveryDate.format('DD/MM/YYYY')}.`,
+                                okText: 'Accept PO',
+                                okButtonProps: { style: { background: '#16a34a', borderColor: '#16a34a' } },
+                                onOk: () => handleAcknowledgePO(
+                                  selectedPoDetails.id,
+                                  'accept',
+                                  '',
+                                  committedDeliveryDate.format('YYYY-MM-DD'),
+                                  currentPoItems
+                                ),
+                              });
+                            } catch (err) {
+                              message.error('Please fill in rates for all items before accepting.');
+                            }
                           }}
                         >
                           Accept PO
@@ -1498,7 +1776,8 @@ export default function SupplierPortal() {
                   </>
                 )}
               </div>
-            </div>
+              </div>
+            </Form>
           )}
         </Spin>
       </Modal>

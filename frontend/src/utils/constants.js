@@ -230,6 +230,7 @@ export const MENU_CONFIG = [
       { key: 'masters-uom', label: 'UOM', path: '/masters/uom' },
       { key: 'masters-packaging', label: 'Packaging', path: '/masters/packaging' },
       { key: 'masters-price-lists', label: 'Price Lists', path: '/masters/price-lists' },
+      { key: 'masters-boms', label: 'BOM', path: '/masters/boms' },
       { key: 'masters-users', label: 'Users', path: '/masters/users' },
       { key: 'masters-user-groups', label: 'User Groups', path: '/masters/user-groups' },
       { key: 'masters-organization-structure', label: 'Org Structure', path: '/masters/organization-structure' },
@@ -328,6 +329,7 @@ export const MENU_CONFIG = [
     children: [
       { key: 'assets-register', label: 'Asset Register', path: '/assets/register' },
       { key: 'assets-movement', label: 'Asset Movement', path: '/assets/movement' },
+      { key: 'assets-spare-mapping', label: 'Asset - Spare Mapping', path: '/assets/spare-mapping' },
     ],
   },
   {

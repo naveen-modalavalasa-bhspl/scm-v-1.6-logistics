@@ -1457,3 +1457,49 @@ class VendorRatingCreate(BaseModel):
     delivery_accuracy: Decimal = Decimal("0")
     overall_rating: Decimal = Decimal("0")
     remarks: Optional[str] = None
+
+
+# ===================== BOM (Bill of Materials) =====================
+
+class BOMComponentCreate(BaseModel):
+    item_id: int
+    qty: Decimal
+    uom_id: Optional[int] = None
+
+class BOMComponentResponse(BaseModel):
+    id: int
+    bom_id: int
+    item_id: int
+    qty: Decimal
+    uom_id: Optional[int] = None
+    item_name: Optional[str] = None
+    item_code: Optional[str] = None
+    uom_name: Optional[str] = None
+    model_config = {"from_attributes": True}
+
+class BOMCreate(BaseModel):
+    name: str
+    project_id: Optional[int] = None
+    document_types: List[str]
+    components: List[BOMComponentCreate]
+
+class BOMResponse(BaseModel):
+    id: int
+    bom_code: str
+    name: str
+    project_id: Optional[int] = None
+    project_name: Optional[str] = None
+    document_types: List[str]
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+    components: List[BOMComponentResponse] = []
+    model_config = {"from_attributes": True}
+
+class BOMUpdate(BaseModel):
+    name: Optional[str] = None
+    project_id: Optional[int] = None
+    document_types: Optional[List[str]] = None
+    is_active: Optional[bool] = None
+    components: Optional[List[BOMComponentCreate]] = None
+

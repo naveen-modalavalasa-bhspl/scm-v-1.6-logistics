@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { Select, Spin, message } from 'antd';
 import { debounce } from '../utils/helpers';
 import api from '../config/api';
@@ -17,6 +17,39 @@ const ItemSelector = ({
 }) => {
   const [options, setOptions] = useState([]);
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!value) return;
+    const ids = Array.isArray(value) ? value : [value];
+    const missingIds = ids.filter(id => !options.find(o => o.value === id));
+    if (missingIds.length > 0) {
+      setLoading(true);
+      Promise.all(missingIds.map(id => api.get(`${apiUrl}/${id}`)))
+        .then(results => {
+          const newOpts = results.map(res => {
+            const item = res.data;
+            return {
+              label: showCode
+                ? `[${item.item_code || item.code}] ${item.item_name || item.name}`
+                : item.item_name || item.name,
+              value: item.id,
+              item,
+            };
+          });
+          setOptions(prev => {
+            const existing = new Set(prev.map(o => o.value));
+            const filtered = newOpts.filter(o => !existing.has(o.value));
+            return [...prev, ...filtered];
+          });
+        })
+        .catch(err => {
+          console.error("Failed to load initial items in ItemSelector", err);
+        })
+        .finally(() => {
+          setLoading(false);
+        });
+    }
+  }, [value, apiUrl, showCode]);
 
   // Filter-by-project/department on the indent form was considered and
   // intentionally NOT built. In healthcare procurement, any department can

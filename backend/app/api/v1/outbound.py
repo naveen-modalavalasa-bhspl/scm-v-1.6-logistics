@@ -1156,19 +1156,19 @@ async def acknowledge_delivery(
                     if b:
                         batch_id = b.id
 
-                # Decrement transit_qty in destination warehouse
+                # Decrement transit_qty in source warehouse
                 from app.services.stock_service import _get_or_create_balance
                 from decimal import Decimal
-                dest_balance = await _get_or_create_balance(
+                src_balance = await _get_or_create_balance(
                     db,
                     item_id=it.material_id,
-                    warehouse_id=dest_wh_id,
+                    warehouse_id=d.warehouse_id,
                     bin_id=bin_id,
                     batch_id=batch_id,
                     lock=True,
                 )
                 dispatched_qty = Decimal(str(it.quantity_dispatched or 0))
-                dest_balance.transit_qty = max(Decimal("0"), (dest_balance.transit_qty or Decimal("0")) - dispatched_qty)
+                src_balance.transit_qty = max(Decimal("0"), (src_balance.transit_qty or Decimal("0")) - dispatched_qty)
 
                 await post_stock_ledger(
                     db,

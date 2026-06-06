@@ -403,6 +403,9 @@ const filterModuleTabs = (tabs, allowedSet, useServerKeys, userRoleCodes = []) =
     if (derivedKey === 'masters-packaging' && (allowedSet.has('masters') || allowedSet.has('masters-items') || allowedSet.has('masters-uom'))) {
       return true;
     }
+    if (derivedKey === 'masters-boms' && (allowedSet.has('masters') || allowedSet.has('masters-items'))) {
+      return true;
+    }
     if (derivedKey === 'masters-vendor-material-mapping' && (allowedSet.has('masters') || allowedSet.has('masters-vendors') || allowedSet.has('masters-items'))) {
       return true;
     }

@@ -20,6 +20,7 @@ from app.models.master import (
     UserGroup, UserGroupMember, UserGroupPermission,
     UserItemPermission, RoleItemPermission,
     Office, Position, Employee,
+    BOM, BOMComponent,
 )
 from app.models.warehouse import Warehouse, WarehouseLocation, WarehouseLine, WarehouseRack, WarehouseBin
 from app.models.user import User as UserModel
@@ -36,6 +37,7 @@ from app.schemas.master import (
     ProjectMasterCreate, ProjectMasterResponse, OfficeCreate, OfficeResponse,
     PositionCreate, PositionResponse, EmployeeCreate, EmployeeResponse,
     EMAIL_PATTERN, PAN_PATTERN, PHONE_PATTERN,
+    BOMComponentCreate, BOMComponentResponse, BOMCreate, BOMResponse, BOMUpdate,
 )
 from app.models.user import Organization, Project
 from app.utils.dependencies import get_current_user, require_permission
@@ -3107,10 +3109,7 @@ async def create_vendor(
         if dupe:
             raise HTTPException(
                 status_code=409,
-                detail=(
-                    f"GSTIN '{payload.gst_number}' is already registered against "
-                    f"vendor '{dupe.vendor_code}' (id={dupe.id})"
-                ),
+                detail=f"GSTIN '{payload.gst_number}' is already registered",
             )
     await _validate_vendor_category(db, payload.vendor_category_id)
     data = payload.model_dump(exclude={"vendor_type_ids"})
@@ -3153,10 +3152,7 @@ async def update_vendor(
         if dupe:
             raise HTTPException(
                 status_code=409,
-                detail=(
-                    f"GSTIN '{new_gst}' is already registered against vendor "
-                    f"'{dupe.vendor_code}' (id={dupe.id})"
-                ),
+                detail=f"GSTIN '{new_gst}' is already registered",
             )
     for k, v in update_data.items():
         setattr(vendor, k, v)
@@ -4954,3 +4950,197 @@ async def list_supplier_logins(
         }
         for v in vendors
     ]
+
+
+# ==================== BILL OF MATERIALS (BOM) ====================
+
+async def _get_bom_detail(db: AsyncSession, bom_id: int):
+    stmt = (
+        select(BOM)
+        .where(BOM.id == bom_id)
+        .options(
+            selectinload(BOM.project),
+            selectinload(BOM.components).selectinload(BOMComponent.item),
+            selectinload(BOM.components).selectinload(BOMComponent.uom)
+        )
+    )
+    res = await db.execute(stmt)
+    return res.scalar_one_or_none()
+
+
+def _enrich_bom_response(bom: BOM) -> dict:
+    components_data = []
+    for comp in bom.components:
+        components_data.append({
+            "id": comp.id,
+            "bom_id": comp.bom_id,
+            "item_id": comp.item_id,
+            "qty": comp.qty,
+            "uom_id": comp.uom_id,
+            "item_name": comp.item.name if comp.item else None,
+            "item_code": comp.item.item_code if comp.item else None,
+            "uom_name": comp.uom.name if comp.uom else None,
+        })
+    
+    return {
+        "id": bom.id,
+        "bom_code": bom.bom_code,
+        "name": bom.name,
+        "project_id": bom.project_id,
+        "project_name": bom.project.name if bom.project else None,
+        "document_types": bom.document_types,
+        "is_active": bom.is_active,
+        "created_at": bom.created_at,
+        "updated_at": bom.updated_at,
+        "components": components_data
+    }
+
+
+@router.post("/boms", response_model=BOMResponse, status_code=201)
+async def create_bom(
+    payload: BOMCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    from app.services.number_series import generate_number
+    # Generate unique BOM Code
+    bom_code = await generate_number(db, "masters", "bom")
+    
+    # Create main BOM record
+    bom = BOM(
+        bom_code=bom_code,
+        name=payload.name,
+        project_id=payload.project_id,
+        document_types=payload.document_types,
+        is_active=True,
+        created_by=current_user.id,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc)
+    )
+    db.add(bom)
+    await db.flush()  # Populates bom.id
+
+    # Create associated BOM Components
+    for comp in payload.components:
+        bom_comp = BOMComponent(
+            bom_id=bom.id,
+            item_id=comp.item_id,
+            qty=comp.qty,
+            uom_id=comp.uom_id
+        )
+        db.add(bom_comp)
+
+    await db.commit()
+    
+    # Fetch details for rich response
+    new_bom = await _get_bom_detail(db, bom.id)
+    return _enrich_bom_response(new_bom)
+
+
+@router.get("/boms")
+async def list_boms(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=1000),
+    search: str = Query(None),
+    project_id: int = Query(None),
+    is_active: bool = Query(None),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    offset, limit = paginate_params(page, page_size)
+    query = select(BOM)
+    count_query = select(func.count(BOM.id))
+
+    if project_id is not None:
+        query = query.where(BOM.project_id == project_id)
+        count_query = count_query.where(BOM.project_id == project_id)
+
+    if is_active is not None:
+        query = query.where(BOM.is_active == is_active)
+        count_query = count_query.where(BOM.is_active == is_active)
+
+    if search:
+        query = apply_search_filter(query, BOM, search, ["bom_code", "name"])
+        count_query = apply_search_filter(count_query, BOM, search, ["bom_code", "name"])
+
+    total = (await db.execute(count_query)).scalar()
+    
+    result = await db.execute(
+        query.options(
+            selectinload(BOM.project),
+            selectinload(BOM.components).selectinload(BOMComponent.item),
+            selectinload(BOM.components).selectinload(BOMComponent.uom)
+        )
+        .offset(offset).limit(limit)
+        .order_by(BOM.id.desc())
+    )
+    boms = result.scalars().all()
+    
+    response_items = [_enrich_bom_response(b) for b in boms]
+    return build_paginated_response(response_items, total, page, page_size)
+
+
+@router.get("/boms/{bom_id}", response_model=BOMResponse)
+async def get_bom(
+    bom_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    bom = await _get_bom_detail(db, bom_id)
+    if not bom:
+        raise HTTPException(status_code=404, detail="BOM not found")
+    return _enrich_bom_response(bom)
+
+
+@router.put("/boms/{bom_id}", response_model=BOMResponse)
+async def update_bom(
+    bom_id: int,
+    payload: BOMUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    bom = await _get_bom_detail(db, bom_id)
+    if not bom:
+        raise HTTPException(status_code=404, detail="BOM not found")
+
+    if payload.name is not None:
+        bom.name = payload.name
+    if payload.project_id is not None or "project_id" in payload.model_fields_set:
+        bom.project_id = payload.project_id
+    if payload.document_types is not None:
+        bom.document_types = payload.document_types
+    if payload.is_active is not None:
+        bom.is_active = payload.is_active
+
+    if payload.components is not None:
+        # Cascade deletes existing components and replaces with new ones
+        bom.components.clear()
+        for comp in payload.components:
+            bom_comp = BOMComponent(
+                bom_id=bom.id,
+                item_id=comp.item_id,
+                qty=comp.qty,
+                uom_id=comp.uom_id
+            )
+            bom.components.append(bom_comp)
+
+    bom.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+
+    updated_bom = await _get_bom_detail(db, bom_id)
+    return _enrich_bom_response(updated_bom)
+
+
+@router.delete("/boms/{bom_id}")
+async def delete_bom(
+    bom_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    bom = await _get_bom_detail(db, bom_id)
+    if not bom:
+        raise HTTPException(status_code=404, detail="BOM not found")
+
+    await db.delete(bom)
+    await db.commit()
+    return {"success": True, "message": "BOM deleted successfully"}

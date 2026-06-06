@@ -227,6 +227,7 @@ const StockBalance = () => {
     }
   };
 
+
   // Export
   const handleExport = async () => {
     try {
@@ -748,7 +749,58 @@ const StockBalance = () => {
         footer={null}
         width={1000}
       >
-        {/* Summary Card removed as per user request to display all info in the table below */}
+        {/* Weighted Average Cost (WAC) Valuation card for consumables only */}
+        {String(drillDownItem?.item_type || '').toLowerCase() === 'consumable' && drillDownData && drillDownData.length > 0 && (() => {
+          let overallTotalValue = 0;
+          let overallTotalQty = 0;
+          drillDownData.forEach((row) => {
+            overallTotalValue += Number(row.stock_value) || 0;
+            overallTotalQty += Number(row.total_qty) || 0;
+          });
+          const overallWAC = overallTotalQty > 0 ? overallTotalValue / overallTotalQty : 0;
+
+          return (
+            <div style={{ marginBottom: 16, marginTop: 12 }}>
+              <Typography.Title level={5} style={{ marginBottom: 12 }}>
+                Weighted Average Cost (WAC) Valuation
+              </Typography.Title>
+              <Row gutter={[16, 16]}>
+                <Col xs={24} sm={16} md={12}>
+                  <Card 
+                    size="small"
+                    style={{
+                      borderRadius: 8,
+                      border: '1px solid #e8e8e8',
+                      background: 'linear-gradient(135deg, #ffffff 0%, #fafafa 100%)',
+                      boxShadow: '0 2px 8px rgba(0,0,0,0.04)',
+                    }}
+                    styles={{ body: { padding: '12px 16px' } }}
+                    hoverable
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
+                      <Text strong style={{ fontSize: 14, color: '#1890ff' }}>
+                        Item Weighted Average Cost
+                      </Text>
+                    </div>
+                    <Descriptions column={1} size="small" colon={false} labelStyle={{ color: '#8c8c8c' }}>
+                      <Descriptions.Item label="Total Quantity">
+                        <Text strong>{formatNumber(overallTotalQty)}</Text>
+                      </Descriptions.Item>
+                      <Descriptions.Item label="Weighted Average Rate">
+                        <Text strong>{formatCurrency(overallWAC)}</Text>
+                      </Descriptions.Item>
+                      <Descriptions.Item label="Total Stock Value">
+                        <Text strong style={{ color: '#52c41a', fontSize: 14 }}>
+                          {formatCurrency(overallTotalValue)}
+                        </Text>
+                      </Descriptions.Item>
+                    </Descriptions>
+                  </Card>
+                </Col>
+              </Row>
+            </div>
+          );
+        })()}
         <Table
           columns={breakdownColumns}
           dataSource={drillDownData}

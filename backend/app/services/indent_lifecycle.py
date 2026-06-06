@@ -258,6 +258,8 @@ async def on_indent_approved(
     indent.status = "approved"
     indent.approved_by = user_id
     indent.approved_date = datetime.now(timezone.utc)
+    approved_number = await generate_number(db, "indent", "indent", pad_length=7)
+    indent.indent_number = approved_number
     await db.flush()
 
     return {

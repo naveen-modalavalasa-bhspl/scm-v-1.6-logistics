@@ -527,7 +527,6 @@ const MaterialIssues = () => {
         department: data.department,
         issued_to: data.issued_to,
         issue_date: data.issue_date ? dayjs(data.issue_date) : null,
-        cost_center: data.cost_center,
         remarks: data.remarks,
       });
       const items = (data.items || []).map((item, idx) => ({
@@ -971,13 +970,7 @@ const MaterialIssues = () => {
       ellipsis: true,
       render: (v, r) => v || r.issued_to || '-',
     },
-    {
-      title: 'Cost Center',
-      dataIndex: 'cost_center',
-      key: 'cost_center',
-      width: 130,
-      render: (v) => v || '-',
-    },
+
     {
       title: 'Status',
       dataIndex: 'status',
@@ -1010,20 +1003,7 @@ const MaterialIssues = () => {
               </Popconfirm>
             </>
           )}
-          {record.status === 'issued' && (
-            <Tooltip title="Dispatch Material">
-              <Popconfirm title="Dispatch this material? Stock will be physically deducted." onConfirm={() => handleDispatch(record.id)}>
-                <Button type="link" size="small" icon={<SendOutlined />} style={{ color: '#1890ff' }} />
-              </Popconfirm>
-            </Tooltip>
-          )}
-          {record.status === 'dispatched' && (
-            <Tooltip title="Acknowledge">
-              <Popconfirm title="Acknowledge receipt of this material?" onConfirm={() => handleAcknowledge(record.id)}>
-                <Button type="link" size="small" icon={<CheckOutlined />} style={{ color: '#52c41a' }} />
-              </Popconfirm>
-            </Tooltip>
-          )}
+
         </Space>
       ),
     },
@@ -1233,7 +1213,7 @@ const MaterialIssues = () => {
           </Row>
 
           <Row gutter={16}>
-            <Col span={8}>
+            <Col span={12}>
               <Form.Item name="issued_to" label="Issued To">
                 <Select
                   options={userOptions}
@@ -1244,12 +1224,7 @@ const MaterialIssues = () => {
                 />
               </Form.Item>
             </Col>
-            <Col span={8}>
-              <Form.Item name="cost_center" label="Cost Center">
-                <Input placeholder="Cost center" />
-              </Form.Item>
-            </Col>
-            <Col span={8}>
+            <Col span={12}>
               <Form.Item name="remarks" label="Remarks">
                 <Input placeholder="Any remarks" />
               </Form.Item>
@@ -1309,16 +1284,7 @@ const MaterialIssues = () => {
                   <Button type="primary" icon={<SendOutlined />}>Issue</Button>
                 </Popconfirm>
               )}
-              {viewData.status === 'issued' && (
-                <Popconfirm title="Dispatch this material? Stock will be physically deducted." onConfirm={async () => { await handleDispatch(viewData.id); setViewModalOpen(false); }}>
-                  <Button type="primary" icon={<SendOutlined />} style={{ background: '#1890ff', borderColor: '#1890ff' }}>Dispatch</Button>
-                </Popconfirm>
-              )}
-              {viewData.status === 'dispatched' && (
-                <Popconfirm title="Acknowledge receipt of this material?" onConfirm={async () => { await handleAcknowledge(viewData.id); setViewModalOpen(false); }}>
-                  <Button type="primary" icon={<CheckOutlined />}>Acknowledge</Button>
-                </Popconfirm>
-              )}
+
               <Button onClick={() => { setViewModalOpen(false); setViewData(null); }}>Close</Button>
             </Space>
           )
@@ -1338,8 +1304,7 @@ const MaterialIssues = () => {
               <Descriptions.Item label="Issued To">{viewData.issued_to_name || viewData.issued_to || '-'}</Descriptions.Item>
               <Descriptions.Item label="MR Reference">{viewData.mr_number || viewData.mr_id || '-'}</Descriptions.Item>
               <Descriptions.Item label="Indent Reference">{viewData.indent_number || viewData.indent_id || '-'}</Descriptions.Item>
-              <Descriptions.Item label="Cost Center">{viewData.cost_center || '-'}</Descriptions.Item>
-              <Descriptions.Item label="Remarks" span={2}>{viewData.remarks || '-'}</Descriptions.Item>
+              <Descriptions.Item label="Remarks" span={3}>{viewData.remarks || '-'}</Descriptions.Item>
             </Descriptions>
 
             <Divider orientation="left">Items</Divider>

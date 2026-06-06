@@ -192,6 +192,40 @@ async def ensure_rfq_schema(session: AsyncSession) -> None:
     if "supplier_acknowledgement" not in po_columns:
         await conn.execute(text("ALTER TABLE purchase_orders ADD COLUMN supplier_acknowledgement VARCHAR(50) NOT NULL DEFAULT 'pending'"))
 
+    if "version_number" not in po_columns:
+        try:
+            await conn.execute(text("ALTER TABLE purchase_orders ADD COLUMN version_number VARCHAR(20) NOT NULL DEFAULT '1.0'"))
+        except Exception:
+            pass
+    if "parent_po_id" not in po_columns:
+        try:
+            await conn.execute(text("ALTER TABLE purchase_orders ADD COLUMN parent_po_id BIGINT, ADD CONSTRAINT fk_parent_po_id FOREIGN KEY (parent_po_id) REFERENCES purchase_orders(id)"))
+        except Exception:
+            pass
+    if "supplier_delivery_date" not in po_columns:
+        try:
+            await conn.execute(text("ALTER TABLE purchase_orders ADD COLUMN supplier_delivery_date DATETIME"))
+        except Exception:
+            pass
+    if "is_current" not in po_columns:
+        try:
+            await conn.execute(text("ALTER TABLE purchase_orders ADD COLUMN is_current TINYINT(1) NOT NULL DEFAULT 1"))
+        except Exception:
+            pass
+    if "base_po_number" not in po_columns:
+        try:
+            await conn.execute(text("ALTER TABLE purchase_orders ADD COLUMN base_po_number VARCHAR(50)"))
+        except Exception:
+            pass
+
+    try:
+        await conn.execute(text("""
+            ALTER TABLE purchase_orders 
+            MODIFY COLUMN status ENUM('draft', 'pending_approval', 'approved', 'accepted', 'rejected', 'partially_received', 'received', 'closed', 'cancelled') NOT NULL DEFAULT 'draft'
+        """))
+    except Exception:
+        pass
+
 
 async def ensure_organization_structure_schema(session: AsyncSession) -> None:
     conn = await session.connection()

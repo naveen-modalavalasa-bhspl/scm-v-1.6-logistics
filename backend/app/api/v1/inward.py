@@ -113,6 +113,9 @@ async def fetch_po_details(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    # FIX-INWARD-001: Always look up the is_current version for a given base_po_number.
+    # When a PO is amended, the old po_number still exists in the DB but should
+    # not be used for inward — use the newest (is_current=True) version instead.
     result = await db.execute(
         select(PurchaseOrder)
         .options(
@@ -125,6 +128,36 @@ async def fetch_po_details(
     po = result.scalar_one_or_none()
     if not po:
         raise HTTPException(status_code=404, detail="Purchase Order not found")
+
+    # FIX-INWARD-002: If this PO is NOT the current version, upgrade to the
+    # current version of the same base_po_number so inward sees latest items/qty.
+    if not po.is_current and po.base_po_number:
+        current_result = await db.execute(
+            select(PurchaseOrder)
+            .options(
+                selectinload(PurchaseOrder.items).selectinload(PurchaseOrderItem.item),
+                selectinload(PurchaseOrder.items).selectinload(PurchaseOrderItem.uom),
+                selectinload(PurchaseOrder.vendor),
+            )
+            .where(
+                PurchaseOrder.base_po_number == po.base_po_number,
+                PurchaseOrder.is_current == True,  # noqa: E712
+            )
+        )
+        current_po = current_result.scalar_one_or_none()
+        if current_po:
+            po = current_po
+
+    # Validate PO is in a receivable status
+    RECEIVABLE_STATUSES = ("approved", "accepted", "partially_received")
+    if po.status not in RECEIVABLE_STATUSES:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Purchase Order '{po.po_number}' is in '{po.status}' status. "
+                f"Only approved or supplier-accepted POs can be used for inward."
+            )
+        )
     
     items = []
     for poi in po.items:

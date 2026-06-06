@@ -26,6 +26,7 @@ export const MODULE_NAVS = {
       { label: 'User Groups',   path: '/masters/user-groups' },
       { label: 'Org Structure', path: '/masters/organization-structure' },
       { label: 'Price Lists',   path: '/masters/price-lists' },
+      { label: 'BOM',           path: '/masters/boms' },
     ],
   },
   procurement: {
@@ -144,6 +145,7 @@ export const MODULE_NAVS = {
     tabs: [
       { label: 'Asset Register', path: '/assets/register' },
       { label: 'Asset Movement', path: '/assets/movement' },
+      { label: 'Asset - Spare Mapping', path: '/assets/spare-mapping' },
     ],
   },
   reports: {

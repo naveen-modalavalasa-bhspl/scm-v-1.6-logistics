@@ -34,6 +34,10 @@ DOC_TOKEN_MAP = {
     "run": "RUN",
     "material_inward": "INW",
     "dispatch_acknowledgement": "ACK",
+    "unapproved_purchase_order": "UPO",
+    "unapproved_indent": "FA-IND",
+    "unapproved_material_request": "FA-MR",
+    "bom": "BOM",
 }
 
 DEFAULT_ORG_PREFIX = "BHSPL"
@@ -56,6 +60,7 @@ async def generate_number_v2(
     document_type: str,
     org_prefix: str = DEFAULT_ORG_PREFIX,
     today: date | None = None,
+    pad_length: int = 5,
 ) -> str:
     """Generate the next document number in BHSPL/26-27/PO/00001 format.
 
@@ -81,10 +86,13 @@ async def generate_number_v2(
             document_type=document_type,
             fiscal_year=fy,
             current_number=0,
-            pad_length=5,
+            pad_length=pad_length,
             org_prefix=org_prefix,
         )
         db.add(series)
+    else:
+        if pad_length != 5:
+            series.pad_length = pad_length
         try:
             async with db.begin_nested():
                 await db.flush()

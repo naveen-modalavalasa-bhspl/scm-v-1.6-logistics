@@ -946,7 +946,7 @@ async def process_action(
     # indent/MR/PO still showed as pending_approval, so users had no
     # visibility that the workflow was paused.
     if request.status in ("approved", "rejected", "on_hold"):
-        await _update_document_status(db, request.document_type, request.document_id, request.status, current_user.id)
+        await _update_document_status(db, request.document_type, request.document_id, request.status, current_user.id, request=request)
 
     # 2026-05-06 — superseded: previously auto-created an MR if stock was
     # short. That removed the warehouse_manager's discretion (CENTRAL stock
@@ -1285,7 +1285,7 @@ async def _fetch_document_detail(db, document_type: str, document_id: int):
     return detail
 
 
-async def _update_document_status(db, document_type: str, document_id: int, status: str, user_id: int):
+async def _update_document_status(db, document_type: str, document_id: int, status: str, user_id: int, request: Optional[ApprovalRequest] = None):
     """Update the source document status after approval/rejection.
 
     BUG-APR-047 — for indents, an `approved` outcome must run the indent
@@ -1310,6 +1310,11 @@ async def _update_document_status(db, document_type: str, document_id: int, stat
             # workflow doesn't deadlock.
             pass
         else:
+            if request is not None:
+                from app.models.indent import Indent as _Indent
+                indent_obj = (await db.execute(select(_Indent).where(_Indent.id == document_id))).scalar_one_or_none()
+                if indent_obj:
+                    request.document_number = indent_obj.indent_number
             return
 
     model_map = {
@@ -1359,6 +1364,52 @@ async def _update_document_status(db, document_type: str, document_id: int, stat
     target_status = status
     if status == "on_hold":
         target_status = "pending_approval"
+
+    if document_type == "purchase_order" and status == "approved":
+        from app.services.number_series import generate_number
+        from app.models.procurement import PurchaseOrder
+        from sqlalchemy import update
+        if doc.parent_po_id:
+            parent_po = (await db.execute(select(PurchaseOrder).where(PurchaseOrder.id == doc.parent_po_id))).scalar_one_or_none()
+            if not parent_po:
+                raise HTTPException(status_code=400, detail="Parent Purchase Order not found")
+            approved_po_number = f"{parent_po.base_po_number}-V{doc.version_number or '1.0'}"
+            doc.po_number = approved_po_number
+            doc.base_po_number = parent_po.base_po_number
+        else:
+            approved_base = await generate_number(db, "procurement", "purchase_order", pad_length=7)
+            approved_po_number = f"{approved_base}-V1.0"
+            doc.po_number = approved_po_number
+            doc.base_po_number = approved_base
+
+        doc.is_current = True
+
+        # Mark all other versions of this PO as not current
+        await db.execute(
+            update(PurchaseOrder)
+            .where(PurchaseOrder.base_po_number == doc.base_po_number, PurchaseOrder.id != doc.id)
+            .values(is_current=False)
+        )
+
+        if request is not None:
+            request.document_number = approved_po_number
+        await db.flush()
+
+    if document_type == "indent" and status == "approved":
+        if doc.indent_number and "FA-IND" in doc.indent_number:
+            from app.services.number_series import generate_number
+            approved_number = await generate_number(db, "indent", "indent", pad_length=7)
+            doc.indent_number = approved_number
+            if request is not None:
+                request.document_number = approved_number
+
+    if document_type == "material_request" and status == "approved":
+        if doc.mr_number and "FA-MR" in doc.mr_number:
+            from app.services.number_series import generate_number
+            approved_number = await generate_number(db, "procurement", "material_request", pad_length=7)
+            doc.mr_number = approved_number
+            if request is not None:
+                request.document_number = approved_number
 
     doc.status = target_status
     if hasattr(doc, "approved_by") and status == "approved":

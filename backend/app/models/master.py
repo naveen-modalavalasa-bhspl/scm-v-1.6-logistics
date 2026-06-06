@@ -1,4 +1,4 @@
-from sqlalchemy import Column, BigInteger, String, Text, Boolean, DateTime, Date, Enum, ForeignKey, Numeric, Integer, UniqueConstraint
+from sqlalchemy import Column, BigInteger, String, Text, Boolean, DateTime, Date, Enum, ForeignKey, Numeric, Integer, UniqueConstraint, JSON
 from sqlalchemy.orm import relationship
 from datetime import datetime, timezone
 from app.database import Base
@@ -713,3 +713,36 @@ class Employee(Base):
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     position = relationship("Position", back_populates="employees")
+
+
+class BOM(Base):
+    __tablename__ = "boms"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    bom_code = Column(String(50), unique=True, nullable=False)
+    name = Column(String(255), nullable=False)
+    project_id = Column(BigInteger, ForeignKey("projects.id"), nullable=True)
+    document_types = Column(JSON, nullable=False)  # JSON list of strings (e.g. ["Indent", "Material issue"])
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_by = Column(BigInteger, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
+
+    project = relationship("Project")
+    created_by_user = relationship("User", foreign_keys=[created_by])
+    components = relationship("BOMComponent", back_populates="bom", cascade="all, delete-orphan")
+
+
+class BOMComponent(Base):
+    __tablename__ = "bom_components"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    bom_id = Column(BigInteger, ForeignKey("boms.id", ondelete="CASCADE"), nullable=False)
+    item_id = Column(BigInteger, ForeignKey("items.id"), nullable=False)
+    qty = Column(Numeric(15, 3), nullable=False, default=0)
+    uom_id = Column(BigInteger, ForeignKey("uom.id"), nullable=True)
+
+    bom = relationship("BOM", back_populates="components")
+    item = relationship("Item")
+    uom = relationship("UOM")
+

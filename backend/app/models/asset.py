@@ -1,4 +1,4 @@
-from sqlalchemy import Column, BigInteger, String, Text, Boolean, DateTime, Enum, ForeignKey, Numeric, Integer
+from sqlalchemy import Column, BigInteger, String, Text, Boolean, DateTime, Enum, ForeignKey, Numeric, Integer, UniqueConstraint
 from sqlalchemy.orm import relationship
 from datetime import datetime, timezone
 from app.database import Base
@@ -68,3 +68,19 @@ class AssetMovement(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     asset = relationship("Asset", back_populates="movements")
+
+
+class AssetSpareMapping(Base):
+    __tablename__ = "asset_spare_mappings"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    asset_id = Column(BigInteger, ForeignKey("items.id", ondelete="CASCADE"), nullable=False)
+    spare_id = Column(BigInteger, ForeignKey("items.id", ondelete="CASCADE"), nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    asset = relationship("Item", foreign_keys=[asset_id], backref="spare_links")
+    spare = relationship("Item", foreign_keys=[spare_id], backref="asset_links")
+
+    __table_args__ = (
+        UniqueConstraint("asset_id", "spare_id", name="uq_asset_spare"),
+    )

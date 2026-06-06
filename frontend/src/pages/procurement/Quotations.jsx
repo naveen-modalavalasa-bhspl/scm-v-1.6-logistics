@@ -457,13 +457,13 @@ const Quotations = () => {
 
   const columns = [
     {
-      title: 'Quotation No',
-      dataIndex: 'quotation_number',
-      key: 'quotation_number',
+      title: 'RFQ No',
+      dataIndex: 'rfq_number',
+      key: 'rfq_number',
       width: 150,
       sorter: true,
       fixed: 'left',
-      render: (text, record) => <a onClick={() => handleViewQuotation(record)}>{text}</a>,
+      render: (text, record) => <a onClick={() => handleViewQuotation(record)}>{text || record.rfq_number}</a>,
     },
     {
       title: 'MR Ref',
@@ -594,18 +594,18 @@ const Quotations = () => {
 
     return (
       <div>
-        <PageHeader title={detailQuotation.quotation_number} subtitle="Quotation Detail">
+        <PageHeader title={detailQuotation.rfq_number || detailQuotation.quotation_number} subtitle="Quotation Detail">
           <Space>
             {detailQuotation.status === 'draft' && (
               <Popconfirm
                 title="Send this quotation to the vendor?"
                 onConfirm={async () => {
                   try {
-                    await api.post(`/procurement/quotations/${detailQuotation.id}/submit`);
-                    message.success('Quotation sent to vendor');
-                    setRefreshKey((k) => k + 1);
-                    const res = await api.get(`/procurement/quotations/${detailQuotation.id}`);
-                    setDetailQuotation(res.data);
+                     await api.post(`/procurement/quotations/${detailQuotation.id}/submit`);
+                     message.success('Quotation sent to vendor');
+                     setRefreshKey((k) => k + 1);
+                     const res = await api.get(`/procurement/quotations/${detailQuotation.id}`);
+                     setDetailQuotation(res.data);
                   } catch (err) {
                     message.error(getErrorMessage(err));
                   }
@@ -622,7 +622,8 @@ const Quotations = () => {
 
         <Card>
           <Descriptions bordered size="small" column={{ xs: 1, sm: 2, md: 3 }}>
-            <Descriptions.Item label="Quotation Number">{detailQuotation.quotation_number}</Descriptions.Item>
+            <Descriptions.Item label="RFQ No">{detailQuotation.rfq_number || '-'}</Descriptions.Item>
+            <Descriptions.Item label="Quotation No">{detailQuotation.quotation_number || 'Draft'}</Descriptions.Item>
             <Descriptions.Item label="MR Reference">{detailQuotation.mr_number || detailQuotation.mr_reference || '-'}</Descriptions.Item>
             <Descriptions.Item label="Vendor">{detailQuotation.vendor_name || detailQuotation.vendor || '-'}</Descriptions.Item>
             <Descriptions.Item label="Quotation Date">{formatDate(detailQuotation.quotation_date)}</Descriptions.Item>
@@ -675,10 +676,10 @@ const Quotations = () => {
   // --- LIST VIEW ---
   return (
     <div>
-      <PageHeader title="Quotations" subtitle="Manage vendor quotations">
+      <PageHeader title="RFQs" subtitle="Manage RFQs and Vendor Quotations">
         <Space>
           <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>
-            Create Quotation
+            Create RFQ
           </Button>
         </Space>
       </PageHeader>
@@ -688,7 +689,7 @@ const Quotations = () => {
         columns={columns}
         fetchFunction={fetchQuotations}
         rowKey="id"
-        searchPlaceholder="Search by quotation number or vendor..."
+        searchPlaceholder="Search by RFQ/quotation number or vendor..."
         exportFileName="quotations"
         toolbar={toolbar}
         scroll={{ x: 1500 }}
@@ -696,7 +697,7 @@ const Quotations = () => {
 
       {/* Create / Edit Drawer */}
       <Drawer
-        title={editingQuotation ? `Edit ${editingQuotation.quotation_number}` : 'Create Quotation'}
+        title={editingQuotation ? `Edit ${editingQuotation.quotation_number || editingQuotation.rfq_number}` : 'Create RFQ'}
         width={1000}
         open={drawerOpen}
         onClose={() => {

@@ -13,10 +13,10 @@ from app.models.system import NumberSeries
 from app.services.fiscal_numbering import generate_number_v2
 
 
-async def generate_number(db: AsyncSession, module: str, document_type: str) -> str:
+async def generate_number(db: AsyncSession, module: str, document_type: str, pad_length: int = 5) -> str:
     """Generate next number in BHSPL/26-27/PO/00001 format (FY-scoped)."""
     return await generate_number_v2(
-        db, module=module, document_type=document_type,
+        db, module=module, document_type=document_type, pad_length=pad_length,
     )
 
 
