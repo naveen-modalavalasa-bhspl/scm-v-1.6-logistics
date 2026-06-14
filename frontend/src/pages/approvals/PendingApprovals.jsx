@@ -520,7 +520,7 @@ const PendingApprovals = () => {
           see one document type. */}
       <Row gutter={12} style={{ marginBottom: 12 }}>
         <Col xs={12} md={isIndentOnlyApprover ? 12 : 6}>
-          <Card bodyStyle={{ padding: 16 }}>
+          <Card styles={{ body: { padding: 16 } }}>
             <Statistic
               title="Pending"
               value={Object.entries(tabCounts).filter(([k]) => k !== 'all').reduce((s, [, v]) => s + (v || 0), 0)}
@@ -529,7 +529,7 @@ const PendingApprovals = () => {
           </Card>
         </Col>
         <Col xs={12} md={isIndentOnlyApprover ? 12 : 6}>
-          <Card bodyStyle={{ padding: 16 }}>
+          <Card styles={{ body: { padding: 16 } }}>
             <Statistic
               title="On Hold"
               value={holdCount}
@@ -540,7 +540,7 @@ const PendingApprovals = () => {
         {!isIndentOnlyApprover && (
           <>
             <Col xs={12} md={6}>
-              <Card bodyStyle={{ padding: 16 }}>
+              <Card styles={{ body: { padding: 16 } }}>
                 <Statistic
                   title="Indents"
                   value={tabCounts.indent || 0}
@@ -549,7 +549,7 @@ const PendingApprovals = () => {
               </Card>
             </Col>
             <Col xs={12} md={6}>
-              <Card bodyStyle={{ padding: 16 }}>
+              <Card styles={{ body: { padding: 16 } }}>
                 <Statistic
                   title="POs / MRs"
                   value={(tabCounts.purchase_order || 0) + (tabCounts.material_request || 0)}
@@ -561,7 +561,7 @@ const PendingApprovals = () => {
         )}
       </Row>
 
-      <Card bodyStyle={{ paddingBottom: 0 }} style={{ marginBottom: 12 }}>
+      <Card styles={{ body: { paddingBottom: 0 } }} style={{ marginBottom: 12 }}>
         <Tabs
           size="small"
           activeKey={activeStatus}
@@ -583,7 +583,7 @@ const PendingApprovals = () => {
       </Card>
 
       {visibleModuleTabs.length > 1 && (
-        <Card bodyStyle={{ paddingBottom: 0 }}>
+        <Card styles={{ body: { paddingBottom: 0 } }}>
           <Tabs
             activeKey={activeModule}
             onChange={(key) => {

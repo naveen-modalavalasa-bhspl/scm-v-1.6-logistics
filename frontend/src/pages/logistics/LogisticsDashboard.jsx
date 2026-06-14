@@ -132,7 +132,7 @@ export default function LogisticsDashboard() {
       {/* KPI Stats Widgets */}
       <Row gutter={[16, 16]} style={{ marginBottom: '24px' }}>
         <Col xs={24} sm={12} lg={6}>
-          <Card bordered={false} style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '12px', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03)' }}>
+          <Card variant="borderless" style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '12px', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03)' }}>
             <Statistic
               title={<span style={{ color: '#64748b', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '1px', fontWeight: 'bold' }}> Active Dispatches</span>}
               value={totalMdos}
@@ -147,7 +147,7 @@ export default function LogisticsDashboard() {
           </Card>
         </Col>
         <Col xs={24} sm={12} lg={6}>
-          <Card bordered={false} style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '12px', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03)' }}>
+          <Card variant="borderless" style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '12px', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03)' }}>
             <Statistic
               title={<span style={{ color: '#64748b', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '1px', fontWeight: 'bold' }}>Live RFQ Bidding</span>}
               value={publishedRfqs}
@@ -162,7 +162,7 @@ export default function LogisticsDashboard() {
           </Card>
         </Col>
         <Col xs={24} sm={12} lg={6}>
-          <Card bordered={false} style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '12px', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03)' }}>
+          <Card variant="borderless" style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '12px', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03)' }}>
             <Statistic
               title={<span style={{ color: '#64748b', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '1px', fontWeight: 'bold' }}>In-Transit Fleets</span>}
               value={activeVehicles}
@@ -177,7 +177,7 @@ export default function LogisticsDashboard() {
           </Card>
         </Col>
         <Col xs={24} sm={12} lg={6}>
-          <Card bordered={false} style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '12px', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03)' }}>
+          <Card variant="borderless" style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '12px', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03)' }}>
             <Statistic
               title={<span style={{ color: '#64748b', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '1px', fontWeight: 'bold' }}>Valuation In Transit</span>}
               value={totalValueInTransit}
@@ -200,7 +200,7 @@ export default function LogisticsDashboard() {
         <Col xs={24} lg={16}>
           <Card
             title={<span style={{ color: '#0f172a', fontSize: '14px', fontWeight: 'bold', fontFamily: 'monospace' }}>STAGE DISTRIBUTION OF SDO EXECUTION PIPELINE</span>}
-            bordered={false}
+            variant="borderless"
             style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '12px', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03)' }}
             extra={<span style={{ fontSize: '12px', color: '#475569', fontWeight: 'bold' }}>Total segments: {totalSdos}</span>}
           >
@@ -252,7 +252,7 @@ export default function LogisticsDashboard() {
         <Col xs={24} lg={8}>
           <Card
             title={<span style={{ color: '#0f172a', fontSize: '14px', fontWeight: 'bold', fontFamily: 'monospace' }}>TRANSPORTER RATING SCALE</span>}
-            bordered={false}
+            variant="borderless"
             style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '12px', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03)' }}
           >
             <List
@@ -285,7 +285,7 @@ export default function LogisticsDashboard() {
       {/* ISO Audit Activity Logs */}
       <Card
         title={<span style={{ color: '#0f172a', fontSize: '14px', fontWeight: 'bold', fontFamily: 'monospace' }}>LIVE LOGISTICS COMPLIANCE AUDIT FEED</span>}
-        bordered={false}
+        variant="borderless"
         style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '12px', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03)', marginTop: '24px' }}
       >
         <div style={{ background: '#f8fafc', padding: '16px', borderRadius: '8px', border: '1px solid #e2e8f0', maxHeight: '300px', overflowY: 'auto' }}>

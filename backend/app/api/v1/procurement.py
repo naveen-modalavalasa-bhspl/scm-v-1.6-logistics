@@ -2699,3 +2699,1366 @@ async def create_split_po(
         "message": f"Successfully created {len(created_pos)} split Purchase Orders",
         "purchase_orders": created_pos
     }
+
+# ==================== modularized masters endpoints ====================
+from pydantic import BaseModel, Field
+from typing import List, Literal, Optional
+from sqlalchemy import delete, select, func, or_, text
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from sqlalchemy.orm import selectinload
+from app.models.master import (
+    Vendor, VendorItem, VendorContract, VendorRating, VendorType, VendorCategory,
+    VendorVendorType, VendorItemHistory, Customer, Item, UOM
+)
+from app.schemas.master import (
+    VendorCreate, VendorUpdate, VendorResponse, VendorTypeCreate, VendorTypeResponse,
+    VendorCategoryCreate, VendorCategoryResponse, VendorItemCreate, VendorItemBulkMapCreate,
+    VendorContractCreate, VendorRatingCreate, VALID_VENDOR_TYPES
+)
+from app.utils.schema_sync import ensure_vendor_type_schema, ensure_supplier_portal_schema
+import re
+
+async def _vendor_type_maps(db: AsyncSession, vendor_ids: list[int]) -> tuple[dict[int, list[VendorType]], dict[int, VendorType]]:
+    if not vendor_ids:
+        return {}, {}
+    rows = (
+        await db.execute(
+            select(VendorVendorType.vendor_id, VendorType)
+            .join(VendorType, VendorVendorType.vendor_type_id == VendorType.id)
+            .where(VendorVendorType.vendor_id.in_(vendor_ids))
+            .order_by(VendorType.name)
+        )
+    ).all()
+    type_map: dict[int, list[VendorType]] = {}
+    for vendor_id, vendor_type in rows:
+        type_map.setdefault(vendor_id, []).append(vendor_type)
+    primary_rows = (
+        await db.execute(
+            select(Vendor.id, VendorType)
+            .join(VendorType, Vendor.vendor_type_id == VendorType.id, isouter=True)
+            .where(Vendor.id.in_(vendor_ids))
+        )
+    ).all()
+    primary_map = {vendor_id: vendor_type for vendor_id, vendor_type in primary_rows if vendor_type}
+    return type_map, primary_map
+
+
+async def _vendor_category_map(db: AsyncSession, vendor_ids: list[int]) -> dict[int, VendorCategory]:
+    if not vendor_ids:
+        return {}
+    rows = (
+        await db.execute(
+            select(Vendor.id, VendorCategory)
+            .join(VendorCategory, Vendor.vendor_category_id == VendorCategory.id, isouter=True)
+            .where(Vendor.id.in_(vendor_ids))
+        )
+    ).all()
+    return {vendor_id: category for vendor_id, category in rows if category}
+
+
+async def _validate_vendor_category(db: AsyncSession, vendor_category_id: int | None) -> None:
+    if vendor_category_id is None:
+        return
+    category = (
+        await db.execute(
+            select(VendorCategory).where(
+                VendorCategory.id == vendor_category_id,
+                VendorCategory.is_active == True,  # noqa: E712
+            )
+        )
+    ).scalar_one_or_none()
+    if not category:
+        raise HTTPException(status_code=422, detail="Vendor category does not exist or is inactive")
+
+
+def _vendor_response_dict(
+    vendor: Vendor,
+    type_map: dict[int, list[VendorType]],
+    primary_map: dict[int, VendorType],
+    category_map: dict[int, VendorCategory] | None = None,
+    login_vendor_ids: set[int] | None = None,
+) -> dict:
+    types = type_map.get(vendor.id, [])
+    primary = primary_map.get(vendor.id) or (types[0] if types else None)
+    category = (category_map or {}).get(vendor.id)
+    return {
+        "id": vendor.id,
+        "vendor_code": vendor.vendor_code,
+        "name": vendor.name,
+        "contact_person": vendor.contact_person,
+        "email": vendor.email,
+        "phone": vendor.phone,
+        "alt_phone": vendor.alt_phone,
+        "address_line1": vendor.address_line1,
+        "address_line2": vendor.address_line2,
+        "city": vendor.city,
+        "state": vendor.state,
+        "pincode": vendor.pincode,
+        "country": vendor.country,
+        "gst_number": vendor.gst_number,
+        "pan_number": vendor.pan_number,
+        "bank_name": vendor.bank_name,
+        "bank_account": vendor.bank_account,
+        "bank_ifsc": vendor.bank_ifsc,
+        "payment_terms_days": vendor.payment_terms_days,
+        "credit_limit": vendor.credit_limit,
+        "vendor_type": primary.code if primary else vendor.vendor_type,
+        "vendor_type_id": vendor.vendor_type_id,
+        "vendor_type_name": primary.name if primary else None,
+        "vendor_type_ids": [t.id for t in types],
+        "vendor_types": [VendorTypeResponse.model_validate(t) for t in types],
+        "vendor_category_id": vendor.vendor_category_id,
+        "vendor_category_code": category.code if category else None,
+        "vendor_category_name": category.name if category else None,
+        "vendor_category": VendorCategoryResponse.model_validate(category) if category else None,
+        "rating": vendor.rating,
+        "is_transport_vendor": vendor.is_transport_vendor,
+        "drug_license_number": vendor.drug_license_number,
+        "drug_license_state": vendor.drug_license_state,
+        "drug_license_expiry": vendor.drug_license_expiry,
+        "gst_certificate_url": vendor.gst_certificate_url,
+        "license_doc_url": vendor.license_doc_url,
+        "vendor_compliance_status": vendor.vendor_compliance_status,
+        "is_active": vendor.is_active,
+        "has_login": (login_vendor_ids is not None and vendor.id in login_vendor_ids),
+        "status": "active" if vendor.is_active else "inactive",
+        "created_at": vendor.created_at,
+    }
+
+
+async def _sync_vendor_type_links(db: AsyncSession, vendor: Vendor, vendor_type_ids: list[int] | None, vendor_type_id: int | None = None) -> None:
+    raw_ids = list(vendor_type_ids or [])
+    if vendor_type_id:
+        raw_ids.insert(0, vendor_type_id)
+    seen = []
+    for type_id in raw_ids:
+        if type_id and type_id not in seen:
+            seen.append(type_id)
+    if not seen and vendor.vendor_type:
+        legacy = (
+            await db.execute(select(VendorType).where(VendorType.code == vendor.vendor_type))
+        ).scalar_one_or_none()
+        if legacy:
+            seen = [legacy.id]
+    if seen:
+        count = await db.scalar(
+            select(func.count(VendorType.id)).where(
+                VendorType.id.in_(seen),
+                VendorType.is_active == True,  # noqa: E712
+            )
+        )
+        if int(count or 0) != len(seen):
+            raise HTTPException(status_code=422, detail="One or more vendor types do not exist or are inactive")
+    await db.execute(text("DELETE FROM vendor_vendor_types WHERE vendor_id = :vendor_id"), {"vendor_id": vendor.id})
+    for type_id in seen:
+        db.add(VendorVendorType(vendor_id=vendor.id, vendor_type_id=type_id))
+    vendor.vendor_type_id = seen[0] if seen else None
+    if seen:
+        primary = (await db.execute(select(VendorType).where(VendorType.id == seen[0]))).scalar_one()
+        vendor.vendor_type = primary.code if primary.code in VALID_VENDOR_TYPES else "material"
+
+
+
+@router.get("/vendor-categories")
+async def list_vendor_categories(
+    include_inactive: bool = Query(False),
+    search: str = Query(None),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    await ensure_vendor_type_schema(db)
+    q = select(VendorCategory).order_by(VendorCategory.name)
+    if not include_inactive:
+        q = q.where(VendorCategory.is_active == True)  # noqa: E712
+    if search:
+        like = f"%{search}%"
+        q = q.where((VendorCategory.name.ilike(like)) | (VendorCategory.code.ilike(like)))
+    rows = (await db.execute(q)).scalars().all()
+    return [VendorCategoryResponse.model_validate(row) for row in rows]
+
+
+@router.post("/vendor-categories", status_code=201)
+async def create_vendor_category(
+    payload: VendorCategoryCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_permission("masters", "create", "vendors")),
+):
+    await ensure_vendor_type_schema(db)
+    existing = (
+        await db.execute(select(VendorCategory).where(func.lower(VendorCategory.code) == payload.code.lower()))
+    ).scalar_one_or_none()
+    if existing:
+        raise HTTPException(status_code=409, detail=f"Vendor category code '{payload.code}' already exists")
+    row = VendorCategory(
+        code=payload.code,
+        name=payload.name,
+        description=payload.description,
+        is_active=True if payload.is_active is None else bool(payload.is_active),
+    )
+    db.add(row)
+    await db.flush()
+    return {"id": row.id, "message": "Vendor category created"}
+
+
+@router.put("/vendor-categories/{vendor_category_id}")
+async def update_vendor_category(
+    vendor_category_id: int,
+    payload: VendorCategoryCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_permission("masters", "update", "vendors")),
+):
+    await ensure_vendor_type_schema(db)
+    row = (await db.execute(select(VendorCategory).where(VendorCategory.id == vendor_category_id))).scalar_one_or_none()
+    if not row:
+        raise HTTPException(status_code=404, detail="Vendor category not found")
+    dup = (
+        await db.execute(
+            select(VendorCategory).where(
+                func.lower(VendorCategory.code) == payload.code.lower(),
+                VendorCategory.id != vendor_category_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if dup:
+        raise HTTPException(status_code=409, detail=f"Vendor category code '{payload.code}' already exists")
+    row.code = payload.code
+    row.name = payload.name
+    row.description = payload.description
+    if payload.is_active is not None:
+        row.is_active = bool(payload.is_active)
+    await db.flush()
+    return {"id": row.id, "message": "Vendor category updated"}
+
+
+@router.delete("/vendor-categories/{vendor_category_id}")
+async def delete_vendor_category(
+    vendor_category_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_permission("masters", "delete", "vendors")),
+):
+    await ensure_vendor_type_schema(db)
+    row = (await db.execute(select(VendorCategory).where(VendorCategory.id == vendor_category_id))).scalar_one_or_none()
+    if not row:
+        raise HTTPException(status_code=404, detail="Vendor category not found")
+    in_use = await db.scalar(select(func.count(Vendor.id)).where(Vendor.vendor_category_id == vendor_category_id))
+    if in_use:
+        raise HTTPException(status_code=409, detail=f"Vendor category is linked to {int(in_use)} vendor(s)")
+    row.is_active = False
+    await db.flush()
+    return {"message": "Vendor category deactivated"}
+
+@router.get("/vendor-types")
+async def list_vendor_types(
+    include_inactive: bool = Query(False),
+    search: str = Query(None),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    await ensure_vendor_type_schema(db)
+    q = select(VendorType).order_by(VendorType.name)
+    if not include_inactive:
+        q = q.where(VendorType.is_active == True)  # noqa: E712
+    if search:
+        like = f"%{search}%"
+        q = q.where((VendorType.name.ilike(like)) | (VendorType.code.ilike(like)))
+    rows = (await db.execute(q)).scalars().all()
+    return [VendorTypeResponse.model_validate(row) for row in rows]
+
+
+@router.post("/vendor-types", status_code=201)
+async def create_vendor_type(
+    payload: VendorTypeCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_permission("masters", "create", "vendors")),
+):
+    await ensure_vendor_type_schema(db)
+    existing = (
+        await db.execute(select(VendorType).where(func.lower(VendorType.code) == payload.code.lower()))
+    ).scalar_one_or_none()
+    if existing:
+        raise HTTPException(status_code=409, detail=f"Vendor type code '{payload.code}' already exists")
+    row = VendorType(
+        code=payload.code,
+        name=payload.name,
+        description=payload.description,
+        is_active=True if payload.is_active is None else bool(payload.is_active),
+    )
+    db.add(row)
+    await db.flush()
+    return {"id": row.id, "message": "Vendor type created"}
+
+
+@router.put("/vendor-types/{vendor_type_id}")
+async def update_vendor_type(
+    vendor_type_id: int,
+    payload: VendorTypeCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_permission("masters", "update", "vendors")),
+):
+    await ensure_vendor_type_schema(db)
+    row = (await db.execute(select(VendorType).where(VendorType.id == vendor_type_id))).scalar_one_or_none()
+    if not row:
+        raise HTTPException(status_code=404, detail="Vendor type not found")
+    dup = (
+        await db.execute(
+            select(VendorType).where(
+                func.lower(VendorType.code) == payload.code.lower(),
+                VendorType.id != vendor_type_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if dup:
+        raise HTTPException(status_code=409, detail=f"Vendor type code '{payload.code}' already exists")
+    row.code = payload.code
+    row.name = payload.name
+    row.description = payload.description
+    if payload.is_active is not None:
+        row.is_active = bool(payload.is_active)
+    await db.flush()
+    return {"id": row.id, "message": "Vendor type updated"}
+
+
+@router.delete("/vendor-types/{vendor_type_id}")
+async def delete_vendor_type(
+    vendor_type_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_permission("masters", "delete", "vendors")),
+):
+    await ensure_vendor_type_schema(db)
+    row = (await db.execute(select(VendorType).where(VendorType.id == vendor_type_id))).scalar_one_or_none()
+    if not row:
+        raise HTTPException(status_code=404, detail="Vendor type not found")
+    in_use = await db.scalar(select(func.count(VendorVendorType.id)).where(VendorVendorType.vendor_type_id == vendor_type_id))
+    if in_use:
+        raise HTTPException(status_code=409, detail=f"Vendor type is linked to {int(in_use)} vendor(s)")
+    row.is_active = False
+    await db.flush()
+    return {"message": "Vendor type deactivated"}
+
+
+@router.get("/vendors")
+async def list_vendors(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=1000),
+    search: str = Query(None),
+    vendor_type: str = Query(None),
+    vendor_category_id: int = Query(None),
+    is_active: bool = Query(None),
+    status: str = Query(None),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    await ensure_vendor_type_schema(db)
+    # R-001 (re-audit): vendors contain bank/GST/DL info â€” gate to roles that
+    # actually need them. Procurement (PO+MR forms), warehouse (GRN), masters,
+    # accounts (payments). Read fails for nurse/field_staff/etc.
+    from app.utils.dependencies import get_user_permissions, get_user_role_codes
+    role_codes = await get_user_role_codes(db, current_user.id)
+    if "super_admin" not in role_codes and "admin" not in role_codes:
+        perms = set(await get_user_permissions(db, current_user.id))
+        if not (perms & {
+            "masters.view.vendors", "procurement.view.purchase_orders",
+            "procurement.view.material_requests", "procurement.view.quotations",
+            "warehouse.view.grn", "accounts.view.payments", "accounts.view.invoices",
+        }):
+            raise HTTPException(status_code=403, detail="Permission denied: masters.view.vendors")
+    offset, limit = paginate_params(page, page_size)
+    query = select(Vendor)
+    count_query = select(func.count(Vendor.id))
+
+    if vendor_type:
+        vendor_type_filters = [VendorType.code == vendor_type]
+        if str(vendor_type).isdigit():
+            vendor_type_filters.append(VendorType.id == int(vendor_type))
+        vt = (
+            await db.execute(
+                select(VendorType).where(or_(*vendor_type_filters))
+            )
+        ).scalar_one_or_none()
+        if vt:
+            query = query.join(VendorVendorType, VendorVendorType.vendor_id == Vendor.id).where(VendorVendorType.vendor_type_id == vt.id)
+            count_query = count_query.join(VendorVendorType, VendorVendorType.vendor_id == Vendor.id).where(VendorVendorType.vendor_type_id == vt.id)
+        else:
+            query = query.where(Vendor.vendor_type == vendor_type)
+            count_query = count_query.where(Vendor.vendor_type == vendor_type)
+    if vendor_category_id is not None:
+        query = query.where(Vendor.vendor_category_id == vendor_category_id)
+        count_query = count_query.where(Vendor.vendor_category_id == vendor_category_id)
+    # Support both is_active (bool) and status ('active'/'inactive') params
+    if is_active is not None:
+        query = query.where(Vendor.is_active == is_active)
+        count_query = count_query.where(Vendor.is_active == is_active)
+    elif status is not None:
+        active_val = status.lower() in ("active", "true", "1")
+        query = query.where(Vendor.is_active == active_val)
+        count_query = count_query.where(Vendor.is_active == active_val)
+
+    query = apply_search_filter(query, Vendor, search, ["vendor_code", "name", "city", "gst_number"])
+    count_query = apply_search_filter(count_query, Vendor, search, ["vendor_code", "name", "city", "gst_number"])
+
+    total = (await db.execute(count_query)).scalar()
+    result = await db.execute(query.distinct().offset(offset).limit(limit).order_by(Vendor.id.desc()))
+    vendors = result.scalars().all()
+    type_map, primary_map = await _vendor_type_maps(db, [v.id for v in vendors])
+    category_map = await _vendor_category_map(db, [v.id for v in vendors])
+
+    # Fetch logins for these vendors to populate has_login
+    from app.models.vendor_portal import VendorUser
+    login_res = await db.execute(
+        select(VendorUser.vendor_id).where(VendorUser.vendor_id.in_([v.id for v in vendors]))
+    ) if vendors else None
+    login_vendor_ids = set(login_res.scalars().all()) if login_res else set()
+
+    return build_paginated_response(
+        [_vendor_response_dict(v, type_map, primary_map, category_map, login_vendor_ids) for v in vendors], total, page, page_size
+    )
+
+
+@router.get("/vendors/{vendor_id:int}", response_model=VendorResponse)
+async def get_vendor(
+    vendor_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    await ensure_vendor_type_schema(db)
+    # BUG-FE-052: mirror the role guard from list_vendors â€” vendor records
+    # contain bank/GST/DL/PII that must not leak to nurses/field_staff/etc.
+    from app.utils.dependencies import get_user_permissions, get_user_role_codes
+    role_codes = await get_user_role_codes(db, current_user.id)
+    if "super_admin" not in role_codes and "admin" not in role_codes:
+        perms = set(await get_user_permissions(db, current_user.id))
+        if not (perms & {
+            "masters.view.vendors", "procurement.view.purchase_orders",
+            "procurement.view.material_requests", "procurement.view.quotations",
+            "warehouse.view.grn", "accounts.view.payments", "accounts.view.invoices",
+        }):
+            raise HTTPException(status_code=403, detail="Permission denied: masters.view.vendors")
+    result = await db.execute(select(Vendor).where(Vendor.id == vendor_id))
+    vendor = result.scalar_one_or_none()
+    if not vendor:
+        raise HTTPException(status_code=404, detail="Vendor not found")
+    type_map, primary_map = await _vendor_type_maps(db, [vendor.id])
+    category_map = await _vendor_category_map(db, [vendor.id])
+    from app.models.vendor_portal import VendorUser
+    login_exists = await db.scalar(
+        select(func.count(VendorUser.id)).where(VendorUser.vendor_id == vendor.id)
+    )
+    return _vendor_response_dict(vendor, type_map, primary_map, category_map, {vendor.id} if login_exists else set())
+
+
+@router.post("/vendors", status_code=201)
+async def create_vendor(
+    payload: VendorCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_permission("masters", "create", "vendors")),
+):
+    await ensure_vendor_type_schema(db)
+    # BUG-FE-051: case-insensitive uniqueness so "ACME" and "acme" can't coexist
+    code_val = (payload.vendor_code or "").strip()
+    existing = await db.execute(
+        select(Vendor).where(func.lower(Vendor.vendor_code) == code_val.lower())
+    )
+    if existing.scalar_one_or_none():
+        raise HTTPException(status_code=409, detail=f"Vendor with code '{code_val}' already exists")
+    # BUG-PRO-105 fix: refuse a second active vendor with the same GSTIN (when
+    # one is supplied). The DB has no UNIQUE constraint on gst_number â€” adding
+    # one is DEFERRED (migration); enforced at the application layer here.
+    if payload.gst_number and payload.gst_number.strip():
+        gst_dupe = await db.execute(
+            select(Vendor.id, Vendor.vendor_code).where(
+                Vendor.gst_number == payload.gst_number,
+                Vendor.is_active == True,  # noqa: E712 â€” explicit boolean for SQL
+            )
+        )
+        dupe = gst_dupe.first()
+        if dupe:
+            raise HTTPException(
+                status_code=409,
+                detail=f"GSTIN '{payload.gst_number}' is already registered",
+            )
+    await _validate_vendor_category(db, payload.vendor_category_id)
+    data = payload.model_dump(exclude={"vendor_type_ids"})
+    data["vendor_code"] = code_val.upper()
+    vendor = Vendor(**data, created_by=current_user.id)
+    db.add(vendor)
+    await db.flush()
+    await _sync_vendor_type_links(db, vendor, payload.vendor_type_ids, payload.vendor_type_id)
+    return {"id": vendor.id, "message": "Vendor created"}
+
+
+@router.put("/vendors/{vendor_id:int}")
+async def update_vendor(
+    vendor_id: int,
+    payload: VendorUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_permission("masters", "update", "vendors")),
+):
+    await ensure_vendor_type_schema(db)
+    result = await db.execute(select(Vendor).where(Vendor.id == vendor_id))
+    vendor = result.scalar_one_or_none()
+    if not vendor:
+        raise HTTPException(status_code=404, detail="Vendor not found")
+    update_data = payload.model_dump(exclude_unset=True)
+    vendor_type_ids = update_data.pop("vendor_type_ids", None)
+    if "vendor_category_id" in update_data:
+        await _validate_vendor_category(db, update_data.get("vendor_category_id"))
+    # BUG-PRO-105 fix (mirror create): block GSTIN collision with another
+    # active vendor when GSTIN is being changed.
+    new_gst = update_data.get("gst_number")
+    if new_gst and new_gst.strip() and new_gst != (vendor.gst_number or ""):
+        gst_dupe = await db.execute(
+            select(Vendor.id, Vendor.vendor_code).where(
+                Vendor.gst_number == new_gst,
+                Vendor.id != vendor_id,
+                Vendor.is_active == True,  # noqa: E712
+            )
+        )
+        dupe = gst_dupe.first()
+        if dupe:
+            raise HTTPException(
+                status_code=409,
+                detail=f"GSTIN '{new_gst}' is already registered",
+            )
+    for k, v in update_data.items():
+        setattr(vendor, k, v)
+    if vendor_type_ids is not None or "vendor_type_id" in update_data:
+        await _sync_vendor_type_links(db, vendor, vendor_type_ids, update_data.get("vendor_type_id"))
+    await db.flush()
+    return {"success": True, "message": "Vendor updated"}
+
+
+@router.delete("/vendors/{vendor_id:int}")
+async def deactivate_vendor(
+    vendor_id: int,
+    force: bool = Query(False),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_permission("masters", "delete", "vendors")),
+):
+    """BUG-FE-050: refuse soft-delete if vendor has open POs or unpaid invoices.
+    Pass ?force=true to override (admin-only escape hatch)."""
+    result = await db.execute(select(Vendor).where(Vendor.id == vendor_id))
+    vendor = result.scalar_one_or_none()
+    if not vendor:
+        raise HTTPException(status_code=404, detail="Vendor not found")
+
+    refs = []
+    # Open POs (status not in closed/cancelled)
+    try:
+        from app.models.procurement import PurchaseOrder  # type: ignore
+        po_count = (await db.execute(
+            select(func.count(PurchaseOrder.id)).where(
+                PurchaseOrder.vendor_id == vendor_id,
+                ~PurchaseOrder.status.in_(["closed", "cancelled", "rejected"]),
+            )
+        )).scalar() or 0
+        if po_count:
+            refs.append(f"{po_count} open purchase order(s)")
+    except Exception:
+        pass
+    # Unpaid invoices
+    try:
+        from app.models.accounts import Invoice  # type: ignore
+        inv_count = (await db.execute(
+            select(func.count(Invoice.id)).where(
+                Invoice.vendor_id == vendor_id,
+                ~Invoice.status.in_(["paid", "cancelled"]),
+            )
+        )).scalar() or 0
+        if inv_count:
+            refs.append(f"{inv_count} unpaid invoice(s)")
+    except Exception:
+        pass
+
+    if refs and not force:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Cannot deactivate vendor â€” has " + ", ".join(refs) +
+                ". Close them first or pass ?force=true."
+            ),
+        )
+
+    vendor.is_active = False
+    await db.flush()
+    return {"success": True, "message": "Vendor deactivated"}
+
+
+@router.get("/vendors/{vendor_id:int}/items")
+async def list_vendor_items(
+    vendor_id: int,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(200, ge=1, le=1000),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    offset, limit = paginate_params(page, page_size)
+    total = (await db.execute(
+        select(func.count(VendorItem.id)).where(VendorItem.vendor_id == vendor_id)
+    )).scalar() or 0
+    rows = (await db.execute(
+        select(VendorItem, Item.item_code, Item.name)
+        .join(Item, VendorItem.item_id == Item.id, isouter=True)
+        .where(VendorItem.vendor_id == vendor_id)
+        .order_by(VendorItem.id.desc())
+        .offset(offset).limit(limit)
+    )).all()
+    items = []
+    for vi, item_code, item_name in rows:
+        items.append({
+            "id": vi.id,
+            "vendor_id": vi.vendor_id,
+            "item_id": vi.item_id,
+            "item_code": item_code,
+            "item_name": item_name,
+            "vendor_item_code": vi.vendor_item_code,
+            "lead_time_days": vi.lead_time_days,
+            "min_order_qty": float(vi.min_order_qty) if vi.min_order_qty is not None else None,
+            "last_price": float(vi.rate) if vi.rate is not None else None,
+            "is_preferred": vi.is_preferred,
+        })
+    return build_paginated_response(items, total, page, page_size)
+
+def _vendor_item_snapshot(vi: VendorItem | None) -> dict:
+    if not vi:
+        return {
+            "vendor_item_code": None,
+            "lead_time_days": None,
+            "min_order_qty": None,
+            "rate": None,
+            "is_preferred": None,
+        }
+    return {
+        "vendor_item_code": vi.vendor_item_code,
+        "lead_time_days": vi.lead_time_days,
+        "min_order_qty": vi.min_order_qty,
+        "rate": vi.rate,
+        "is_preferred": vi.is_preferred,
+    }
+
+
+def _add_vendor_item_history(
+    db: AsyncSession,
+    vi: VendorItem,
+    action: str,
+    current_user: User,
+    old_values: dict | None = None,
+) -> None:
+    old_values = old_values or {}
+    new_values = _vendor_item_snapshot(vi) if action != "delete" else {}
+    db.add(VendorItemHistory(
+        vendor_item_id=vi.id,
+        vendor_id=vi.vendor_id,
+        item_id=vi.item_id,
+        action=action,
+        old_vendor_item_code=old_values.get("vendor_item_code"),
+        new_vendor_item_code=new_values.get("vendor_item_code"),
+        old_lead_time_days=old_values.get("lead_time_days"),
+        new_lead_time_days=new_values.get("lead_time_days"),
+        old_min_order_qty=old_values.get("min_order_qty"),
+        new_min_order_qty=new_values.get("min_order_qty"),
+        old_rate=old_values.get("rate"),
+        new_rate=new_values.get("rate"),
+        old_is_preferred=old_values.get("is_preferred"),
+        new_is_preferred=new_values.get("is_preferred"),
+        changed_by_id=getattr(current_user, "id", None),
+    ))
+
+
+@router.get("/vendors/{vendor_id:int}/items/history")
+async def list_vendor_item_history(
+    vendor_id: int,
+    item_id: int | None = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(200, ge=1, le=1000),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    await ensure_vendor_type_schema(db)
+    offset, limit = paginate_params(page, page_size)
+    filters = [VendorItemHistory.vendor_id == vendor_id]
+    if item_id:
+        filters.append(VendorItemHistory.item_id == item_id)
+    total = (await db.execute(select(func.count(VendorItemHistory.id)).where(*filters))).scalar() or 0
+    rows = (await db.execute(
+        select(
+            VendorItemHistory,
+            Item.item_code,
+            Item.name,
+            UserModel.username,
+            UserModel.first_name,
+            UserModel.last_name,
+        )
+        .join(Item, VendorItemHistory.item_id == Item.id, isouter=True)
+        .join(UserModel, VendorItemHistory.changed_by_id == UserModel.id, isouter=True)
+        .where(*filters)
+        .order_by(VendorItemHistory.changed_at.desc(), VendorItemHistory.id.desc())
+        .offset(offset).limit(limit)
+    )).all()
+    items = []
+    for h, item_code, item_name, username, first_name, last_name in rows:
+        changed_by_name = " ".join([p for p in [first_name, last_name] if p]) or username
+        items.append({
+            "id": h.id,
+            "vendor_item_id": h.vendor_item_id,
+            "vendor_id": h.vendor_id,
+            "item_id": h.item_id,
+            "item_code": item_code,
+            "item_name": item_name,
+            "action": h.action,
+            "old_vendor_item_code": h.old_vendor_item_code,
+            "new_vendor_item_code": h.new_vendor_item_code,
+            "old_lead_time_days": h.old_lead_time_days,
+            "new_lead_time_days": h.new_lead_time_days,
+            "old_min_order_qty": float(h.old_min_order_qty) if h.old_min_order_qty is not None else None,
+            "new_min_order_qty": float(h.new_min_order_qty) if h.new_min_order_qty is not None else None,
+            "old_rate": float(h.old_rate) if h.old_rate is not None else None,
+            "new_rate": float(h.new_rate) if h.new_rate is not None else None,
+            "old_is_preferred": h.old_is_preferred,
+            "new_is_preferred": h.new_is_preferred,
+            "changed_by_id": h.changed_by_id,
+            "changed_by_name": changed_by_name,
+            "changed_at": h.changed_at,
+        })
+    return build_paginated_response(items, total, page, page_size)
+
+
+@router.get("/vendors/{vendor_id:int}/contracts")
+async def list_vendor_contracts(
+    vendor_id: int,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(100, ge=1, le=500),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    offset, limit = paginate_params(page, page_size)
+    total = (await db.execute(
+        select(func.count(VendorContract.id)).where(VendorContract.vendor_id == vendor_id)
+    )).scalar() or 0
+    rows = (await db.execute(
+        select(VendorContract)
+        .where(VendorContract.vendor_id == vendor_id)
+        .order_by(VendorContract.id.desc())
+        .offset(offset).limit(limit)
+    )).scalars().all()
+    items = [{
+        "id": c.id,
+        "vendor_id": c.vendor_id,
+        "contract_number": c.contract_number,
+        "title": c.title,
+        "start_date": c.start_date,
+        "end_date": c.end_date,
+        "status": c.status,
+        "document_url": c.document_url,
+    } for c in rows]
+    return build_paginated_response(items, total, page, page_size)
+
+
+@router.get("/vendors/{vendor_id:int}/ratings")
+async def list_vendor_ratings(
+    vendor_id: int,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(100, ge=1, le=500),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    offset, limit = paginate_params(page, page_size)
+    total = (await db.execute(
+        select(func.count(VendorRating.id)).where(VendorRating.vendor_id == vendor_id)
+    )).scalar() or 0
+    rows = (await db.execute(
+        select(VendorRating)
+        .where(VendorRating.vendor_id == vendor_id)
+        .order_by(VendorRating.id.desc())
+        .offset(offset).limit(limit)
+    )).scalars().all()
+    items = [{
+        "id": r.id,
+        "vendor_id": r.vendor_id,
+        "period_from": r.period_from,
+        "period_to": r.period_to,
+        "delivery_timeliness": float(r.delivery_timeliness) if r.delivery_timeliness is not None else None,
+        "cost_efficiency": float(r.cost_efficiency) if r.cost_efficiency is not None else None,
+        "service_reliability": float(r.service_reliability) if r.service_reliability is not None else None,
+        "delivery_accuracy": float(r.delivery_accuracy) if r.delivery_accuracy is not None else None,
+        "overall_rating": float(r.overall_rating) if r.overall_rating is not None else None,
+        "remarks": r.remarks,
+        "created_at": r.created_at,
+    } for r in rows]
+    return build_paginated_response(items, total, page, page_size)
+
+
+@router.get("/vendors/{vendor_id:int}/purchase-orders")
+async def list_vendor_purchase_orders(
+    vendor_id: int,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(100, ge=1, le=500),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """BUG-FE-055: vendor PO history tab. Stub â€” returns empty list when the
+    procurement model isn't importable so the FE can still render."""
+    try:
+        from app.models.procurement import PurchaseOrder  # type: ignore
+    except Exception:
+        return build_paginated_response([], 0, page, page_size)
+    offset, limit = paginate_params(page, page_size)
+    total = (await db.execute(
+        select(func.count(PurchaseOrder.id)).where(PurchaseOrder.vendor_id == vendor_id)
+    )).scalar() or 0
+    rows = (await db.execute(
+        select(PurchaseOrder)
+        .where(PurchaseOrder.vendor_id == vendor_id)
+        .order_by(PurchaseOrder.id.desc())
+        .offset(offset).limit(limit)
+    )).scalars().all()
+    items = []
+    for po in rows:
+        items.append({
+            "id": po.id,
+            "po_number": getattr(po, "po_number", None) or getattr(po, "doc_number", None),
+            "status": getattr(po, "status", None),
+            "order_date": getattr(po, "order_date", None) or getattr(po, "po_date", None),
+            "total_amount": float(getattr(po, "total_amount", 0) or 0),
+        })
+    return build_paginated_response(items, total, page, page_size)
+
+
+@router.post("/vendors/{vendor_id:int}/items", status_code=201)
+async def add_vendor_item(
+    vendor_id: int,
+    payload: VendorItemCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_permission("masters", "update", "vendors")),
+):
+    # BUG-FE-053: writes to vendor sub-records require masters.update.vendors
+    vendor = (await db.execute(select(Vendor).where(Vendor.id == vendor_id))).scalar_one_or_none()
+    if not vendor:
+        raise HTTPException(status_code=404, detail="Vendor not found")
+    item = (await db.execute(select(Item).where(Item.id == payload.item_id))).scalar_one_or_none()
+    if not item:
+        raise HTTPException(status_code=422, detail="Item not found")
+    existing = (
+        await db.execute(
+            select(VendorItem).where(
+                VendorItem.vendor_id == vendor_id,
+                VendorItem.item_id == payload.item_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if existing:
+        raise HTTPException(status_code=409, detail="This item is already linked to the vendor")
+    vi = VendorItem(**payload.model_dump())
+    vi.vendor_id = vendor_id
+    db.add(vi)
+    await db.flush()
+    _add_vendor_item_history(db, vi, "create", current_user)
+    return {"id": vi.id, "message": "Vendor item added"}
+
+
+@router.post("/vendor-item-mappings/bulk", status_code=201)
+async def bulk_map_vendor_items(
+    payload: VendorItemBulkMapCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_permission("masters", "update", "vendors")),
+):
+    vendor_ids = payload.vendor_ids
+    item_ids = payload.item_ids
+    vendors = (await db.execute(
+        select(Vendor.id).where(Vendor.id.in_(vendor_ids), Vendor.is_active == True)  # noqa: E712
+    )).all()
+    valid_vendor_ids = {int(row[0]) for row in vendors}
+    items = (await db.execute(
+        select(Item.id).where(Item.id.in_(item_ids), Item.is_active == True)  # noqa: E712
+    )).all()
+    valid_item_ids = {int(row[0]) for row in items}
+    missing_vendors = [vid for vid in vendor_ids if vid not in valid_vendor_ids]
+    missing_items = [iid for iid in item_ids if iid not in valid_item_ids]
+    if missing_vendors or missing_items:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": "Only active vendors and active items can be mapped",
+                "missing_vendor_ids": missing_vendors,
+                "missing_item_ids": missing_items,
+            },
+        )
+
+    existing_rows = (await db.execute(
+        select(VendorItem.vendor_id, VendorItem.item_id).where(
+            VendorItem.vendor_id.in_(vendor_ids),
+            VendorItem.item_id.in_(item_ids),
+        )
+    )).all()
+    existing = {(int(vendor_id), int(item_id)) for vendor_id, item_id in existing_rows}
+    created = 0
+    skipped = 0
+    for vendor_id in vendor_ids:
+        for item_id in item_ids:
+            if (vendor_id, item_id) in existing:
+                skipped += 1
+                continue
+            vi = VendorItem(
+                vendor_id=vendor_id,
+                item_id=item_id,
+                lead_time_days=payload.lead_time_days,
+                min_order_qty=payload.min_order_qty,
+                rate=payload.rate,
+                is_preferred=payload.is_preferred,
+            )
+            db.add(vi)
+            await db.flush()
+            _add_vendor_item_history(db, vi, "create", current_user)
+            created += 1
+    return {
+            "vendors": len(vendor_ids),
+        "items": len(item_ids),
+    }
+
+@router.put("/vendors/{vendor_id:int}/items/{vendor_item_id:int}")
+async def update_vendor_item(
+    vendor_id: int,
+    vendor_item_id: int,
+    payload: VendorItemCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_permission("masters", "update", "vendors")),
+):
+    vi = (
+        await db.execute(
+            select(VendorItem).where(
+                VendorItem.id == vendor_item_id,
+                VendorItem.vendor_id == vendor_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if not vi:
+        raise HTTPException(status_code=404, detail="Vendor item mapping not found")
+    duplicate = (
+        await db.execute(
+            select(VendorItem).where(
+                VendorItem.vendor_id == vendor_id,
+                VendorItem.item_id == payload.item_id,
+                VendorItem.id != vendor_item_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if duplicate:
+        raise HTTPException(status_code=409, detail="This item is already linked to the vendor")
+    old_values = _vendor_item_snapshot(vi)
+    for key, value in payload.model_dump().items():
+        setattr(vi, key, value)
+    vi.vendor_id = vendor_id
+    await db.flush()
+    _add_vendor_item_history(db, vi, "update", current_user, old_values)
+    return {"id": vi.id, "message": "Vendor item updated"}
+
+
+@router.delete("/vendors/{vendor_id:int}/items/{vendor_item_id:int}")
+async def delete_vendor_item(
+    vendor_id: int,
+    vendor_item_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_permission("masters", "update", "vendors")),
+):
+    vi = (
+        await db.execute(
+            select(VendorItem).where(
+                VendorItem.id == vendor_item_id,
+                VendorItem.vendor_id == vendor_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if not vi:
+        raise HTTPException(status_code=404, detail="Vendor item mapping not found")
+    old_values = _vendor_item_snapshot(vi)
+    _add_vendor_item_history(db, vi, "delete", current_user, old_values)
+    await db.delete(vi)
+    await db.flush()
+    return {"message": "Vendor item mapping deleted"}
+
+
+@router.post("/vendors/{vendor_id:int}/contracts", status_code=201)
+async def add_vendor_contract(
+    vendor_id: int,
+    payload: VendorContractCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_permission("masters", "update", "vendors")),
+):
+    # BUG-FE-053
+    vc = VendorContract(**payload.model_dump())
+    vc.vendor_id = vendor_id
+    db.add(vc)
+    await db.flush()
+    return {"id": vc.id, "message": "Contract created"}
+
+
+@router.post("/vendors/{vendor_id:int}/ratings", status_code=201)
+async def add_vendor_rating(
+    vendor_id: int,
+    payload: VendorRatingCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_permission("masters", "update", "vendors")),
+):
+    # BUG-FE-053: gate writes
+    vr = VendorRating(**payload.model_dump(), rated_by=current_user.id)
+    vr.vendor_id = vendor_id
+    db.add(vr)
+    await db.flush()
+
+    # BUG-FE-054: aggregate by averaging across all ratings instead of
+    # overwriting with the latest single rating.
+    vendor_result = await db.execute(select(Vendor).where(Vendor.id == vendor_id))
+    vendor = vendor_result.scalar_one_or_none()
+    if vendor:
+        avg = (await db.execute(
+            select(func.avg(VendorRating.overall_rating)).where(
+                VendorRating.vendor_id == vendor_id
+            )
+        )).scalar()
+        if avg is not None:
+            # Round to 1 decimal place to match Antd <Rate allowHalf>
+            vendor.rating = round(float(avg) * 2) / 2
+    await db.flush()
+
+    return {"id": vr.id, "message": "Rating added"}
+
+
+# ==================== DEPARTMENTS (for MR form dropdown) ====================
+
+@router.get("/departments")
+async def list_departments(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Return department list for dropdown. Uses distinct departments from material_requests table."""
+    from app.models.procurement import MaterialRequest
+    result = await db.execute(
+        select(MaterialRequest.department).where(MaterialRequest.department.isnot(None)).distinct()
+    )
+    depts = [r[0] for r in result.all() if r[0]]
+    # Always include common departments
+    default_depts = [
+        "Administration", "Finance", "HR", "IT", "Logistics",
+        "Operations", "Procurement", "Production", "Quality", "Sales",
+        "Warehouse", "Maintenance", "R&D", "Marketing",
+    ]
+    all_depts = sorted(set(default_depts + depts))
+    # BUG-FE-171: previously id == name (string). Provide a numeric synthetic
+    # id (1-based index) for grids/Selects that expect a key, while keeping
+    # the original string in `code` for legacy callers.
+    return [
+        {"id": idx + 1, "name": d, "code": d, "value": d}
+        for idx, d in enumerate(all_depts)
+    ]
+
+
+from app.services.auth_service import hash_password as _hash_password
+from app.schemas.vendor_auth import VendorLoginCreate, VendorLoginUpdate
+
+@router.get("/vendors/{vendor_id:int}/supplier-login")
+async def get_supplier_login(
+    vendor_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Return login status for this material supplier vendor."""
+    await ensure_supplier_portal_schema(db)
+    from app.models.vendor_portal import VendorUser
+    res = await db.execute(select(VendorUser).where(VendorUser.vendor_id == vendor_id))
+    vu = res.scalar_one_or_none()
+    if not vu:
+        return {"has_login": False}
+    return {
+        "has_login": True,
+        "id": vu.id,
+        "username": vu.username,
+        "email": vu.email,
+        "full_name": vu.full_name,
+        "phone": vu.phone,
+        "is_active": vu.is_active,
+        "must_change_password": vu.must_change_password,
+        "last_login": vu.last_login,
+        "created_at": vu.created_at,
+    }
+
+
+@router.post("/vendors/{vendor_id:int}/supplier-login", status_code=201)
+async def create_supplier_login(
+    vendor_id: int,
+    payload: VendorLoginCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Provision a new portal login for a material supplier vendor."""
+    await ensure_supplier_portal_schema(db)
+    from app.models.vendor_portal import VendorUser
+    # Validate vendor exists
+    res = await db.execute(select(Vendor).where(Vendor.id == vendor_id))
+    v = res.scalar_one_or_none()
+    if not v:
+        raise HTTPException(404, "Vendor not found")
+    if not v.is_active:
+        raise HTTPException(400, "Cannot create login for an inactive vendor")
+
+    # One login per vendor
+    res_existing = await db.execute(select(VendorUser).where(VendorUser.vendor_id == vendor_id))
+    if res_existing.scalar_one_or_none():
+        raise HTTPException(409, "This vendor already has a portal login. Use the update endpoint to reset password.")
+
+    # Username uniqueness across all vendor users
+    res_u = await db.execute(select(VendorUser).where(VendorUser.username == payload.username))
+    if res_u.scalar_one_or_none():
+        raise HTTPException(409, f"Username '{payload.username}' is already taken")
+
+    vu = VendorUser(
+        vendor_id=vendor_id,
+        username=payload.username,
+        email=str(payload.email),
+        password_hash=_hash_password(payload.password),
+        full_name=payload.full_name or v.contact_person,
+        phone=payload.phone or v.phone,
+        is_active=True,
+        must_change_password=True,
+        created_by=current_user.id,
+    )
+    db.add(vu)
+    await db.commit()
+    await db.refresh(vu)
+    return {"id": vu.id, "username": vu.username, "message": "Supplier portal login created"}
+
+
+@router.put("/vendors/{vendor_id:int}/supplier-login")
+async def update_supplier_login(
+    vendor_id: int,
+    payload: VendorLoginUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Reset password or toggle active state of a supplier portal login."""
+    await ensure_supplier_portal_schema(db)
+    from app.models.vendor_portal import VendorUser
+    res = await db.execute(select(VendorUser).where(VendorUser.vendor_id == vendor_id))
+    vu = res.scalar_one_or_none()
+    if not vu:
+        raise HTTPException(404, "This vendor has no portal login")
+    data = payload.model_dump(exclude_none=True)
+    if "new_password" in data:
+        vu.password_hash = _hash_password(data.pop("new_password"))
+        vu.password_changed_at = datetime.now(timezone.utc)
+        vu.must_change_password = True
+        vu.failed_login_attempts = 0
+        vu.locked_until = None
+    for k, val in data.items():
+        setattr(vu, k, val)
+    await db.commit()
+    return {"success": True, "message": "Supplier login updated"}
+
+
+@router.delete("/vendors/{vendor_id:int}/supplier-login")
+async def deactivate_supplier_login(
+    vendor_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Deactivate (disable) a supplier portal login."""
+    await ensure_supplier_portal_schema(db)
+    from app.models.vendor_portal import VendorUser
+    res = await db.execute(select(VendorUser).where(VendorUser.vendor_id == vendor_id))
+    vu = res.scalar_one_or_none()
+    if not vu:
+        raise HTTPException(404, "This vendor has no portal login")
+    vu.is_active = False
+    await db.commit()
+    return {"success": True, "message": "Supplier login deactivated"}
+
+
+@router.get("/vendors/supplier-logins")
+async def list_supplier_logins(
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """List all material vendor logins for the admin management table."""
+    await ensure_supplier_portal_schema(db)
+    from app.models.vendor_portal import VendorUser
+    # All material (non-transport) vendors
+    res_v = await db.execute(
+        select(Vendor).where(
+            (Vendor.is_transport_vendor == False) | (Vendor.is_transport_vendor.is_(None))  # noqa: E712
+        ).order_by(Vendor.name.asc())
+    )
+    vendors = res_v.scalars().all()
+    vendor_ids = [v.id for v in vendors]
+
+    # Fetch all logins for these vendors
+    login_map = {}
+    if vendor_ids:
+        res_lu = await db.execute(
+            select(VendorUser).where(VendorUser.vendor_id.in_(vendor_ids))
+        )
+        for vu in res_lu.scalars().all():
+            login_map[vu.vendor_id] = {
+                "id": vu.id,
+                "username": vu.username,
+                "email": vu.email,
+                "is_active": vu.is_active,
+                "last_login": vu.last_login,
+                "must_change_password": vu.must_change_password,
+            }
+
+    return [
+        {
+            "vendor_id": v.id,
+            "vendor_code": v.vendor_code,
+            "name": v.name,
+            "contact_person": v.contact_person,
+            "email": v.email,
+            "phone": v.phone,
+            "is_active": v.is_active,
+            "login": login_map.get(v.id),
+        }
+        for v in vendors
+    ]
+
+
+
+# ==================== modularized reports endpoints ====================
+from typing import Optional
+from datetime import date
+from app.services.report_service import (
+    po_summary_report, vendor_performance_report, grn_report, pending_po_report
+)
+
+def _parse_date(s: Optional[str]):
+    if not s:
+        return None
+    try:
+        return date.fromisoformat(s)
+    except Exception:
+        return None
+
+def _paginate_list(rows, page: int, page_size: int):
+    total = len(rows)
+    start = (page - 1) * page_size
+    end = start + page_size
+    return {
+        "items": rows[start:end],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    }
+
+
+@router.get("/reports")
+async def reports_procurement_dispatch(
+    report_type: str = Query("po_summary"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100000),  # BUG-FIN-103/106: lift export cap
+    date_from: Optional[str] = Query(None),
+    date_to: Optional[str] = Query(None),
+    vendor_id: Optional[int] = Query(None),
+    status: Optional[str] = Query(None),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Procurement reports dispatcher - routes to specific report by type.
+
+    BUG-FIN-094: previously returned an empty stub.
+    """
+    df = _parse_date(date_from)
+    dt = _parse_date(date_to)
+    if report_type in ("po_summary", "purchase_register"):
+        rows = await po_summary_report(db, df, dt, vendor_id, status)
+    elif report_type == "vendor_performance":
+        rows = await vendor_performance_report(db, vendor_id)
+    elif report_type == "grn_summary":
+        rows = await grn_report(db, df, dt, None)
+    elif report_type == "pending_po":
+        rows = await pending_po_report(db)
+    else:
+        rows = await po_summary_report(db, df, dt, vendor_id, status)
+    rows = list(rows or [])
+    out = _paginate_list(rows, page, page_size)
+    out["report_type"] = report_type
+    return out
+
+@router.get("/procurement/po-summary")
+async def rpt_po_summary(
+    date_from: Optional[date] = Query(None),
+    date_to: Optional[date] = Query(None),
+    vendor_id: int = Query(None),
+    status: str = Query(None),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return await po_summary_report(db, date_from, date_to, vendor_id, status)
+
+
+@router.get("/procurement/vendor-performance")
+async def rpt_vendor_performance(
+    vendor_id: int = Query(None),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return await vendor_performance_report(db, vendor_id)
+
+
+@router.get("/procurement/grn-summary")
+async def rpt_grn_summary(
+    date_from: Optional[date] = Query(None),
+    date_to: Optional[date] = Query(None),
+    warehouse_id: int = Query(None),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return await grn_report(db, date_from, date_to, warehouse_id)
+
+
+@router.get("/procurement/pending-po")
+async def rpt_pending_po(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return await pending_po_report(db)
+
+
+@router.get("/procurement/po-vs-grn")
+async def rpt_po_vs_grn(
+    vendor_id: int = Query(None),
+    date_from: Optional[date] = Query(None),
+    date_to: Optional[date] = Query(None),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """PO vs GRN variance report."""
+    from sqlalchemy import select, func
+    from app.models.procurement import PurchaseOrder, PurchaseOrderItem
+    query = (
+        select(
+            PurchaseOrderItem.item_id,
+            func.sum(PurchaseOrderItem.qty).label("ordered_qty"),
+            func.sum(PurchaseOrderItem.received_qty).label("received_qty"),
+            (func.sum(PurchaseOrderItem.qty) - func.sum(PurchaseOrderItem.received_qty)).label("pending_qty"),
+        )
+        .join(PurchaseOrder, PurchaseOrderItem.po_id == PurchaseOrder.id)
+        .where(PurchaseOrder.status.notin_(["draft", "cancelled"]))
+        .group_by(PurchaseOrderItem.item_id)
+    )
+    if vendor_id:
+        query = query.where(PurchaseOrder.vendor_id == vendor_id)
+    if date_from:
+        query = query.where(PurchaseOrder.po_date >= date_from)
+    if date_to:
+        query = query.where(PurchaseOrder.po_date <= date_to)
+    result = await db.execute(query)
+    return [dict(row._mapping) for row in result.all()]
+
+
+@router.get("/procurement/purchase-register")
+async def rpt_purchase_register(
+    date_from: Optional[date] = Query(None),
+    date_to: Optional[date] = Query(None),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return await po_summary_report(db, date_from, date_to)
+
+

@@ -417,7 +417,7 @@ const Replenishment = () => {
         </Space>
       ),
       children: (
-        <Card bodyStyle={{ padding: 0 }}>
+        <Card styles={{ body: { padding: 0 } }}>
           <DataTable
             key={rulesRefreshKey}
             columns={ruleColumns}
@@ -446,7 +446,7 @@ const Replenishment = () => {
         </Space>
       ),
       children: (
-        <Card bodyStyle={{ padding: 0 }}>
+        <Card styles={{ body: { padding: 0 } }}>
           <DataTable
             key={tasksRefreshKey}
             columns={taskColumns}

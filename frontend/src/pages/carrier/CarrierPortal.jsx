@@ -348,7 +348,9 @@ export default function CarrierPortal() {
                 <div style={{ marginTop: '12px' }}>
                   {loading ? (
                     <div style={{ textAlign: 'center', padding: 40 }}>
-                      <Spin tip="Loading invitations..." />
+                      <Spin tip="Loading invitations...">
+                        <div />
+                      </Spin>
                     </div>
                   ) : rfqs.length === 0 ? (
                     <Empty description="No RFQ invitations yet. Sit tight — when a coordinator publishes a freight RFQ for your fleet, it will appear here." />
@@ -398,7 +400,9 @@ export default function CarrierPortal() {
                 <div style={{ marginTop: '12px' }}>
                   {soLoading ? (
                     <div style={{ textAlign: 'center', padding: 40 }}>
-                      <Spin tip="Loading transit shipments..." />
+                      <Spin tip="Loading transit shipments...">
+                        <div />
+                      </Spin>
                     </div>
                   ) : arrivalPendingVehicles.length === 0 ? (
                     <Empty description="No shipments currently in transit awaiting arrival acknowledgment." />
@@ -457,7 +461,9 @@ export default function CarrierPortal() {
                 <div style={{ marginTop: '12px' }}>
                   {soLoading ? (
                     <div style={{ textAlign: 'center', padding: 40 }}>
-                      <Spin tip="Loading service orders..." />
+                      <Spin tip="Loading service orders...">
+                        <div />
+                      </Spin>
                     </div>
                   ) : sos.length === 0 ? (
                     <Empty description="No Service Orders awarded yet. Once an RFQ bid is selected, your active contracts will appear here." />
@@ -666,7 +672,9 @@ export default function CarrierPortal() {
                 <div style={{ marginTop: '12px' }}>
                   {soLoading ? (
                     <div style={{ textAlign: 'center', padding: 40 }}>
-                      <Spin tip="Loading fleet vehicles..." />
+                      <Spin tip="Loading fleet vehicles...">
+                        <div />
+                      </Spin>
                     </div>
                   ) : sos.length === 0 ? (
                     <Empty description="No active Service Orders to track. Once an order is acknowledged, active vehicles will appear here to report transit alerts." />

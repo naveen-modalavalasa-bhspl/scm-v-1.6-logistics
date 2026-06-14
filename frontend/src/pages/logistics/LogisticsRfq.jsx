@@ -207,7 +207,9 @@ export default function LogisticsRfq() {
   if (loading && rfqs.length === 0) {
     return (
       <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '60vh' }}>
-        <Spin size="large" tip="Entering B2B Bidding desk..." />
+        <Spin size="large" tip="Entering B2B Bidding desk...">
+          <div />
+        </Spin>
       </div>
     );
   }

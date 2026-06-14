@@ -518,7 +518,7 @@ const Lms = () => {
         footer={null}
         width="92vw"
         style={{ maxWidth: 1400, top: 24 }}
-        bodyStyle={{ padding: 0, height: 'calc(92vh - 64px)', display: 'flex', flexDirection: 'column' }}
+        styles={{ body: { padding: 0, height: 'calc(92vh - 64px)', display: 'flex', flexDirection: 'column' } }}
         destroyOnHidden
         className="bavya-lms-modal"
         title={

@@ -760,7 +760,9 @@ export default function LogisticsSO() {
                     >
                       {searchingDispatch ? (
                         <div style={{ textAlign: 'center', padding: '30px' }}>
-                          <Spin tip="Locating associated SCM Dispatch Order..." />
+                          <Spin tip="Locating associated SCM Dispatch Order...">
+                            <div />
+                          </Spin>
                         </div>
                       ) : linkedDispatch ? (
                         <div style={{ padding: '8px' }}>

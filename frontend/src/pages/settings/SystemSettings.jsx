@@ -206,7 +206,7 @@ const SystemSettings = () => {
         {/* Number Series Section */}
         <Card
           title="Number Series"
-          bordered={false}
+          variant="borderless"
           style={{ marginBottom: 24 }}
           extra={
             <Button type="primary" size="small" icon={<PlusOutlined />} onClick={handleAddNumber}>
@@ -227,7 +227,7 @@ const SystemSettings = () => {
         {/* General Settings */}
         <Card
           title="General Settings"
-          bordered={false}
+          variant="borderless"
           style={{ marginBottom: 24 }}
           extra={
             <Button type="primary" icon={<SaveOutlined />} onClick={handleSaveGeneral} loading={savingGeneral}>
@@ -342,7 +342,7 @@ const SystemSettings = () => {
         {/* Email Settings */}
         <Card
           title="Email Settings (SMTP)"
-          bordered={false}
+          variant="borderless"
           style={{ marginBottom: 24 }}
           extra={
             <Button type="primary" icon={<SaveOutlined />} onClick={handleSaveEmail} loading={savingEmail}>

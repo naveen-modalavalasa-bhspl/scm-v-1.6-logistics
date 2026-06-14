@@ -271,7 +271,7 @@ const PicklistForm = () => {
         </Space>
       </PageHeader>
 
-      <Card bordered={false} style={{ marginBottom: 16 }}>
+      <Card variant="borderless" style={{ marginBottom: 16 }}>
         <Form form={form} layout="vertical">
           <Row gutter={16}>
             <Col span={8}>

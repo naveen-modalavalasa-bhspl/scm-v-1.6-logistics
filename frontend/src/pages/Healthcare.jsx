@@ -176,7 +176,7 @@ const ExpiryMonitor = () => {
           return (
           <Col xs={24} sm={12} md={6} key={bk}>
             <Card style={statCardStyle(GRADIENT[bk === 'expired' ? 'red' : bk === '0-30' ? 'orange' : bk === '31-60' ? 'yellow' : 'green'])}
-              hoverable bodyStyle={{ padding: 20 }}>
+              hoverable styles={{ body: { padding: 20 } }}>
               <Statistic title={<span style={{ color: '#fff', opacity: .85, fontSize: 13 }}>{bucketLabel[bk]}</span>}
                 value={stat.val} prefix={bucketIcon[bk]} suffix={<span style={{ fontSize: 12, opacity: .7 }}> {stat.suffix}</span>}
                 valueStyle={{ color: '#fff', fontWeight: 700, fontSize: 28 }} />
@@ -184,7 +184,7 @@ const ExpiryMonitor = () => {
           </Col>
         );})}
       </Row>
-      <Card bordered={false}>
+      <Card variant="borderless">
         <Table dataSource={data.items} columns={columns} rowKey={(r) => r.id || `${r.item_id}-${r.batch_number}`}
           size="small" pagination={{ pageSize: 15, showSizeChanger: true }} scroll={{ x: 900 }}
           rowClassName={(r) => r.bucket === 'expired' ? 'row-expired' : ''} />
@@ -255,7 +255,7 @@ const FEFOPicking = () => {
 
   return (
     <div>
-      <Card bordered={false} style={{ marginBottom: 16 }}>
+      <Card variant="borderless" style={{ marginBottom: 16 }}>
         <Row gutter={16}>
           <Col xs={24} sm={10}>
             <Select showSearch allowClear placeholder="Select Item" style={{ width: '100%' }} value={itemId}
@@ -272,7 +272,7 @@ const FEFOPicking = () => {
           <Col xs={24} sm={4}><Button type="primary" icon={<SearchOutlined />} onClick={fetchBatches} loading={loading}>Search</Button></Col>
         </Row>
       </Card>
-      <Card bordered={false}>
+      <Card variant="borderless">
         <Table dataSource={batches} columns={columns} rowKey={(r) => r.id || r.batch_number} size="small"
           loading={loading} pagination={{ pageSize: 20 }} scroll={{ x: 700 }}
           rowClassName={(r) => (r.days_to_expiry ?? 999) <= 0 ? 'row-expired' : ''} />
@@ -347,13 +347,13 @@ const BatchRecalls = () => {
 
   return (
     <div>
-      <Card bordered={false} bodyStyle={{ padding: '12px 16px' }} style={{ marginBottom: 16 }}>
+      <Card variant="borderless" styles={{ body: { padding: '12px 16px' } }} style={{ marginBottom: 16 }}>
         <Space>
           <Button type="primary" icon={<PlusOutlined />} onClick={() => setDrawerOpen(true)}>New Recall</Button>
           <Button icon={<ReloadOutlined />} onClick={fetchRecalls}>Refresh</Button>
         </Space>
       </Card>
-      <Card bordered={false}>
+      <Card variant="borderless">
         <Table dataSource={recalls} columns={columns} rowKey="id" size="small" loading={loading}
           pagination={{ pageSize: 15, showSizeChanger: true }} scroll={{ x: 800 }}
           onRow={(r) => ({ onClick: () => showTraces(r), style: { cursor: 'pointer' } })} />
@@ -444,7 +444,7 @@ const ABCAnalysis = () => {
 
   return (
     <div>
-      <Card bordered={false} bodyStyle={{ padding: '12px 16px' }} style={{ marginBottom: 16 }}>
+      <Card variant="borderless" styles={{ body: { padding: '12px 16px' } }} style={{ marginBottom: 16 }}>
         <Space>
           <Text strong>Analysis Period:</Text>
           <Select value={months} onChange={setMonths} style={{ width: 160 }}>
@@ -453,7 +453,7 @@ const ABCAnalysis = () => {
           <Button icon={<ReloadOutlined />} onClick={fetch}>Refresh</Button>
         </Space>
       </Card>
-      <Card bordered={false}>
+      <Card variant="borderless">
         <Table dataSource={data} columns={columns} rowKey={(r) => r.id || r.item_id || r.item_code}
           size="small" loading={loading} pagination={{ pageSize: 20, showSizeChanger: true }} scroll={{ x: 850 }} />
       </Card>
@@ -523,7 +523,7 @@ const PatientCosting = () => {
 
   return (
     <div>
-      <Card bordered={false} bodyStyle={{ padding: '12px 16px' }} style={{ marginBottom: 16 }}>
+      <Card variant="borderless" styles={{ body: { padding: '12px 16px' } }} style={{ marginBottom: 16 }}>
         <Row gutter={[12, 12]} align="middle">
           <Col xs={24} sm={8}><RangePicker value={dateRange} onChange={setDateRange} style={{ width: '100%' }} /></Col>
           <Col xs={24} sm={6}>
@@ -535,7 +535,7 @@ const PatientCosting = () => {
           <Col xs={24} sm={4}><Button type="primary" icon={<SearchOutlined />} onClick={fetch} loading={loading}>Search</Button></Col>
         </Row>
       </Card>
-      <Card bordered={false}>
+      <Card variant="borderless">
         <Table dataSource={data} columns={columns} rowKey={(r) => r.id || r.patient_id || Math.random()}
           size="small" loading={loading} pagination={{ pageSize: 15, showSizeChanger: true }} scroll={{ x: 850 }} />
       </Card>
@@ -657,14 +657,14 @@ const RateContracts = () => {
 
   return (
     <div>
-      <Card bordered={false} bodyStyle={{ padding: '12px 16px' }} style={{ marginBottom: 16 }}>
+      <Card variant="borderless" styles={{ body: { padding: '12px 16px' } }} style={{ marginBottom: 16 }}>
         <Space>
           <Button type="primary" icon={<PlusOutlined />} onClick={() => setDrawerOpen(true)}>New Contract</Button>
           <Button icon={<ReloadOutlined />} onClick={fetchContracts}>Refresh</Button>
           <BestRateLookup itemOpts={rcItemOpts} onSearch={searchRcItems} />
         </Space>
       </Card>
-      <Card bordered={false}>
+      <Card variant="borderless">
         <Table dataSource={contracts} columns={columns} rowKey="id" size="small" loading={loading}
           pagination={{ pageSize: 15, showSizeChanger: true }} scroll={{ x: 900 }} />
       </Card>
@@ -818,7 +818,7 @@ const VendorScorecard = () => {
 
   return (
     <div>
-      <Card bordered={false} bodyStyle={{ padding: '12px 16px' }} style={{ marginBottom: 16 }}>
+      <Card variant="borderless" styles={{ body: { padding: '12px 16px' } }} style={{ marginBottom: 16 }}>
         <Space>
           <Button type="primary" icon={<ThunderboltOutlined />} onClick={openCalcModal} loading={calculating}>Calculate Scores</Button>
           <Button icon={<ReloadOutlined />} onClick={fetch}>Refresh</Button>
@@ -847,9 +847,9 @@ const VendorScorecard = () => {
             <Col xs={24} sm={12} lg={8} key={sc.id || sc.vendor_id}>
               <Badge.Ribbon text={`Grade ${sc.overall_grade || '-'}`}
                 color={gradeColor[sc.overall_grade] || '#999'}>
-                <Card bordered={false} hoverable
+                <Card variant="borderless" hoverable
                   style={{ borderRadius: 12, transition: 'box-shadow .2s' }}
-                  bodyStyle={{ paddingTop: 28 }}>
+                  styles={{ body: { paddingTop: 28 } }}>
                   <Title level={5} style={{ marginBottom: 4 }}>{sc.vendor_name || `Vendor #${sc.vendor_id}`}</Title>
                   <Text type="secondary" style={{ fontSize: 12 }}>Period: {formatDate(sc.period_start)} - {formatDate(sc.period_end)}</Text>
                   <Divider style={{ margin: '12px 0' }} />
@@ -947,7 +947,7 @@ const LandedCost = () => {
 
   return (
     <div>
-      <Card bordered={false} bodyStyle={{ padding: '12px 16px' }} style={{ marginBottom: 16 }}>
+      <Card variant="borderless" styles={{ body: { padding: '12px 16px' } }} style={{ marginBottom: 16 }}>
         <Row gutter={12} align="middle">
           <Col xs={24} sm={14}>
             <Select showSearch placeholder="Select a GRN to manage landed costs..."
@@ -965,7 +965,7 @@ const LandedCost = () => {
           </Col>
         </Row>
       </Card>
-      <Card bordered={false}>
+      <Card variant="borderless">
         {!grnId ? (
           <Empty description="Pick a GRN above to view its landed costs" />
         ) : (
@@ -1136,13 +1136,13 @@ const Kits = () => {
 
   return (
     <div>
-      <Card bordered={false} bodyStyle={{ padding: '12px 16px' }} style={{ marginBottom: 16 }}>
+      <Card variant="borderless" styles={{ body: { padding: '12px 16px' } }} style={{ marginBottom: 16 }}>
         <Space>
           <Button type="primary" icon={<PlusOutlined />} onClick={() => setDrawerOpen(true)}>New Kit</Button>
           <Button icon={<ReloadOutlined />} onClick={fetchKits}>Refresh</Button>
         </Space>
       </Card>
-      <Card bordered={false}>
+      <Card variant="borderless">
         <Table dataSource={kits} columns={columns} rowKey="id" size="small" loading={loading}
           pagination={{ pageSize: 15, showSizeChanger: true }} scroll={{ x: 800 }} />
       </Card>
@@ -1276,13 +1276,13 @@ const Budgets = () => {
 
   return (
     <div>
-      <Card bordered={false} bodyStyle={{ padding: '12px 16px' }} style={{ marginBottom: 16 }}>
+      <Card variant="borderless" styles={{ body: { padding: '12px 16px' } }} style={{ marginBottom: 16 }}>
         <Space>
           <Button type="primary" icon={<PlusOutlined />} onClick={() => setDrawerOpen(true)}>New Budget</Button>
           <Button icon={<ReloadOutlined />} onClick={fetchBudgets}>Refresh</Button>
         </Space>
       </Card>
-      <Card bordered={false}>
+      <Card variant="borderless">
         <Table dataSource={budgets} columns={columns} rowKey="id" size="small" loading={loading}
           pagination={{ pageSize: 15, showSizeChanger: true }} scroll={{ x: 900 }} />
       </Card>
@@ -1388,30 +1388,30 @@ const Analytics = () => {
 
   return (
     <div>
-      <Card bordered={false} bodyStyle={{ padding: '12px 16px' }} style={{ marginBottom: 16 }}>
+      <Card variant="borderless" styles={{ body: { padding: '12px 16px' } }} style={{ marginBottom: 16 }}>
         <Button icon={<ReloadOutlined />} onClick={fetchAll}>Refresh All Analytics</Button>
       </Card>
 
       <Card title={<span><ThunderboltOutlined style={{ color: BAVYA.magenta, marginRight: 8 }} />Available to Promise (ATP)</span>}
-        bordered={false} style={sectionStyle} headStyle={headStyle}>
+        variant="borderless" style={sectionStyle} styles={{ header: headStyle }}>
         <Table dataSource={atpData} columns={atpCols} rowKey={(r) => r.id || `${r.item_id}-${r.warehouse_id}`}
           size="small" loading={loading.atp} pagination={{ pageSize: 10 }} scroll={{ x: 650 }} />
       </Card>
 
       <Card title={<span><ClockCircleOutlined style={{ color: BAVYA.orange, marginRight: 8 }} />Inventory Aging</span>}
-        bordered={false} style={sectionStyle} headStyle={headStyle}>
+        variant="borderless" style={sectionStyle} styles={{ header: headStyle }}>
         <Table dataSource={agingData} columns={agingCols} rowKey={(r) => r.id || r.item_id}
           size="small" loading={loading.aging} pagination={{ pageSize: 10 }} scroll={{ x: 800 }} />
       </Card>
 
       <Card title={<span><AuditOutlined style={{ color: BAVYA.purple, marginRight: 8 }} />Procurement Cycle Time</span>}
-        bordered={false} style={sectionStyle} headStyle={headStyle}>
+        variant="borderless" style={sectionStyle} styles={{ header: headStyle }}>
         <Table dataSource={cycleData} columns={cycleCols} rowKey={(r) => r.id || r.category_name}
           size="small" loading={loading.cycle} pagination={{ pageSize: 10 }} scroll={{ x: 700 }} />
       </Card>
 
       <Card title={<span><SwapOutlined style={{ color: BAVYA.gold, marginRight: 8 }} />Transfer Suggestions</span>}
-        bordered={false} style={sectionStyle} headStyle={headStyle}>
+        variant="borderless" style={sectionStyle} styles={{ header: headStyle }}>
         <Table dataSource={transferData} columns={transferCols} rowKey={(r) => r.id || `${r.item_id}-${r.from_warehouse_id}-${r.to_warehouse_id}`}
           size="small" loading={loading.transfer} pagination={{ pageSize: 10 }} scroll={{ x: 850 }} />
       </Card>

@@ -266,7 +266,7 @@ const StockAudit = () => {
         </Button>
       </PageHeader>
 
-      <Card bodyStyle={{ padding: 0 }}>
+      <Card styles={{ body: { padding: 0 } }}>
         <DataTable
           key={refreshKey}
           columns={columns}

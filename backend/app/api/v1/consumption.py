@@ -714,3 +714,148 @@ async def create_consumption_return(
     await db.flush()
     return {"id": cr.id, "return_number": cr.return_number, "status": cr.status}
 
+
+# ==================== modularized reports endpoints ====================
+from typing import Optional
+from datetime import date
+from app.services.report_service import (
+    consumption_summary_report, consumption_trend_report
+)
+
+def _parse_date(s: Optional[str]):
+    if not s:
+        return None
+    try:
+        return date.fromisoformat(s)
+    except Exception:
+        return None
+
+def _paginate_list(rows, page: int, page_size: int):
+    total = len(rows)
+    start = (page - 1) * page_size
+    end = start + page_size
+    return {
+        "items": rows[start:end],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    }
+
+
+@router.get("/reports")
+async def reports_consumption_dispatch(
+    report_type: str = Query("summary"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100000),  # BUG-FIN-103/106: lift export cap
+    date_from: Optional[str] = Query(None),
+    date_to: Optional[str] = Query(None),
+    project_id: Optional[int] = Query(None),
+    department: Optional[str] = Query(None),
+    item_id: Optional[int] = Query(None),
+    months: int = Query(12),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Consumption reports dispatcher.
+
+    BUG-FIN-096: previously returned an empty stub.
+    """
+    df = _parse_date(date_from)
+    dt = _parse_date(date_to)
+    if report_type == "summary":
+        rows = await consumption_summary_report(db, df, dt, project_id, department)
+    elif report_type == "trend":
+        rows = await consumption_trend_report(db, item_id, months)
+    else:
+        rows = await consumption_summary_report(db, df, dt, project_id, department)
+    rows = list(rows or [])
+    out = _paginate_list(rows, page, page_size)
+    out["report_type"] = report_type
+    return out
+
+@router.get("/reports/chart")
+async def reports_consumption_chart(
+    report_type: str = Query("summary"),
+    chart: bool = Query(True),
+    current_user: User = Depends(get_current_user),
+):
+    return {"labels": [], "datasets": [], "report_type": report_type}
+
+@router.get("/consumption/summary")
+async def rpt_consumption_summary(
+    date_from: Optional[date] = Query(None),
+    date_to: Optional[date] = Query(None),
+    project_id: int = Query(None),
+    department: str = Query(None),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return await consumption_summary_report(db, date_from, date_to, project_id, department)
+
+
+@router.get("/consumption/trend")
+async def rpt_consumption_trend(
+    item_id: int = Query(None),
+    months: int = Query(12),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return await consumption_trend_report(db, item_id, months)
+
+
+@router.get("/consumption/department-wise")
+async def rpt_consumption_department(
+    date_from: Optional[date] = Query(None),
+    date_to: Optional[date] = Query(None),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Consumption by department."""
+    from sqlalchemy import select, func
+    from app.models.consumption import ConsumptionEntry, ConsumptionItem
+    query = (
+        select(
+            ConsumptionEntry.department,
+            func.count(func.distinct(ConsumptionEntry.id)).label("entry_count"),
+            func.sum(ConsumptionItem.amount).label("total_amount"),
+        )
+        .join(ConsumptionItem, ConsumptionItem.entry_id == ConsumptionEntry.id)
+        .where(ConsumptionEntry.status.in_(["submitted", "approved"]))
+        .group_by(ConsumptionEntry.department)
+    )
+    if date_from:
+        query = query.where(ConsumptionEntry.consumption_date >= date_from)
+    if date_to:
+        query = query.where(ConsumptionEntry.consumption_date <= date_to)
+    result = await db.execute(query)
+    return [dict(row._mapping) for row in result.all()]
+
+
+@router.get("/consumption/project-wise")
+async def rpt_consumption_project(
+    date_from: Optional[date] = Query(None),
+    date_to: Optional[date] = Query(None),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Consumption by project."""
+    from sqlalchemy import select, func
+    from app.models.consumption import ConsumptionEntry, ConsumptionItem
+    query = (
+        select(
+            ConsumptionEntry.project_id,
+            func.count(func.distinct(ConsumptionEntry.id)).label("entry_count"),
+            func.sum(ConsumptionItem.amount).label("total_amount"),
+        )
+        .join(ConsumptionItem, ConsumptionItem.entry_id == ConsumptionEntry.id)
+        .where(ConsumptionEntry.status.in_(["submitted", "approved"]))
+        .group_by(ConsumptionEntry.project_id)
+    )
+    if date_from:
+        query = query.where(ConsumptionEntry.consumption_date >= date_from)
+    if date_to:
+        query = query.where(ConsumptionEntry.consumption_date <= date_to)
+    result = await db.execute(query)
+    return [dict(row._mapping) for row in result.all()]
+
+

@@ -693,7 +693,9 @@ const QuotationComparison = () => {
 
       {loading && (
         <div style={{ display: 'flex', justifyContent: 'center', padding: 80 }}>
-          <Spin size="large" tip="Loading RFQ comparison..." />
+          <Spin size="large" tip="Loading RFQ comparison...">
+            <div />
+          </Spin>
         </div>
       )}
 

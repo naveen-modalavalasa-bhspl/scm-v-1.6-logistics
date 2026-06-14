@@ -5,9 +5,9 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.api.v1 import (
-    auth, users, masters, masters_phase1, procurement, procurement_demand_pool, warehouse,
+    auth, users, procurement, procurement_demand_pool, warehouse,
     inventory, indent, consumption, approval,
-    accounts, assets, barcode, reports, dashboard, notifications,
+    accounts, assets, barcode, dashboard, notifications,
     healthcare, outbound, drift_fixes, rules, compliance, documents, mrp, reports_v2, lineage, alerts,
     rate_contracts, cycle_count, landed_cost, lms, sidebar, packaging, inward, dispatch, api_keys, external,
     logistics, carrier_auth, carrier_portal,
@@ -22,8 +22,6 @@ api_router.include_router(users.router, prefix="/users", tags=["Users"])
 api_router.include_router(users.router, prefix="/settings/users", tags=["Settings"])
 api_router.include_router(api_keys.router, prefix="/api-keys", tags=["API Keys"])
 api_router.include_router(external.router, prefix="/external", tags=["External Data Access (API Key)"])
-api_router.include_router(masters.router, prefix="/masters", tags=["Master Data"])
-api_router.include_router(masters_phase1.router, prefix="/masters", tags=["Master Data"])
 api_router.include_router(procurement.router, prefix="/procurement", tags=["Procurement"])
 api_router.include_router(procurement_demand_pool.router, prefix="/procurement", tags=["Demand Pool"])
 api_router.include_router(warehouse.router, prefix="/warehouse", tags=["Warehouse / GRN / QI / Putaway"])
@@ -40,14 +38,13 @@ api_router.include_router(rules.router, prefix="/automation", tags=["Business Ru
 api_router.include_router(accounts.router, prefix="/accounts", tags=["Accounts"])
 api_router.include_router(assets.router, prefix="/assets", tags=["Asset Management"])
 api_router.include_router(barcode.router, prefix="/barcode", tags=["Barcode / QR"])
-api_router.include_router(reports.router, prefix="/reports", tags=["Reports"])
 api_router.include_router(dashboard.router, prefix="/dashboard", tags=["Dashboard"])
 api_router.include_router(notifications.router, prefix="/notifications", tags=["Notifications"])
 api_router.include_router(healthcare.router, prefix="/healthcare", tags=["Healthcare SCM"])
 api_router.include_router(compliance.router, prefix="/compliance", tags=["Healthcare Compliance"])
 api_router.include_router(documents.router, prefix="/documents", tags=["Document Management"])
 api_router.include_router(mrp.router, prefix="/mrp", tags=["Demand Planning / MRP"])
-api_router.include_router(reports_v2.router, prefix="/reports-v2", tags=["Reports v2 (configurable)"])
+api_router.include_router(reports_v2.router, prefix="/settings/reports-v2", tags=["Reports v2 (configurable)"])
 api_router.include_router(lineage.router, prefix="/lineage", tags=["Document Lineage"])
 api_router.include_router(alerts.router, prefix="/alerts", tags=["Alerts (Expiry / Reorder / ABC)"])
 api_router.include_router(rate_contracts.router, prefix="/rate-contracts", tags=["Rate Contracts"])
@@ -657,7 +654,7 @@ async def consumption_dept_alias(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    from app.api.v1.reports import rpt_consumption_department
+    from app.api.v1.consumption import rpt_consumption_department
     return await rpt_consumption_department(date_from=date_from, date_to=date_to, db=db, current_user=current_user)
 
 
@@ -668,7 +665,7 @@ async def consumption_project_alias(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    from app.api.v1.reports import rpt_consumption_project
+    from app.api.v1.consumption import rpt_consumption_project
     return await rpt_consumption_project(date_from=date_from, date_to=date_to, db=db, current_user=current_user)
 
 
@@ -784,6 +781,73 @@ async def outbound_dispatches_alias(
     result = await db.execute(q.order_by(DispatchOrder.id.desc()).limit(page_size))
     dispatches = result.scalars().all()
     return {"items": [{"id": d.id, "dispatch_number": d.dispatch_number, "status": d.status} for d in dispatches], "total": len(dispatches)}
+
+
+from fastapi import Request
+from fastapi.responses import RedirectResponse
+
+@alias_router.api_route("/masters/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"])
+async def masters_redirect_alias(path: str, request: Request):
+    """Dynamic redirect for legacy /masters/ lookups to their new modular paths.
+    
+    This preserves all query parameters, HTTP methods, and bodies via 307 redirect.
+    """
+    path_lower = path.lower()
+    
+    # 1. Warehouse prefix
+    if (path_lower.startswith("warehouses") or 
+        path_lower.startswith("locations") or 
+        path_lower.startswith("lines") or 
+        path_lower.startswith("racks") or 
+        path_lower.startswith("bins")):
+        target_prefix = "warehouse"
+        
+    # 2. Procurement prefix
+    elif (path_lower.startswith("vendors") or 
+          path_lower.startswith("vendor-categories") or 
+          path_lower.startswith("vendor-types") or 
+          path_lower.startswith("vendor-item-mappings") or 
+          path_lower.startswith("departments")):
+        target_prefix = "procurement"
+        
+    # 3. Users prefix
+    elif (path_lower.startswith("org-projects") or 
+          path_lower.startswith("offices") or 
+          path_lower.startswith("positions") or 
+          path_lower.startswith("employees") or 
+          path_lower.startswith("projects") or 
+          path_lower.startswith("user-groups")):
+        target_prefix = "users"
+        
+    # 4. Inventory prefix
+    elif (path_lower.startswith("items") or 
+          path_lower.startswith("uom-categories") or 
+          path_lower.startswith("uom-conversions") or 
+          path_lower.startswith("item-uom-conversions") or 
+          path_lower.startswith("uom") or 
+          path_lower.startswith("categories") or 
+          path_lower.startswith("user-material-mappings") or 
+          path_lower.startswith("user-material-mapping") or 
+          path_lower.startswith("price-lists") or 
+          path_lower.startswith("boms") or 
+          path_lower.startswith("item-types") or 
+          path_lower.startswith("features") or 
+          path_lower.startswith("brands") or 
+          path_lower.startswith("item-attributes") or 
+          path_lower.startswith("item-attribute-category-mappings") or 
+          path_lower.startswith("spec-categories") or 
+          path_lower.startswith("specs") or 
+          path_lower.startswith("item-specs")):
+        target_prefix = "inventory"
+    else:
+        # Fallback 404
+        raise HTTPException(status_code=404, detail=f"Master route /masters/{path} not found")
+        
+    new_url = f"/api/v1/{target_prefix}/{path}"
+    if request.url.query:
+        new_url += f"?{request.url.query}"
+        
+    return RedirectResponse(url=new_url, status_code=307)
 
 
 api_router.include_router(alias_router)

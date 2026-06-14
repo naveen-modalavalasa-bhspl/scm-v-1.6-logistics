@@ -391,40 +391,79 @@ const _ALL_MENU_CHILD_KEYS = (() => {
 
 const filterModuleTabs = (tabs, allowedSet, useServerKeys, userRoleCodes = []) => {
   const userRoleSet = new Set(userRoleCodes);
-  return tabs.filter((t) => {
-    // Per-tab role hide rule (e.g. Indent → Board hidden from field roles).
-    if (Array.isArray(t.hideForRoles) && t.hideForRoles.some((r) => userRoleSet.has(r))) {
-      return false;
-    }
-    if (!useServerKeys) return true;
-    const parts = (t.path || '').split('/').filter(Boolean);
-    if (parts.length < 2) return true;
-    const derivedKey = `${parts[0]}-${parts[1]}`;
-    if (derivedKey === 'masters-packaging' && (allowedSet.has('masters') || allowedSet.has('masters-items') || allowedSet.has('masters-uom'))) {
-      return true;
-    }
-    if (derivedKey === 'masters-boms' && (allowedSet.has('masters') || allowedSet.has('masters-items'))) {
-      return true;
-    }
-    if (derivedKey === 'masters-vendor-material-mapping' && (allowedSet.has('masters') || allowedSet.has('masters-vendors') || allowedSet.has('masters-items'))) {
-      return true;
-    }
-    if (derivedKey === 'masters-user-material-mapping' && (allowedSet.has('masters') || allowedSet.has('settings-users') || allowedSet.has('masters-items'))) {
-      return true;
-    }
-    if (derivedKey === 'masters-users' && allowedSet.has('settings-users')) {
-      return true;
-    }
-    if (
-      derivedKey === 'masters-organization-structure'
-      && (allowedSet.has('settings-users') || allowedSet.has('masters-user-groups'))
-    ) {
-      return true;
-    }
-    // Personal / not-in-MENU_CONFIG paths always show.
-    if (!_ALL_MENU_CHILD_KEYS.has(derivedKey)) return true;
-    return allowedSet.has(derivedKey);
-  });
+  return tabs
+    .map((t) => {
+      // If the tab has children, filter them first
+      if (t.children && t.children.length > 0) {
+        const filteredChildren = filterModuleTabs(t.children, allowedSet, useServerKeys, userRoleCodes);
+        if (filteredChildren.length === 0) {
+          return null; // Hide parent if no children allowed
+        }
+        return { ...t, children: filteredChildren };
+      }
+
+      // Per-tab role hide rule (e.g. Indent → Board hidden from field roles).
+      if (Array.isArray(t.hideForRoles) && t.hideForRoles.some((r) => userRoleSet.has(r))) {
+        return null;
+      }
+      if (!useServerKeys) return t;
+      const parts = (t.path || '').split('/').filter(Boolean);
+      if (parts.length < 2) return t;
+      const derivedKey = `${parts[0]}-${parts[1]}`;
+      if (derivedKey === 'masters-packaging' && (allowedSet.has('masters') || allowedSet.has('masters-items') || allowedSet.has('masters-uom'))) {
+        return t;
+      }
+      if (derivedKey === 'masters-boms' && (allowedSet.has('masters') || allowedSet.has('masters-items'))) {
+        return t;
+      }
+      if (derivedKey === 'masters-vendor-material-mapping' && (allowedSet.has('masters') || allowedSet.has('masters-vendors') || allowedSet.has('masters-items'))) {
+        return t;
+      }
+      if (derivedKey === 'masters-user-material-mapping' && (allowedSet.has('masters') || allowedSet.has('settings-users') || allowedSet.has('masters-items'))) {
+        return t;
+      }
+      if (derivedKey === 'masters-users' && allowedSet.has('settings-users')) {
+        return t;
+      }
+      if (
+        derivedKey === 'masters-organization-structure'
+        && (allowedSet.has('settings-users') || allowedSet.has('masters-user-groups'))
+      ) {
+        return t;
+      }
+
+      // Modularized keys support (e.g. warehouse-masters, inventory-reports)
+      const modularDerivedKey = `${parts[0]}-${parts[1]}`;
+      if (allowedSet.has(modularDerivedKey)) {
+        return t;
+      }
+
+      if (parts.length >= 3) {
+        const fullDerivedKey = `${parts[0]}-${parts[1]}-${parts[2]}`;
+        if (allowedSet.has(fullDerivedKey)) {
+          return t;
+        }
+      }
+
+      // Legacy master/reports key fallback
+      if (parts[1] === 'masters') {
+        const legacyKey = `masters-${parts[2]}`;
+        if (allowedSet.has(legacyKey) || allowedSet.has('masters')) {
+          return t;
+        }
+      }
+      if (parts[1] === 'reports') {
+        const legacyKey = `reports-${parts[0]}`;
+        if (allowedSet.has(legacyKey) || allowedSet.has('reports')) {
+          return t;
+        }
+      }
+
+      // Personal / not-in-MENU_CONFIG paths always show.
+      if (!_ALL_MENU_CHILD_KEYS.has(derivedKey) && !_ALL_MENU_CHILD_KEYS.has(modularDerivedKey)) return t;
+      return allowedSet.has(derivedKey) || allowedSet.has(modularDerivedKey) ? t : null;
+    })
+    .filter(Boolean);
 };
 
 const MainLayout = () => {
@@ -794,7 +833,24 @@ const MainLayout = () => {
             </div>
             <div className="bavya-topnav-tabs">
               {currentModule.tabs.map((t) => {
-                const isActive = activeTab && t.path === activeTab.path;
+                const isChildActive = t.children && t.children.some((c) => location.pathname.startsWith(c.path));
+                const isActive = (activeTab && t.path === activeTab.path) || isChildActive;
+                if (t.children && t.children.length > 0) {
+                  const menu = {
+                    items: t.children.map((c) => ({
+                      key: c.path,
+                      label: c.label,
+                      onClick: () => navigate(c.path),
+                    })),
+                  };
+                  return (
+                    <Dropdown key={t.label} menu={menu} trigger={['click', 'hover']}>
+                      <button className={isActive ? 'active' : ''}>
+                        {t.label} <span style={{ fontSize: '9px', marginLeft: '4px' }}>▼</span>
+                      </button>
+                    </Dropdown>
+                  );
+                }
                 return (
                   <button
                     key={t.path}

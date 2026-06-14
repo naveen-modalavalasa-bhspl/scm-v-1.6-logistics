@@ -1,5 +1,14 @@
 import re
 
+_BOOTSTRAP_STATE = {}
+
+def _should_sync(name: str) -> bool:
+    if _BOOTSTRAP_STATE.get(name):
+        return False
+    _BOOTSTRAP_STATE[name] = True
+    return True
+
+
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession
@@ -9,6 +18,8 @@ from app.models.vendor_portal import VendorUser
 
 
 async def ensure_user_item_permission_schema(session: AsyncSession) -> None:
+    if not _should_sync("user_item_permission_schema"):
+        return
     conn = await session.connection()
     await conn.run_sync(UserItemPermission.__table__.create, checkfirst=True)
     await conn.run_sync(RoleItemPermission.__table__.create, checkfirst=True)
@@ -39,6 +50,8 @@ async def ensure_user_item_permission_schema(session: AsyncSession) -> None:
 
 
 async def ensure_supplier_portal_schema(session: AsyncSession) -> None:
+    if not _should_sync("supplier_portal_schema"):
+        return
     conn = await session.connection()
     await conn.run_sync(VendorUser.__table__.create, checkfirst=True)
 
@@ -94,6 +107,8 @@ async def ensure_supplier_portal_schema(session: AsyncSession) -> None:
 
 
 async def ensure_rfq_schema(session: AsyncSession) -> None:
+    if not _should_sync("rfq_schema"):
+        return
     conn = await session.connection()
 
     from app.models.procurement import RFQ, RFQItem, RFQVendor
@@ -242,6 +257,8 @@ async def ensure_rfq_schema(session: AsyncSession) -> None:
 
 
 async def ensure_organization_structure_schema(session: AsyncSession) -> None:
+    if not _should_sync("organization_structure_schema"):
+        return
     conn = await session.connection()
     await conn.run_sync(Office.__table__.create, checkfirst=True)
     await conn.run_sync(Position.__table__.create, checkfirst=True)
@@ -370,11 +387,15 @@ async def ensure_organization_structure_schema(session: AsyncSession) -> None:
 
 
 async def ensure_feature_schema(session: AsyncSession) -> None:
+    if not _should_sync("feature_schema"):
+        return
     conn = await session.connection()
     await ensure_feature_schema_on_connection(conn)
 
 
 async def ensure_uom_category_schema(session: AsyncSession) -> None:
+    if not _should_sync("uom_category_schema"):
+        return
     conn = await session.connection()
     await conn.run_sync(UOMCategory.__table__.create, checkfirst=True)
 
@@ -414,6 +435,8 @@ async def ensure_uom_category_schema(session: AsyncSession) -> None:
 
 
 async def ensure_uom_enterprise_schema(session: AsyncSession) -> None:
+    if not _should_sync("uom_enterprise_schema"):
+        return
     conn = await session.connection()
     await ensure_uom_category_schema(session)
 
@@ -485,6 +508,8 @@ async def ensure_uom_enterprise_schema(session: AsyncSession) -> None:
 
 
 async def ensure_vendor_type_schema(session: AsyncSession) -> None:
+    if not _should_sync("vendor_type_schema"):
+        return
     conn = await session.connection()
     await conn.run_sync(VendorType.__table__.create, checkfirst=True)
     await conn.run_sync(VendorCategory.__table__.create, checkfirst=True)
@@ -621,6 +646,8 @@ async def ensure_vendor_type_schema(session: AsyncSession) -> None:
 
 
 async def ensure_item_category_code_schema(session: AsyncSession) -> None:
+    if not _should_sync("item_category_code_schema"):
+        return
     conn = await session.connection()
     readable_col_exists = (
         await conn.execute(
@@ -755,6 +782,8 @@ async def ensure_item_category_code_schema(session: AsyncSession) -> None:
 
 
 async def ensure_item_attribute_uom_schema(session: AsyncSession) -> None:
+    if not _should_sync("item_attribute_uom_schema"):
+        return
     conn = await session.connection()
     await ensure_uom_category_schema(session)
 
@@ -799,6 +828,8 @@ async def ensure_item_attribute_uom_schema(session: AsyncSession) -> None:
 
 
 async def ensure_item_uom_category_schema(session: AsyncSession) -> None:
+    if not _should_sync("item_uom_category_schema"):
+        return
     conn = await session.connection()
     await ensure_uom_category_schema(session)
 
@@ -838,6 +869,8 @@ async def ensure_item_uom_category_schema(session: AsyncSession) -> None:
 
 
 async def ensure_specs_schema(session: AsyncSession) -> None:
+    if not _should_sync("specs_schema"):
+        return
     conn = await session.connection()
     await ensure_uom_category_schema(session)
     for table in (SpecCategory.__table__, Spec.__table__, ItemSpec.__table__, ItemSpecValue.__table__):
@@ -845,6 +878,8 @@ async def ensure_specs_schema(session: AsyncSession) -> None:
 
 
 async def ensure_feature_schema_on_connection(conn: AsyncConnection) -> None:
+    if not _should_sync("feature_schema_on_connection"):
+        return
     # Create new master table when missing.
     await conn.run_sync(Feature.__table__.create, checkfirst=True)
     await conn.run_sync(ItemFeature.__table__.create, checkfirst=True)
@@ -905,6 +940,8 @@ async def ensure_feature_schema_on_connection(conn: AsyncConnection) -> None:
 
 
 async def ensure_packaging_schema(session: AsyncSession) -> None:
+    if not _should_sync("packaging_schema"):
+        return
     conn = await session.connection()
     await conn.run_sync(PackagingLevel.__table__.create, checkfirst=True)
     await conn.run_sync(ItemPackaging.__table__.create, checkfirst=True)
@@ -924,6 +961,8 @@ async def ensure_packaging_schema(session: AsyncSession) -> None:
 
 
 async def ensure_material_issue_schema(session: AsyncSession) -> None:
+    if not _should_sync("material_issue_schema"):
+        return
     conn = await session.connection()
     columns = {
         row[0]
@@ -960,6 +999,8 @@ async def ensure_material_issue_schema(session: AsyncSession) -> None:
 
 
 async def ensure_logistics_so_schema(session: AsyncSession) -> None:
+    if not _should_sync("logistics_so_schema"):
+        return
     conn = await session.connection()
     columns = {
         row[0]
@@ -991,6 +1032,8 @@ async def ensure_logistics_so_schema(session: AsyncSession) -> None:
 
 
 async def ensure_universal_dispatch_ack_schema(session: AsyncSession) -> None:
+    if not _should_sync("universal_dispatch_ack_schema"):
+        return
     conn = await session.connection()
     
     from app.models.dispatch import (

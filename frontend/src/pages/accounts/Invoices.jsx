@@ -251,7 +251,7 @@ const Invoices = () => {
         </Button>
       </PageHeader>
 
-      <Card bodyStyle={{ paddingBottom: 0 }}>
+      <Card styles={{ body: { paddingBottom: 0 } }}>
         <Tabs
           activeKey={activeTab}
           onChange={(key) => {

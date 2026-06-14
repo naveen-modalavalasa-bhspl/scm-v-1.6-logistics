@@ -26,39 +26,51 @@ router = APIRouter(prefix='/me', tags=['me'])
 # Used for super_admin's "see everything" bucket and as the source list for
 # the admin bucket which excludes admin-only system pages.
 _ALL_KEYS: Set[str] = {
-    'dashboard', 'lms', 'launcher',
-    'masters',
-    'masters-items', 'masters-categories', 'masters-brands', 'masters-features',
-    'masters-item-types', 'masters-item-attributes', 'masters-attribute-mapping',
-    'masters-specs', 'masters-vendors', 'masters-warehouses',
-    'masters-uom', 'masters-price-lists', 'masters-user-groups',
-    'procurement',
-    'procurement-demand-pool',
-    'procurement-material-requests', 'procurement-quotations',
-    'procurement-quotation-comparison',
-    'procurement-purchase-orders',
-    'warehouse',
+    'lms', 'launcher',
+    # 1. Warehouse
+    'warehouse', 'warehouse-dashboard', 'warehouse-reports', 'warehouse-notifications',
+    'warehouse-masters', 'warehouse-masters-warehouses', 'warehouse-masters-floor-plan', 'warehouse-masters-floor-plan-3d',
     'warehouse-floor-plan',
     'logistics-gate-entry', 'warehouse-grn', 'warehouse-quality-inspection',
     'warehouse-putaway', 'warehouse-purchase-returns',
     'warehouse-material-issues', 'warehouse-material-inward',
     'warehouse-dispatch',
-    'inventory',
+    # 2. Inventory
+    'inventory', 'inventory-dashboard', 'inventory-reports', 'inventory-notifications',
+    'inventory-masters', 'inventory-masters-items', 'inventory-masters-packaging', 'inventory-masters-categories',
+    'inventory-masters-user-material-mapping', 'inventory-masters-uom', 'inventory-masters-brands', 'inventory-masters-item-types',
+    'inventory-masters-item-attributes', 'inventory-masters-category-attribute-mapping', 'inventory-masters-specs',
+    'inventory-masters-boms', 'inventory-masters-price-lists',
     'inventory-stock-balance', 'inventory-stock-ledger',
     'inventory-stock-transfer', 'inventory-stock-audit',
     'inventory-replenishment',
-    'indent', 'indent-indents', 'indent-acknowledgement',
+    # 3. Procurement
+    'procurement', 'procurement-dashboard', 'procurement-reports', 'procurement-notifications',
+    'procurement-masters', 'procurement-masters-vendors', 'procurement-masters-vendor-material-mapping',
+    'procurement-demand-pool',
+    'procurement-material-requests', 'procurement-quotations',
+    'procurement-quotation-comparison',
+    'procurement-purchase-orders',
+    # 4. Indent
+    'indent', 'indent-dashboard', 'indent-reports', 'indent-notifications',
+    'indent-indents', 'indent-acknowledgement',
+    # Consumption
     'consumption', 'consumption-entry', 'consumption-reports',
+    # Approvals
     'approvals', 'approvals-pending', 'approvals-workflow-config',
+    # Accounts
     'accounts',
     'accounts-invoices', 'accounts-payments', 'accounts-ledger',
     'accounts-credit-notes',
+    # Assets
     'assets', 'assets-register', 'assets-movement', 'assets-spare-mapping',
+    # Healthcare
     'healthcare', 'healthcare-dashboard',
-    'reports',
-    'reports-inventory', 'reports-procurement', 'reports-consumption',
-    'reports-accounts', 'reports-system',
+    # Settings & Admin
     'settings', 'settings-users', 'settings-roles', 'settings-system',
+    'settings-masters-users', 'settings-masters-user-groups', 'settings-masters-organization-structure',
+    'settings-reports-v2', 'settings-reports-system',
+    # Logistics
     'logistics', 'logistics-dashboard', 'logistics-master', 'logistics-dispatch', 'logistics-rfq', 'logistics-so', 'logistics-gate-entry',
 }
 
@@ -68,108 +80,100 @@ _ALL_KEYS: Set[str] = {
 # A key is hidden iff it is not in this set for the active role.
 _ROLE_KEYS = {
     'field_staff': {
-        # Mobile-primary role. Web access kept minimal so the field user
-        # can't accidentally land on master-data pages they're not meant to
-        # manage — item/warehouse pickers inside indent/consumption forms
-        # already give them everything they need.
-        'dashboard', 'lms',
-        'indent', 'indent-indents', 'indent-acknowledgement',
+        'lms',
+        'indent', 'indent-dashboard', 'indent-indents', 'indent-acknowledgement', 'indent-notifications',
         'consumption', 'consumption-entry',
-        'inventory', 'inventory-stock-balance', 'inventory-stock-ledger',
+        'inventory', 'inventory-dashboard', 'inventory-stock-balance', 'inventory-stock-ledger', 'inventory-notifications',
     },
     'field_supervisor': {
-        # Supervisor's only write-action is approval. Indent + consumption
-        # detail are reached THROUGH the Approvals inbox (click an item → see
-        # its lines) — no separate sidebar entry, so the menu reflects what
-        # they actually do.
-        'dashboard', 'lms',
+        'lms',
         'approvals', 'approvals-pending',
-        'inventory', 'inventory-stock-balance', 'inventory-stock-ledger',
+        'inventory', 'inventory-dashboard', 'inventory-stock-balance', 'inventory-stock-ledger', 'inventory-notifications',
     },
     'warehouse_manager': {
-        # Orchestrator role: approves indents at L2 (Approvals), then makes
-        # the issue-vs-procure call at the Demand Pool. Demand Pool is the
-        # warehouse_manager's primary worklist post-approval — granting the
-        # procurement parent key + demand-pool sub-key only (other procurement
-        # tabs stay gated to purchase roles).
-        'dashboard', 'lms',
+        'lms',
         'approvals', 'approvals-pending',
         'procurement', 'procurement-demand-pool',
-        'warehouse', 'warehouse-floor-plan',
+        'warehouse', 'warehouse-dashboard', 'warehouse-reports', 'warehouse-notifications',
+        'warehouse-masters', 'warehouse-masters-warehouses', 'warehouse-masters-floor-plan', 'warehouse-masters-floor-plan-3d',
+        'warehouse-floor-plan',
         'warehouse-grn',
         'warehouse-quality-inspection', 'warehouse-putaway',
         'warehouse-material-issues', 'warehouse-material-inward',
         'warehouse-dispatch',
-        'inventory', 'inventory-stock-balance', 'inventory-stock-ledger',
+        'inventory', 'inventory-dashboard', 'inventory-reports', 'inventory-notifications',
+        'inventory-masters', 'inventory-masters-items', 'inventory-masters-packaging', 'inventory-masters-categories',
+        'inventory-masters-user-material-mapping', 'inventory-masters-uom', 'inventory-masters-brands', 'inventory-masters-item-types',
+        'inventory-masters-item-attributes', 'inventory-masters-category-attribute-mapping', 'inventory-masters-specs',
+        'inventory-masters-boms', 'inventory-masters-price-lists',
+        'inventory-stock-balance', 'inventory-stock-ledger',
         'inventory-stock-transfer', 'inventory-stock-audit',
         'inventory-replenishment',
-        'reports', 'reports-inventory',
         'logistics', 'logistics-dashboard', 'logistics-master', 'logistics-dispatch', 'logistics-rfq', 'logistics-so', 'logistics-gate-entry',
     },
     'warehouse_operator': {
-        'dashboard', 'lms',
-        'warehouse', 'warehouse-purchase-returns',
-        'warehouse-material-inward', 'warehouse-dispatch',
-        'inventory', 'inventory-stock-balance', 'inventory-stock-ledger',
+        'lms',
+        'warehouse', 'warehouse-dashboard', 'warehouse-purchase-returns',
+        'warehouse-material-inward', 'warehouse-dispatch', 'warehouse-notifications',
+        'inventory', 'inventory-dashboard', 'inventory-stock-balance', 'inventory-stock-ledger', 'inventory-notifications',
         'logistics', 'logistics-gate-entry',
     },
     'store_keeper': {
-        'dashboard', 'lms',
-        'warehouse', 'warehouse-grn', 'warehouse-putaway',
+        'lms',
+        'warehouse', 'warehouse-dashboard', 'warehouse-grn', 'warehouse-putaway',
         'warehouse-material-issues', 'warehouse-material-inward',
-        'warehouse-dispatch',
-        'inventory', 'inventory-stock-balance', 'inventory-stock-ledger', 'inventory-stock-transfer',
+        'warehouse-dispatch', 'warehouse-notifications',
+        'inventory', 'inventory-dashboard', 'inventory-stock-balance', 'inventory-stock-ledger', 'inventory-stock-transfer', 'inventory-notifications',
     },
     'quality_inspector': {
-        'dashboard', 'lms',
-        'warehouse', 'warehouse-quality-inspection',
+        'lms',
+        'warehouse', 'warehouse-dashboard', 'warehouse-quality-inspection', 'warehouse-notifications',
     },
     'purchase_officer': {
-        'dashboard', 'lms',
-        'procurement', 'procurement-material-requests',
+        'lms',
+        'procurement', 'procurement-dashboard', 'procurement-material-requests',
         'procurement-quotations', 'procurement-quotation-comparison',
-        'procurement-purchase-orders',
-        'masters', 'masters-vendors',
+        'procurement-purchase-orders', 'procurement-notifications',
+        'procurement-masters', 'procurement-masters-vendors', 'procurement-masters-vendor-material-mapping',
     },
     'purchase_manager': {
-        'dashboard', 'lms',
+        'lms',
         'approvals', 'approvals-pending',
-        'procurement', 'procurement-material-requests',
+        'procurement', 'procurement-dashboard', 'procurement-material-requests',
         'procurement-quotations', 'procurement-quotation-comparison',
-        'procurement-purchase-orders',
-        'reports', 'reports-procurement',
+        'procurement-purchase-orders', 'procurement-reports', 'procurement-notifications',
+        'procurement-masters', 'procurement-masters-vendors', 'procurement-masters-vendor-material-mapping',
     },
     'viewer': {
-        'dashboard', 'lms',
-        'reports', 'reports-inventory', 'reports-procurement',
-        'reports-consumption', 'reports-accounts',
+        'lms',
+        'warehouse', 'warehouse-dashboard', 'warehouse-reports', 'warehouse-notifications',
+        'inventory', 'inventory-dashboard', 'inventory-reports', 'inventory-notifications',
+        'procurement', 'procurement-dashboard', 'procurement-reports', 'procurement-notifications',
+        'indent', 'indent-dashboard', 'indent-reports', 'indent-notifications',
+        'consumption', 'consumption-reports',
     },
     'accounts_manager': {
-        'dashboard', 'lms',
+        'lms',
         'accounts', 'accounts-invoices', 'accounts-payments',
         'accounts-ledger', 'accounts-credit-notes',
         'approvals', 'approvals-pending',
-        'reports', 'reports-accounts',
     },
     'accounts_officer': {
-        'dashboard', 'lms',
+        'lms',
         'accounts', 'accounts-invoices', 'accounts-payments',
         'accounts-credit-notes',
-        'reports', 'reports-accounts',
     },
     'project_manager': {
-        # Approves at project level. Reaches indent detail via Approvals
-        # inbox; reports give project-wide visibility.
-        'dashboard', 'lms',
+        'lms',
         'approvals', 'approvals-pending',
-        'inventory', 'inventory-stock-balance', 'inventory-stock-ledger',
-        'reports', 'reports-inventory', 'reports-procurement',
-        'reports-consumption',
+        'inventory', 'inventory-dashboard', 'inventory-stock-balance', 'inventory-stock-ledger', 'inventory-reports', 'inventory-notifications',
+        'procurement', 'procurement-dashboard', 'procurement-reports', 'procurement-notifications',
+        'consumption', 'consumption-reports',
     },
     'vendor_portal': {
-        'dashboard', 'lms',
-        'procurement', 'procurement-quotations',
-        'procurement-purchase-orders',
+        'lms',
+        'procurement', 'procurement-dashboard', 'procurement-quotations',
+        'procurement-purchase-orders', 'procurement-notifications',
     },
 }
 
@@ -183,10 +187,9 @@ def _allowed_for_role(role_code: str) -> List[str]:
         # only has approve+credit_notes+chart_of_accounts perms, not view
         # invoices/payments/ledger). Don't expose tiles that 403 on click.
         admin_excluded = {
-            'settings-system', 'reports-system',
+            'settings-system',
             'accounts', 'accounts-invoices', 'accounts-payments',
             'accounts-ledger', 'accounts-credit-notes',
-            'reports-accounts',
         }
         return sorted(_ALL_KEYS - admin_excluded)
     return sorted(_ROLE_KEYS.get(role_code, set()))

@@ -24,6 +24,10 @@ from app.schemas.warehouse import (
     PurchaseReturnCreate, PurchaseReturnUpdate, PurchaseReturnResponse,
     MaterialIssueCreate, MaterialIssueUpdate, MaterialIssueResponse,
 )
+from app.schemas.master import (
+    WarehouseCreate, WarehouseUpdate, WarehouseResponse,
+    LocationCreate, LineCreate, RackCreate, BinCreate,
+)
 from app.services.number_series import generate_number
 from app.services.stock_service import post_stock_ledger, get_fefo_batches, get_fifo_batches
 from app.utils.dependencies import get_current_user, require_any_role, require_permission, require_key
@@ -4751,3 +4755,375 @@ async def save_floor_plan_layout(
         updated += 1
     await db.flush()
     return {"success": True, "updated": updated}
+
+
+# ==================== WAREHOUSES ====================
+
+async def _check_circular_warehouse(db: AsyncSession, warehouse_id: int, parent_id: int) -> bool:
+    """Return True if assigning parent_id to warehouse_id would create a circular loop."""
+    if warehouse_id == parent_id:
+        return True
+    current_parent = parent_id
+    while current_parent is not None:
+        result = await db.execute(
+            select(Warehouse.parent_id).where(Warehouse.id == current_parent)
+        )
+        next_parent = result.scalar_one_or_none()
+        if next_parent == warehouse_id:
+            return True
+        if next_parent == current_parent:
+            break
+        current_parent = next_parent
+    return False
+
+
+@router.get("/warehouses")
+async def list_warehouses(
+    search: str = Query(None),
+    is_active: bool = Query(None),
+    exclude_virtual: bool = Query(False, description="Hide virtual warehouses (vehicles/mobile units)"),
+    type: str = Query(None, description="Filter to a specific warehouse type"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    query = select(Warehouse).options(selectinload(Warehouse.parent)).order_by(Warehouse.name)
+    if is_active is not None:
+        query = query.where(Warehouse.is_active == is_active)
+    if exclude_virtual:
+        query = query.where(Warehouse.type != "virtual")
+    if type:
+        query = query.where(Warehouse.type == type)
+    query = apply_search_filter(query, Warehouse, search, ["code", "name", "city"])
+
+    # Warehouse-scope isolation matching /inventory/balance R-005.
+    # Without this gate, field/operator users see all 11 warehouses in
+    # dropdowns and on the warehouse picker, even though stock queries
+    # against unauthorized warehouses are rejected — confusing UX and a
+    # listing-side privilege leak.
+    from app.utils.dependencies import user_is_managerial, user_warehouse_ids
+    if not await user_is_managerial(db, current_user.id):
+        scoped_wh = await user_warehouse_ids(db, current_user.id)
+        if not scoped_wh:
+            return []
+        query = query.where(Warehouse.id.in_(scoped_wh))
+
+    result = await db.execute(query)
+    whs = result.scalars().all()
+    return [WarehouseResponse.model_validate(w) for w in whs]
+
+
+@router.get("/warehouses/{warehouse_id}", response_model=WarehouseResponse)
+async def get_warehouse(
+    warehouse_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    result = await db.execute(select(Warehouse).options(selectinload(Warehouse.parent)).where(Warehouse.id == warehouse_id))
+    wh = result.scalar_one_or_none()
+    if not wh:
+        raise HTTPException(status_code=404, detail="Warehouse not found")
+    return WarehouseResponse.model_validate(wh)
+
+
+@router.post("/warehouses", status_code=201)
+async def create_warehouse(
+    payload: WarehouseCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_permission("masters", "create", "warehouses")),
+):
+    data = payload.model_dump()
+    # Map frontend field names to backend model columns
+    if data.get("warehouse_type") and not data.get("type"):
+        data["type"] = data["warehouse_type"]
+    if data.get("contact_phone") and not data.get("phone"):
+        data["phone"] = data["contact_phone"]
+    if data.get("address") and not data.get("address_line1"):
+        data["address_line1"] = data["address"]
+    # Default organization_id
+    if not data.get("organization_id"):
+        data["organization_id"] = 1
+        
+    parent_id = data.get("parent_id")
+    if parent_id is not None:
+        parent_exists = (await db.execute(
+            select(Warehouse.id).where(Warehouse.id == parent_id)
+        )).scalar_one_or_none()
+        if not parent_exists:
+            raise HTTPException(status_code=400, detail="Parent warehouse not found")
+
+    # Remove extra fields not in the model
+    for key in ["warehouse_type", "contact_phone", "address", "description", "status"]:
+        data.pop(key, None)
+    # BUG-FE-062: enforce case-insensitive unique warehouse code
+    code_val = (data.get("code") or "").strip()
+    if code_val:
+        dup = await db.execute(
+            select(Warehouse).where(func.lower(Warehouse.code) == code_val.lower())
+        )
+        if dup.scalar_one_or_none():
+            raise HTTPException(
+                status_code=409,
+                detail=f"Warehouse with code '{code_val}' already exists",
+            )
+        data["code"] = code_val.upper()
+    wh = Warehouse(**data)
+    db.add(wh)
+    await db.flush()
+    return {"id": wh.id, "message": "Warehouse created"}
+
+
+@router.put("/warehouses/{warehouse_id}")
+async def update_warehouse(
+    warehouse_id: int,
+    payload: WarehouseUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_permission("masters", "update", "warehouses")),
+):
+    # BUG-FE-063: gate edit behind masters.update.warehouses
+    result = await db.execute(select(Warehouse).options(selectinload(Warehouse.parent)).where(Warehouse.id == warehouse_id))
+    wh = result.scalar_one_or_none()
+    if not wh:
+        raise HTTPException(status_code=404, detail="Warehouse not found")
+    update_data = payload.model_dump(exclude_unset=True)
+    
+    # If parent_id is being updated, validate it
+    if "parent_id" in update_data:
+        parent_id = update_data.get("parent_id")
+        if parent_id is not None:
+            if parent_id == warehouse_id:
+                raise HTTPException(status_code=400, detail="A warehouse cannot be its own parent")
+            parent_exists = (await db.execute(
+                select(Warehouse.id).where(Warehouse.id == parent_id)
+            )).scalar_one_or_none()
+            if not parent_exists:
+                raise HTTPException(status_code=400, detail="Parent warehouse not found")
+            if await _check_circular_warehouse(db, warehouse_id, parent_id):
+                raise HTTPException(status_code=400, detail="Circular hierarchy detected: parent warehouse cannot be itself or a child/descendant warehouse")
+
+    # If the caller is changing the code, re-check uniqueness (case-insensitive)
+    new_code = update_data.get("code")
+    if new_code and new_code.strip():
+        dup = await db.execute(
+            select(Warehouse).where(
+                func.lower(Warehouse.code) == new_code.strip().lower(),
+                Warehouse.id != warehouse_id,
+            )
+        )
+        if dup.scalar_one_or_none():
+            raise HTTPException(
+                status_code=409,
+                detail=f"Warehouse with code '{new_code}' already exists",
+            )
+        update_data["code"] = new_code.strip().upper()
+    for k, v in update_data.items():
+        setattr(wh, k, v)
+    await db.flush()
+    return {"success": True, "message": "Warehouse updated"}
+
+
+# ---- Warehouse Hierarchy ----
+
+@router.get("/warehouses/{warehouse_id}/locations")
+async def list_locations(
+    warehouse_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    result = await db.execute(
+        select(WarehouseLocation).where(WarehouseLocation.warehouse_id == warehouse_id)
+    )
+    return [{"id": l.id, "code": l.code, "name": l.name, "is_active": l.is_active} for l in result.scalars().all()]
+
+
+@router.post("/warehouses/locations", status_code=201)
+async def create_location(
+    payload: LocationCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    data = payload.model_dump()
+    # BUG-FE-065: verify warehouse exists
+    wh = (await db.execute(
+        select(Warehouse.id).where(Warehouse.id == data.get("warehouse_id"))
+    )).scalar_one_or_none()
+    if wh is None:
+        raise HTTPException(status_code=404, detail="Warehouse not found")
+    loc = WarehouseLocation(**data)
+    db.add(loc)
+    await db.flush()
+    return {"id": loc.id, "message": "Location created"}
+
+
+@router.get("/locations/{location_id}/lines")
+async def list_lines(
+    location_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    result = await db.execute(
+        select(WarehouseLine).where(WarehouseLine.location_id == location_id)
+    )
+    return [{"id": l.id, "code": l.code, "name": l.name, "zone_type": l.zone_type, "is_active": l.is_active} for l in result.scalars().all()]
+
+
+@router.post("/warehouses/lines", status_code=201)
+async def create_line(
+    payload: LineCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    data = payload.model_dump()
+    # BUG-FE-065: verify location belongs to a real warehouse
+    loc = (await db.execute(
+        select(WarehouseLocation).where(WarehouseLocation.id == data.get("location_id"))
+    )).scalar_one_or_none()
+    if loc is None:
+        raise HTTPException(status_code=404, detail="Location not found")
+    line = WarehouseLine(**data)
+    db.add(line)
+    await db.flush()
+    return {"id": line.id, "message": "Line created"}
+
+
+@router.get("/lines/{line_id}/racks")
+async def list_racks(
+    line_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    result = await db.execute(
+        select(WarehouseRack).where(WarehouseRack.line_id == line_id)
+    )
+    return [{"id": r.id, "code": r.code, "name": r.name, "levels": r.levels, "is_active": r.is_active} for r in result.scalars().all()]
+
+
+@router.post("/warehouses/racks", status_code=201)
+async def create_rack(
+    payload: RackCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    data = payload.model_dump()
+    # BUG-FE-065: verify line exists
+    line = (await db.execute(
+        select(WarehouseLine).where(WarehouseLine.id == data.get("line_id"))
+    )).scalar_one_or_none()
+    if line is None:
+        raise HTTPException(status_code=404, detail="Line not found")
+    rack = WarehouseRack(**data)
+    db.add(rack)
+    await db.flush()
+    return {"id": rack.id, "message": "Rack created"}
+
+
+@router.get("/racks/{rack_id}/bins")
+async def list_bins(
+    rack_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    result = await db.execute(
+        select(WarehouseBin).where(WarehouseBin.rack_id == rack_id)
+    )
+    return [{"id": b.id, "code": b.code, "name": b.name, "bin_type": b.bin_type, "capacity": float(b.capacity or 0), "is_active": b.is_active} for b in result.scalars().all()]
+
+
+@router.post("/warehouses/bins", status_code=201)
+async def create_bin(
+    payload: BinCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    data = payload.model_dump()
+    # BUG-FE-065: verify rack→line→location chain exists. Without this, FE can
+    # post `rack_id` referencing a different warehouse and silently nest the
+    # bin under the wrong tree.
+    rack = (await db.execute(
+        select(WarehouseRack).where(WarehouseRack.id == data.get("rack_id"))
+    )).scalar_one_or_none()
+    if rack is None:
+        raise HTTPException(status_code=404, detail="Rack not found")
+    line = (await db.execute(
+        select(WarehouseLine).where(WarehouseLine.id == rack.line_id)
+    )).scalar_one_or_none()
+    if line is None:
+        raise HTTPException(status_code=404, detail="Rack has no parent line")
+    loc = (await db.execute(
+        select(WarehouseLocation).where(WarehouseLocation.id == line.location_id)
+    )).scalar_one_or_none()
+    if loc is None:
+        raise HTTPException(status_code=404, detail="Line has no parent location")
+    # BUG-INV-114: a bin cannot be BOTH a reserve bin and a pick bin — those
+    # are mutually-exclusive roles in the replenishment model. Without this
+    # check the FE form happily set both to True and replenishment rules picked
+    # the wrong source.
+    if data.get("is_reserve") and data.get("is_pick_bin"):
+        raise HTTPException(
+            status_code=422,
+            detail="A bin cannot be both is_reserve and is_pick_bin — pick exactly one role",
+        )
+    bin_obj = WarehouseBin(**data)
+    db.add(bin_obj)
+    await db.flush()
+    return {"id": bin_obj.id, "message": "Bin created"}
+
+
+@router.get("/warehouses/{warehouse_id}/all-bins")
+async def get_warehouse_bins(
+    warehouse_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Get all bins in a warehouse (traversing the hierarchy)."""
+    result = await db.execute(
+        select(WarehouseBin)
+        .join(WarehouseRack, WarehouseBin.rack_id == WarehouseRack.id)
+        .join(WarehouseLine, WarehouseRack.line_id == WarehouseLine.id)
+        .join(WarehouseLocation, WarehouseLine.location_id == WarehouseLocation.id)
+        .where(WarehouseLocation.warehouse_id == warehouse_id)
+        .where(WarehouseBin.is_active == True)
+    )
+    bins = result.scalars().all()
+    return [{"id": b.id, "code": b.code, "name": b.name, "bin_type": b.bin_type, "rack_id": b.rack_id} for b in bins]
+
+
+@router.get("/warehouses/{warehouse_id}/structure")
+async def get_warehouse_structure(
+    warehouse_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """WH-1 fix: Return full warehouse hierarchy in a SINGLE query instead of
+    N+1 sequential calls (was 81+ requests for a real warehouse).
+
+    Returns: { locations: [{ ...loc, lines: [{ ...line, racks: [{ ...rack, bins: [...] }] }] }] }
+    """
+    from sqlalchemy.orm import selectinload as _sl
+
+    result = await db.execute(
+        select(WarehouseLocation)
+        .options(
+            _sl(WarehouseLocation.lines)
+            .selectinload(WarehouseLine.racks)
+            .selectinload(WarehouseRack.bins)
+        )
+        .where(WarehouseLocation.warehouse_id == warehouse_id)
+        .order_by(WarehouseLocation.code)
+    )
+    locations = result.scalars().unique().all()
+
+    tree = []
+    for loc in locations:
+        loc_data = {"id": loc.id, "code": loc.code, "name": loc.name, "is_active": loc.is_active, "lines": []}
+        for line in sorted(loc.lines, key=lambda l: l.code):
+            line_data = {"id": line.id, "code": line.code, "name": line.name, "zone_type": line.zone_type, "is_active": line.is_active, "racks": []}
+            for rack in sorted(line.racks, key=lambda r: r.code):
+                rack_data = {"id": rack.id, "code": rack.code, "name": rack.name, "levels": rack.levels, "is_active": rack.is_active, "bins": []}
+                for bin_obj in sorted(rack.bins, key=lambda b: b.code):
+                    rack_data["bins"].append({"id": bin_obj.id, "code": bin_obj.code, "name": bin_obj.name, "bin_type": bin_obj.bin_type, "is_active": bin_obj.is_active})
+                line_data["racks"].append(rack_data)
+            loc_data["lines"].append(line_data)
+        tree.append(loc_data)
+
+    return {"warehouse_id": warehouse_id, "locations": tree}
+

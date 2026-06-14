@@ -450,7 +450,9 @@ const WorkflowConfigForm = () => {
   if (loading) {
     return (
       <div style={{ textAlign: 'center', padding: 80 }}>
-        <Spin size="large" tip="Loading workflow details..." />
+        <Spin size="large" tip="Loading workflow details...">
+          <div />
+        </Spin>
       </div>
     );
   }
@@ -471,7 +473,7 @@ const WorkflowConfigForm = () => {
         </Space>
       </PageHeader>
 
-      <Card bordered={false} style={{ marginBottom: 16 }}>
+      <Card variant="borderless" style={{ marginBottom: 16 }}>
         <Form form={form} layout="vertical">
           <Row gutter={16}>
             <Col span={8}>

@@ -170,7 +170,7 @@ const AcknowledgementForm = () => {
         </Space>
       </PageHeader>
 
-      <Card bordered={false} style={{ marginBottom: 16 }}>
+      <Card variant="borderless" style={{ marginBottom: 16 }}>
         <Form form={form} layout="vertical">
           <Form.Item label="Select Indent" required>
             <Select

@@ -1821,3 +1821,225 @@ async def deactivate_customer(
     c.is_active = False
     await db.flush()
     return {"success": True, "message": "Customer deactivated"}
+
+# ==================== modularized reports endpoints ====================
+from typing import Optional
+from datetime import date
+from app.services.report_service import (
+    accounts_payable_report, accounts_receivable_report, payment_summary_report,
+    vendor_ledger_report, po_ledger_report, project_ledger_report
+)
+
+def _parse_date(s: Optional[str]):
+    if not s:
+        return None
+    try:
+        return date.fromisoformat(s)
+    except Exception:
+        return None
+
+def _paginate_list(rows, page: int, page_size: int):
+    total = len(rows)
+    start = (page - 1) * page_size
+    end = start + page_size
+    return {
+        "items": rows[start:end],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    }
+
+
+@router.get("/reports")
+async def reports_accounts_dispatch(
+    report_type: str = Query("payable"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100000),  # BUG-FIN-103/106: lift export cap
+    vendor_id: Optional[int] = Query(None),
+    customer_id: Optional[int] = Query(None),
+    party_type: Optional[str] = Query(None),
+    date_from: Optional[str] = Query(None),
+    date_to: Optional[str] = Query(None),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Accounts reports dispatcher.
+
+    BUG-FIN-098: previously returned an empty stub.
+    """
+    df = _parse_date(date_from)
+    dt = _parse_date(date_to)
+    if report_type in ("payable", "accounts_payable", "vendor_balance"):
+        rows = await accounts_payable_report(db, vendor_id)
+    elif report_type in ("receivable", "accounts_receivable"):
+        rows = await accounts_receivable_report(db, customer_id)
+    elif report_type in ("payment_summary", "payments"):
+        rows = await payment_summary_report(db, df, dt, party_type)
+    else:
+        rows = await accounts_payable_report(db, vendor_id)
+    rows = list(rows or [])
+    out = _paginate_list(rows, page, page_size)
+    out["report_type"] = report_type
+    return out
+
+@router.get("/accounts/payable")
+async def rpt_accounts_payable(
+    vendor_id: int = Query(None),
+    db: AsyncSession = Depends(get_db),
+    # BUG-FIN-159: payable book is sensitive financial data.
+    current_user: User = Depends(require_permission("accounts", "view", "reports")),
+):
+    return await accounts_payable_report(db, vendor_id)
+
+
+@router.get("/accounts/receivable")
+async def rpt_accounts_receivable(
+    customer_id: int = Query(None),
+    db: AsyncSession = Depends(get_db),
+    # BUG-FIN-159: receivable book is sensitive financial data.
+    current_user: User = Depends(require_permission("accounts", "view", "reports")),
+):
+    return await accounts_receivable_report(db, customer_id)
+
+
+@router.get("/accounts/payment-summary")
+async def rpt_payment_summary(
+    date_from: Optional[date] = Query(None),
+    date_to: Optional[date] = Query(None),
+    party_type: str = Query(None),
+    db: AsyncSession = Depends(get_db),
+    # BUG-FIN-159: payment summary is sensitive financial data.
+    current_user: User = Depends(require_permission("accounts", "view", "reports")),
+):
+    return await payment_summary_report(db, date_from, date_to, party_type)
+
+
+@router.get("/accounts/vendor-ledger/{vendor_id}")
+async def rpt_vendor_ledger(
+    vendor_id: int,
+    db: AsyncSession = Depends(get_db),
+    # BUG-FIN-158: vendor ledger leaks vendor-level transaction history; gate it.
+    current_user: User = Depends(require_permission("accounts", "view", "reports")),
+):
+    return await vendor_ledger_report(db, vendor_id)
+
+
+@router.get("/accounts/po-ledger/{po_id}")
+async def rpt_po_ledger(
+    po_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_permission("accounts", "view", "reports")),
+):
+    return await po_ledger_report(db, po_id)
+
+
+@router.get("/accounts/project-ledger/{project_id}")
+async def rpt_project_ledger(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_permission("accounts", "view", "reports")),
+):
+    return await project_ledger_report(db, project_id)
+
+
+@router.get("/accounts/ageing")
+async def rpt_ageing(
+    party_type: str = Query("vendor"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Ageing analysis of outstanding invoices."""
+    from sqlalchemy import select, func, case, and_
+    from app.models.accounts import Invoice
+    from datetime import date as d, timedelta
+    today = d.today()
+
+    # BUG-FIN-083/084: rewrite buckets as disjoint half-open ranges keyed by
+    # `days_overdue = today - due_date` so labels match coverage:
+    #   not_due:    days_overdue <= 0            (today's due-date counts as not yet due)
+    #   0_30_days:  1..30 days overdue
+    #   31_60_days: 31..60 days overdue
+    #   61_90_days: 61..90 days overdue
+    #   over_90:    >90 days overdue
+    result = await db.execute(
+        select(
+            Invoice.party_id,
+            func.sum(case(
+                (Invoice.due_date >= today, Invoice.balance_amount), else_=0
+            )).label("not_due"),
+            func.sum(case(
+                (and_(Invoice.due_date <= today - timedelta(days=1),
+                      Invoice.due_date >= today - timedelta(days=30)),
+                 Invoice.balance_amount), else_=0
+            )).label("0_30_days"),
+            func.sum(case(
+                (and_(Invoice.due_date <= today - timedelta(days=31),
+                      Invoice.due_date >= today - timedelta(days=60)),
+                 Invoice.balance_amount), else_=0
+            )).label("31_60_days"),
+            func.sum(case(
+                (and_(Invoice.due_date <= today - timedelta(days=61),
+                      Invoice.due_date >= today - timedelta(days=90)),
+                 Invoice.balance_amount), else_=0
+            )).label("61_90_days"),
+            func.sum(case(
+                (Invoice.due_date < today - timedelta(days=90), Invoice.balance_amount), else_=0
+            )).label("over_90_days"),
+            func.sum(Invoice.balance_amount).label("total"),
+        )
+        .where(
+            Invoice.party_type == party_type,
+            # BUG-FIN-044: include "unpaid" status the UI sends and any
+            # reasonable variants. Only "paid" and "cancelled" should be
+            # excluded from aging.
+            Invoice.status.notin_(["paid", "cancelled"]),
+            # BUG-FIN-166: include overpaid invoices (negative balance) in
+            # aging so the adjustment workflow can see them too. Only exclude
+            # rows that are exactly zero (fully settled).
+            Invoice.balance_amount != 0,
+        )
+        .group_by(Invoice.party_id)
+    )
+    return [dict(row._mapping) for row in result.all()]
+
+
+@router.get("/accounts/gst-summary")
+async def rpt_gst_summary(
+    date_from: Optional[date] = Query(None),
+    date_to: Optional[date] = Query(None),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """GST summary report."""
+    from sqlalchemy import select, func
+    from app.models.accounts import Invoice
+    # BUG-FIN-101: when both dates are null the prior version aggregated every
+    # invoice ever raised, which made the GSTR upload screen unusable on a
+    # multi-year ledger. Default to the current calendar month so the report
+    # always returns a bounded, meaningful payload.
+    if not date_from and not date_to:
+        from datetime import date as _date
+        today = _date.today()
+        date_from = today.replace(day=1)
+        date_to = today
+    query = (
+        select(
+            Invoice.invoice_type,
+            func.sum(Invoice.subtotal).label("taxable_amount"),
+            func.sum(Invoice.cgst_amount).label("total_cgst"),
+            func.sum(Invoice.sgst_amount).label("total_sgst"),
+            func.sum(Invoice.igst_amount).label("total_igst"),
+            func.sum(Invoice.tax_amount).label("total_tax"),
+            func.sum(Invoice.grand_total).label("grand_total"),
+        )
+        .where(Invoice.status != "cancelled")
+        .group_by(Invoice.invoice_type)
+    )
+    if date_from:
+        query = query.where(Invoice.invoice_date >= date_from)
+    if date_to:
+        query = query.where(Invoice.invoice_date <= date_to)
+    result = await db.execute(query)
+    return [dict(row._mapping) for row in result.all()]
+
+

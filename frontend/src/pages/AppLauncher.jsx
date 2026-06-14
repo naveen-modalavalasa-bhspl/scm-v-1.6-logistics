@@ -24,10 +24,10 @@ import {
 import useAuthStore from '../store/authStore';
 import api from '../config/api';
 import RoleSwitcher from '../components/RoleSwitcher';
+import { MODULE_NAVS } from '../utils/moduleNavs';
 
 // Bavya design tokens — module tile palette
 const MODULES = [
-  { id: 'dashboard',   name: 'Dashboard',       desc: 'KPIs & operations overview',          icon: <DashboardOutlined />,        color: '#D80048', bg: '#FDE6EC', path: '/dashboard' },
   { id: 'masters',     name: 'Masters',         desc: 'Items, vendors, warehouses, UOM',     icon: <AppstoreOutlined />,         color: '#481890', bg: '#EEE6F7', path: '/masters/items' },
   { id: 'procurement', name: 'Procurement',     desc: 'Material requests, POs, quotations',  icon: <ShoppingCartOutlined />,     color: '#D80048', bg: '#FDE6EC', path: '/procurement/material-requests', countKey: 'procurement_open' },
   { id: 'warehouse',   name: 'Warehouse',       desc: 'GRN, quality, putaway, issues',       icon: <HomeOutlined />,             color: '#F09000', bg: '#FFEAD2', path: '/warehouse/grn' },
@@ -46,7 +46,6 @@ const MODULES = [
 
 // Map module id → permission module name used by hasPermission()
 const PERM_MAP = {
-  dashboard: 'dashboard',
   masters: 'masters',
   procurement: 'procurement',
   warehouse: 'warehouse',
@@ -109,7 +108,7 @@ const AppLauncher = () => {
     // BUG-FE-096: don't ping /dashboard/stats when the user can't view the
     // dashboard — otherwise the launcher logs a 403 every load and pollutes
     // audit traces.
-    if (!hasPermission('dashboard', 'view')) return undefined;
+    if (!hasPermission('procurement', 'view') && !hasPermission('approvals', 'view')) return undefined;
     let cancelled = false;
     const fetchStats = () => {
       api
@@ -199,6 +198,33 @@ const AppLauncher = () => {
   // (e.g. /me/sidebar fetch failed / not yet hydrated).
   const useServerKeys = Array.isArray(allowedKeys) && allowedKeys.length > 0;
   const allowedSet = new Set(allowedKeys || []);
+  const findFirstAllowedPath = (moduleId, allowedSet) => {
+    const nav = MODULE_NAVS[moduleId];
+    if (!nav || !Array.isArray(nav.tabs)) return null;
+    if (moduleId === 'settings') {
+      return '/settings/profile';
+    }
+    const queue = [...nav.tabs];
+    while (queue.length > 0) {
+      const tab = queue.shift();
+      if (tab.children) {
+        queue.push(...tab.children);
+        continue;
+      }
+      if (tab.path) {
+        const parts = tab.path.split('/').filter(Boolean);
+        if (parts.length >= 2) {
+          const derivedKey = `${parts[0]}-${parts[1]}`;
+          const fullDerivedKey = parts.length >= 3 ? `${parts[0]}-${parts[1]}-${parts[2]}` : null;
+          if (allowedSet.has(derivedKey) || (fullDerivedKey && allowedSet.has(fullDerivedKey))) {
+            return tab.path;
+          }
+        }
+      }
+    }
+    return null;
+  };
+
   const visible = MODULES.filter((m) => {
     if (m.alwaysShow) return true;
     if (useServerKeys) {
@@ -217,25 +243,10 @@ const AppLauncher = () => {
     return hasPermission(PERM_MAP[m.id], 'view');
   }).map((m) => {
     if (m.id === 'masters') return { ...m, path: resolveMastersPath() };
-    // Generic resolver: if the tile's hardcoded path's top-two segments
-    // (`/warehouse/grn` -> "warehouse-grn") aren't in the user's allowed
-    // sidebar keys, fall back to the FIRST allowed key for this module.
-    // Stops users like quality_inspector — who only have
-    // warehouse-quality-inspection — from clicking the Warehouse tile and
-    // landing on /warehouse/grn (no access).
     if (useServerKeys) {
-      const parts = (m.path || '').split('/').filter(Boolean);
-      if (parts.length >= 2) {
-        const tileKey = `${parts[0]}-${parts[1]}`;
-        if (!allowedSet.has(tileKey)) {
-          // Find the first allowed key under this module.
-          const prefix = `${m.id}-`;
-          const firstAllowed = Array.from(allowedSet).find((k) => k.startsWith(prefix) && k !== m.id);
-          if (firstAllowed) {
-            const subPath = firstAllowed.slice(prefix.length).replace(/_/g, '-');
-            return { ...m, path: `/${m.id}/${subPath}` };
-          }
-        }
+      const allowedPath = findFirstAllowedPath(m.id, allowedSet);
+      if (allowedPath) {
+        return { ...m, path: allowedPath };
       }
     }
     return m;

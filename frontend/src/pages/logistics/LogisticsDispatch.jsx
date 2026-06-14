@@ -573,7 +573,9 @@ export default function LogisticsDispatch() {
   if (loading && mdos.length === 0) {
     return (
       <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', background: '#020617' }}>
-        <Spin size="large" tip="Loading Dispatch Plan ledger..." />
+        <Spin size="large" tip="Loading Dispatch Plan ledger...">
+          <div />
+        </Spin>
       </div>
     );
   }

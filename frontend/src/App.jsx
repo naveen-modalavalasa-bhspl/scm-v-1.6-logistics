@@ -1,5 +1,5 @@
 import React, { Suspense, lazy, Component, useEffect, useState } from 'react';
-import { Routes, Route, Navigate, Outlet, useLocation } from 'react-router-dom';
+import { Routes, Route, Navigate, Outlet, useLocation, useParams } from 'react-router-dom';
 import { Spin, Result, Button } from 'antd';
 import useAuthStore from './store/authStore';
 import useCarrierAuthStore from './store/carrierAuthStore';
@@ -51,37 +51,51 @@ function ErrorBoundary({ children }) {
 }
 
 /* Lazy loaded pages */
-const Dashboard = lazy(() => import('./pages/Dashboard'));
 const AppLauncher = lazy(() => import('./pages/AppLauncher'));
 
+/* Modular SCM Redesign Additions */
+const IndentDashboard = lazy(() => import('./pages/indent/IndentDashboard'));
+const IndentReports = lazy(() => import('./pages/indent/IndentReports'));
+const IndentNotifications = lazy(() => import('./pages/indent/IndentNotifications'));
+
+const InventoryDashboard = lazy(() => import('./pages/inventory/InventoryDashboard'));
+const InventoryNotifications = lazy(() => import('./pages/inventory/InventoryNotifications'));
+
+const WarehouseDashboard = lazy(() => import('./pages/warehouse/WarehouseDashboard'));
+const WarehouseReports = lazy(() => import('./pages/warehouse/WarehouseReports'));
+const WarehouseNotifications = lazy(() => import('./pages/warehouse/WarehouseNotifications'));
+
+const ProcurementDashboard = lazy(() => import('./pages/procurement/ProcurementDashboard'));
+const ProcurementNotifications = lazy(() => import('./pages/procurement/ProcurementNotifications'));
+
 /* Masters */
-const Items = lazy(() => import('./pages/masters/Items'));
-const ItemForm = lazy(() => import('./pages/masters/ItemForm'));
-const ItemDetail = lazy(() => import('./pages/masters/ItemDetail'));
-const Categories = lazy(() => import('./pages/masters/Categories'));
-const Vendors = lazy(() => import('./pages/masters/Vendors'));
-const VendorMaterialMapping = lazy(() => import('./pages/masters/VendorMaterialMapping'));
-const UserMaterialMapping = lazy(() => import('./pages/masters/UserMaterialMapping'));
-const VendorForm = lazy(() => import('./pages/masters/VendorForm'));
-const VendorDetail = lazy(() => import('./pages/masters/VendorDetail'));
-const Warehouses = lazy(() => import('./pages/masters/Warehouses'));
-const WarehouseForm = lazy(() => import('./pages/masters/WarehouseForm'));
-const WarehouseDetail = lazy(() => import('./pages/masters/WarehouseDetail'));
-const UOM = lazy(() => import('./pages/masters/UOM'));
-const PackagingHierarchy = lazy(() => import('./pages/masters/PackagingHierarchy'));
-const PriceLists = lazy(() => import('./pages/masters/PriceLists'));
-const PriceListForm = lazy(() => import('./pages/masters/PriceListForm'));
-const Brands = lazy(() => import('./pages/masters/Brands'));
-const Features = lazy(() => import('./pages/masters/Features'));
-const ItemTypes = lazy(() => import('./pages/masters/ItemTypes'));
-const ItemAttributes = lazy(() => import('./pages/masters/ItemAttributes'));
-const CategoryAttributeMapping = lazy(() => import('./pages/masters/CategoryAttributeMapping'));
-const Specs = lazy(() => import('./pages/masters/Specs'));
-const UserGroups = lazy(() => import('./pages/masters/UserGroups'));
-const OrganizationStructure = lazy(() => import('./pages/masters/OrganizationStructure'));
-const HRSyncDashboard = lazy(() => import('./pages/masters/HRSyncDashboard'));
-const BOMs = lazy(() => import('./pages/masters/BOMs'));
-const BOMForm = lazy(() => import('./pages/masters/BOMForm'));
+const Items = lazy(() => import('./pages/inventory/masters/Items'));
+const ItemForm = lazy(() => import('./pages/inventory/masters/ItemForm'));
+const ItemDetail = lazy(() => import('./pages/inventory/masters/ItemDetail'));
+const Categories = lazy(() => import('./pages/inventory/masters/Categories'));
+const Vendors = lazy(() => import('./pages/procurement/masters/Vendors'));
+const VendorMaterialMapping = lazy(() => import('./pages/procurement/masters/VendorMaterialMapping'));
+const UserMaterialMapping = lazy(() => import('./pages/inventory/masters/UserMaterialMapping'));
+const VendorForm = lazy(() => import('./pages/procurement/masters/VendorForm'));
+const VendorDetail = lazy(() => import('./pages/procurement/masters/VendorDetail'));
+const Warehouses = lazy(() => import('./pages/warehouse/masters/Warehouses'));
+const WarehouseForm = lazy(() => import('./pages/warehouse/masters/WarehouseForm'));
+const WarehouseDetail = lazy(() => import('./pages/warehouse/masters/WarehouseDetail'));
+const UOM = lazy(() => import('./pages/inventory/masters/UOM'));
+const PackagingHierarchy = lazy(() => import('./pages/inventory/masters/PackagingHierarchy'));
+const PriceLists = lazy(() => import('./pages/inventory/masters/PriceLists'));
+const PriceListForm = lazy(() => import('./pages/inventory/masters/PriceListForm'));
+const Brands = lazy(() => import('./pages/inventory/masters/Brands'));
+const Features = lazy(() => import('./pages/inventory/masters/Features'));
+const ItemTypes = lazy(() => import('./pages/inventory/masters/ItemTypes'));
+const ItemAttributes = lazy(() => import('./pages/inventory/masters/ItemAttributes'));
+const CategoryAttributeMapping = lazy(() => import('./pages/inventory/masters/CategoryAttributeMapping'));
+const Specs = lazy(() => import('./pages/inventory/masters/Specs'));
+const UserGroups = lazy(() => import('./pages/settings/masters/UserGroups'));
+const OrganizationStructure = lazy(() => import('./pages/settings/masters/OrganizationStructure'));
+const HRSyncDashboard = lazy(() => import('./pages/settings/masters/HRSyncDashboard'));
+const BOMs = lazy(() => import('./pages/inventory/masters/BOMs'));
+const BOMForm = lazy(() => import('./pages/inventory/masters/BOMForm'));
 const Lms = lazy(() => import('./pages/lms/Lms'));
 
 /* Procurement */
@@ -172,7 +186,7 @@ const ComplianceDashboard = lazy(() => import('./pages/compliance/ComplianceDash
 const DocumentsPage = lazy(() => import('./pages/documents/Documents'));
 const MRPDashboard = lazy(() => import('./pages/mrp/MRPDashboard'));
 const AlertsDashboard = lazy(() => import('./pages/alerts/AlertsDashboard'));
-const ReportBuilder = lazy(() => import('./pages/reports/ReportBuilder'));
+const ReportBuilder = lazy(() => import('./pages/settings/reports/ReportBuilder'));
 
 /* Assets */
 const AssetRegister = lazy(() => import('./pages/assets/AssetRegister'));
@@ -182,14 +196,11 @@ const AssetMovementForm = lazy(() => import('./pages/assets/AssetMovementForm'))
 const AssetSpareMapping = lazy(() => import('./pages/assets/AssetSpareMapping'));
 
 /* Reports */
-const ReportsDashboard = lazy(() => import('./pages/reports/ReportsDashboard'));
-const InventoryReports = lazy(() => import('./pages/reports/InventoryReports'));
-const ProcurementReports = lazy(() => import('./pages/reports/ProcurementReports'));
-const ConsumptionReportPage = lazy(() => import('./pages/reports/ConsumptionReportPage'));
-const SalesReports = lazy(() => import('./pages/reports/SalesReports'));
-const AccountsReports = lazy(() => import('./pages/reports/AccountsReports'));
-
-const SystemReports = lazy(() => import('./pages/reports/SystemReports'));
+const InventoryReports = lazy(() => import('./pages/inventory/reports/InventoryReports'));
+const ProcurementReports = lazy(() => import('./pages/procurement/reports/ProcurementReports'));
+const ConsumptionReportPage = lazy(() => import('./pages/consumption/reports/ConsumptionReportPage'));
+const AccountsReports = lazy(() => import('./pages/accounts/reports/AccountsReports'));
+const SystemReports = lazy(() => import('./pages/settings/reports/SystemReports'));
 
 /* Logistics */
 const LogisticsDashboard = lazy(() => import('./pages/logistics/LogisticsDashboard'));
@@ -226,7 +237,9 @@ const PageLoader = () => (
       height: '60vh',
     }}
   >
-    <Spin size="large" tip="Loading..." />
+    <Spin size="large" tip="Loading...">
+      <div />
+    </Spin>
   </div>
 );
 
@@ -338,6 +351,41 @@ const RedirectToLogisticsAcknowledge = () => {
   return <Navigate to={`/logistics/dispatch-orders/${id}/acknowledge`} replace />;
 };
 
+const RedirectToItemDetail = () => {
+  const { id } = useParams();
+  return <Navigate to={`/inventory/masters/items/${id}`} replace />;
+};
+
+const RedirectToItemEdit = () => {
+  const { id } = useParams();
+  return <Navigate to={`/inventory/masters/items/${id}/edit`} replace />;
+};
+
+const RedirectToVendorDetail = () => {
+  const { id } = useParams();
+  return <Navigate to={`/procurement/masters/vendors/${id}`} replace />;
+};
+
+const RedirectToVendorEdit = () => {
+  const { id } = useParams();
+  return <Navigate to={`/procurement/masters/vendors/${id}/edit`} replace />;
+};
+
+const RedirectToWarehouseDetail = () => {
+  const { id } = useParams();
+  return <Navigate to={`/warehouse/masters/warehouses/${id}`} replace />;
+};
+
+const RedirectToWarehouseEdit = () => {
+  const { id } = useParams();
+  return <Navigate to={`/warehouse/masters/warehouses/${id}/edit`} replace />;
+};
+
+const RedirectToPriceListEdit = () => {
+  const { id } = useParams();
+  return <Navigate to={`/inventory/masters/price-lists/${id}/edit`} replace />;
+};
+
 const ModuleIndexRedirect = ({ moduleId, fallback }) => {
   const allowedKeys = useAuthStore((s) => s.allowedKeys);
   const nav = MODULE_NAVS[moduleId];
@@ -421,65 +469,14 @@ const App = () => {
             <Route path="/launcher" element={<AppLauncher />} />
             {/* LMS — accessible to every authenticated user */}
             <Route path="/lms" element={<Lms />} />
-            {/* Dashboard — gate behind dashboard permission so vendors etc. don't see ops KPIs */}
-            <Route path="/dashboard" element={<PermissionRoute module="dashboard"><Dashboard /></PermissionRoute>} />
-
-            {/* Masters — guarded by 'masters' permission */}
-            <Route path="/masters" element={<ModuleIndexRedirect moduleId="masters" fallback="/masters/items" />} />
-            <Route path="/masters/items" element={<KeyRoute requiredKey="masters-items"><Items /></KeyRoute>} />
-            <Route path="/masters/items/new" element={<KeyRoute requiredKey="masters-items"><ItemForm /></KeyRoute>} />
-            <Route path="/masters/items/:id" element={<KeyRoute requiredKey="masters-items"><ItemDetail /></KeyRoute>} />
-            <Route path="/masters/items/:id/edit" element={<KeyRoute requiredKey="masters-items"><ItemForm /></KeyRoute>} />
-            <Route path="/masters/categories" element={<KeyRoute requiredKey="masters-categories"><Categories /></KeyRoute>} />
-            <Route path="/masters/vendors" element={<KeyRoute requiredKey="masters-vendors"><Vendors /></KeyRoute>} />
-            <Route path="/masters/vendor-material-mapping" element={<KeyRoute requiredKey="masters-vendor-material-mapping"><VendorMaterialMapping /></KeyRoute>} />
-            <Route path="/masters/user-material-mapping" element={<KeyRoute requiredKey="masters-user-material-mapping"><UserMaterialMapping /></KeyRoute>} />
-            <Route path="/masters/vendors/new" element={<KeyRoute requiredKey="masters-vendors"><VendorForm /></KeyRoute>} />
-            <Route path="/masters/vendors/:id" element={<KeyRoute requiredKey="masters-vendors"><VendorDetail /></KeyRoute>} />
-            <Route path="/masters/vendors/:id/edit" element={<KeyRoute requiredKey="masters-vendors"><VendorForm /></KeyRoute>} />
-            <Route path="/masters/warehouses" element={<KeyRoute requiredKey="masters-warehouses"><Warehouses /></KeyRoute>} />
-            <Route path="/masters/warehouses/new" element={<KeyRoute requiredKey="masters-warehouses"><WarehouseForm /></KeyRoute>} />
-            <Route path="/masters/warehouses/:id" element={<KeyRoute requiredKey="masters-warehouses"><WarehouseDetail /></KeyRoute>} />
-            <Route path="/masters/warehouses/:id/edit" element={<KeyRoute requiredKey="masters-warehouses"><WarehouseForm /></KeyRoute>} />
-            <Route path="/masters/uom" element={<KeyRoute requiredKey="masters-uom"><UOM /></KeyRoute>} />
-            <Route path="/masters/packaging" element={<KeyRoute requiredKey="masters-packaging"><PackagingHierarchy /></KeyRoute>} />
-            <Route path="/masters/price-lists" element={<KeyRoute requiredKey="masters-price-lists"><PriceLists /></KeyRoute>} />
-            <Route path="/masters/price-lists/new" element={<KeyRoute requiredKey="masters-price-lists"><PriceListForm /></KeyRoute>} />
-            <Route path="/masters/price-lists/:id/edit" element={<KeyRoute requiredKey="masters-price-lists"><PriceListForm /></KeyRoute>} />
-            <Route path="/masters/brands" element={<KeyRoute requiredKey="masters-brands"><Brands /></KeyRoute>} />
-            <Route path="/masters/features" element={<KeyRoute requiredKey="masters-features"><Features /></KeyRoute>} />
-            <Route path="/masters/item-types" element={<KeyRoute requiredKey="masters-item-types"><ItemTypes /></KeyRoute>} />
-            <Route path="/masters/item-attributes" element={<KeyRoute requiredKey="masters-item-attributes"><ItemAttributes /></KeyRoute>} />
-            <Route path="/masters/category-attribute-mapping" element={<KeyRoute requiredKey="masters-attribute-mapping"><CategoryAttributeMapping /></KeyRoute>} />
-            <Route path="/masters/specs" element={<KeyRoute requiredKey="masters-specs"><Specs /></KeyRoute>} />
-            <Route path="/masters/users" element={<KeyRoute requiredKey="masters-users"><Users /></KeyRoute>} />
-            <Route path="/masters/user-groups" element={<KeyRoute requiredKey="masters-user-groups"><UserGroups /></KeyRoute>} />
-            <Route path="/masters/organization-structure" element={<KeyRoute requiredKey="masters-organization-structure"><OrganizationStructure /></KeyRoute>} />
-            <Route path="/masters/organization-structure/hr-sync" element={<KeyRoute requiredKey="masters-organization-structure"><HRSyncDashboard /></KeyRoute>} />
-            <Route path="/masters/boms" element={<KeyRoute requiredKey="masters-boms"><BOMs /></KeyRoute>} />
-            <Route path="/masters/boms/new" element={<KeyRoute requiredKey="masters-boms"><BOMForm /></KeyRoute>} />
-            <Route path="/masters/boms/:id/edit" element={<KeyRoute requiredKey="masters-boms"><BOMForm /></KeyRoute>} />
-
-            {/* Procurement — guarded by 'procurement' permission */}
-            <Route path="/procurement" element={<Navigate to="/procurement/material-requests" replace />} />
-            <Route path="/procurement/material-requests" element={<KeyRoute requiredKey="procurement-material-requests"><MaterialRequests /></KeyRoute>} />
-            <Route path="/procurement/material-requests/kanban" element={<PermissionRoute module="procurement"><MaterialRequestsKanban /></PermissionRoute>} />
-            <Route path="/procurement/material-requests/new" element={<PermissionRoute module="procurement"><MaterialRequestForm /></PermissionRoute>} />
-            <Route path="/procurement/material-requests/create" element={<Navigate to="/procurement/material-requests/new" replace />} />
-            <Route path="/procurement/material-requests/:id" element={<PermissionRoute module="procurement"><MaterialRequestForm /></PermissionRoute>} />
-            <Route path="/procurement/demand-pool" element={<PermissionRoute module="procurement"><DemandPool /></PermissionRoute>} />
-            <Route path="/procurement/quotations" element={<KeyRoute requiredKey="procurement-quotations"><Quotations /></KeyRoute>} />
-            <Route path="/procurement/quotations/new" element={<PermissionRoute module="procurement"><QuotationForm /></PermissionRoute>} />
-            <Route path="/procurement/quotations/:id" element={<PermissionRoute module="procurement"><QuotationForm /></PermissionRoute>} />
-            <Route path="/procurement/purchase-orders" element={<KeyRoute requiredKey="procurement-purchase-orders"><PurchaseOrders /></KeyRoute>} />
-            <Route path="/procurement/purchase-orders/new" element={<KeyRoute requiredKey="procurement-purchase-orders"><PurchaseOrderForm /></KeyRoute>} />
-            <Route path="/procurement/purchase-orders/create" element={<Navigate to="/procurement/purchase-orders/new" replace />} />
-            <Route path="/procurement/purchase-orders/:id" element={<KeyRoute requiredKey="procurement-purchase-orders"><PurchaseOrderDetail /></KeyRoute>} />
-            <Route path="/procurement/purchase-orders/:id/edit" element={<KeyRoute requiredKey="procurement-purchase-orders"><PurchaseOrderForm /></KeyRoute>} />
-            <Route path="/procurement/quotation-comparison" element={<KeyRoute requiredKey="procurement-quotation-comparison"><QuotationComparison /></KeyRoute>} />
-
-            {/* Warehouse — guarded by 'warehouse' permission */}
-            <Route path="/warehouse" element={<ModuleIndexRedirect moduleId="warehouse" fallback="/warehouse/grn" />} />
+            <Route path="/warehouse" element={<ModuleIndexRedirect moduleId="warehouse" fallback="/warehouse/dashboard" />} />
+            <Route path="/warehouse/dashboard" element={<PermissionRoute module="warehouse"><WarehouseDashboard /></PermissionRoute>} />
+            <Route path="/warehouse/masters/warehouses" element={<KeyRoute requiredKey="warehouse-masters-warehouses"><Warehouses /></KeyRoute>} />
+            <Route path="/warehouse/masters/warehouses/new" element={<KeyRoute requiredKey="warehouse-masters-warehouses"><WarehouseForm /></KeyRoute>} />
+            <Route path="/warehouse/masters/warehouses/:id" element={<KeyRoute requiredKey="warehouse-masters-warehouses"><WarehouseDetail /></KeyRoute>} />
+            <Route path="/warehouse/masters/warehouses/:id/edit" element={<KeyRoute requiredKey="warehouse-masters-warehouses"><WarehouseForm /></KeyRoute>} />
+            <Route path="/warehouse/masters/floor-plan" element={<KeyRoute requiredKey="warehouse-masters-floor-plan"><FloorPlan /></KeyRoute>} />
+            <Route path="/warehouse/masters/floor-plan-3d" element={<KeyRoute requiredKey="warehouse-masters-floor-plan-3d"><FloorPlan3D /></KeyRoute>} />
             <Route path="/warehouse/grn" element={<KeyRoute requiredKey="warehouse-grn"><GRN /></KeyRoute>} />
             <Route path="/warehouse/grn/new" element={<PermissionRoute module="warehouse"><GRNForm /></PermissionRoute>} />
             <Route path="/warehouse/grn/create" element={<Navigate to="/warehouse/grn/new" replace />} />
@@ -490,8 +487,8 @@ const App = () => {
             <Route path="/warehouse/putaway" element={<KeyRoute requiredKey="warehouse-putaway"><Putaway /></KeyRoute>} />
             <Route path="/warehouse/putaway/new" element={<PermissionRoute module="warehouse"><PutawayForm /></PermissionRoute>} />
             <Route path="/warehouse/putaway/:id" element={<PermissionRoute module="warehouse"><PutawayForm /></PermissionRoute>} />
-            <Route path="/warehouse/floor-plan" element={<KeyRoute requiredKey="warehouse-floor-plan"><FloorPlan /></KeyRoute>} />
-            <Route path="/warehouse/floor-plan-3d" element={<KeyRoute requiredKey="warehouse-floor-plan"><FloorPlan3D /></KeyRoute>} />
+            <Route path="/warehouse/floor-plan" element={<Navigate to="/warehouse/masters/floor-plan" replace />} />
+            <Route path="/warehouse/floor-plan-3d" element={<Navigate to="/warehouse/masters/floor-plan-3d" replace />} />
             <Route path="/warehouse/purchase-returns" element={<KeyRoute requiredKey="warehouse-purchase-returns"><PurchaseReturns /></KeyRoute>} />
             <Route path="/warehouse/purchase-returns/new" element={<PermissionRoute module="warehouse"><PurchaseReturnForm /></PermissionRoute>} />
             <Route path="/warehouse/purchase-returns/:id" element={<PermissionRoute module="warehouse"><PurchaseReturnForm /></PermissionRoute>} />
@@ -508,7 +505,35 @@ const App = () => {
             <Route path="/warehouse/material-inward" element={<KeyRoute requiredKey="warehouse-material-inward"><MaterialInward /></KeyRoute>} />
             <Route path="/warehouse/material-inward/new" element={<PermissionRoute module="warehouse"><MaterialInwardForm /></PermissionRoute>} />
             <Route path="/warehouse/material-inward/:id" element={<PermissionRoute module="warehouse"><MaterialInwardForm /></PermissionRoute>} />
-            
+            <Route path="/warehouse/reports" element={<PermissionRoute module="warehouse"><WarehouseReports /></PermissionRoute>} />
+            <Route path="/warehouse/notifications" element={<PermissionRoute module="warehouse"><WarehouseNotifications /></PermissionRoute>} />
+
+            {/* Procurement — guarded by 'procurement' permission */}
+            <Route path="/procurement" element={<ModuleIndexRedirect moduleId="procurement" fallback="/procurement/dashboard" />} />
+            <Route path="/procurement/dashboard" element={<PermissionRoute module="procurement"><ProcurementDashboard /></PermissionRoute>} />
+            <Route path="/procurement/masters/vendors" element={<KeyRoute requiredKey="procurement-masters-vendors"><Vendors /></KeyRoute>} />
+            <Route path="/procurement/masters/vendors/new" element={<KeyRoute requiredKey="procurement-masters-vendors"><VendorForm /></KeyRoute>} />
+            <Route path="/procurement/masters/vendors/:id" element={<KeyRoute requiredKey="procurement-masters-vendors"><VendorDetail /></KeyRoute>} />
+            <Route path="/procurement/masters/vendors/:id/edit" element={<KeyRoute requiredKey="procurement-masters-vendors"><VendorForm /></KeyRoute>} />
+            <Route path="/procurement/masters/vendor-material-mapping" element={<KeyRoute requiredKey="procurement-masters-vendor-material-mapping"><VendorMaterialMapping /></KeyRoute>} />
+            <Route path="/procurement/material-requests" element={<KeyRoute requiredKey="procurement-material-requests"><MaterialRequests /></KeyRoute>} />
+            <Route path="/procurement/material-requests/kanban" element={<PermissionRoute module="procurement"><MaterialRequestsKanban /></PermissionRoute>} />
+            <Route path="/procurement/material-requests/new" element={<PermissionRoute module="procurement"><MaterialRequestForm /></PermissionRoute>} />
+            <Route path="/procurement/material-requests/create" element={<Navigate to="/procurement/material-requests/new" replace />} />
+            <Route path="/procurement/material-requests/:id" element={<PermissionRoute module="procurement"><MaterialRequestForm /></PermissionRoute>} />
+            <Route path="/procurement/demand-pool" element={<PermissionRoute module="procurement"><DemandPool /></PermissionRoute>} />
+            <Route path="/procurement/quotations" element={<KeyRoute requiredKey="procurement-quotations"><Quotations /></KeyRoute>} />
+            <Route path="/procurement/quotations/new" element={<PermissionRoute module="procurement"><QuotationForm /></PermissionRoute>} />
+            <Route path="/procurement/quotations/:id" element={<PermissionRoute module="procurement"><QuotationForm /></PermissionRoute>} />
+            <Route path="/procurement/purchase-orders" element={<KeyRoute requiredKey="procurement-purchase-orders"><PurchaseOrders /></KeyRoute>} />
+            <Route path="/procurement/purchase-orders/new" element={<KeyRoute requiredKey="procurement-purchase-orders"><PurchaseOrderForm /></KeyRoute>} />
+            <Route path="/procurement/purchase-orders/create" element={<Navigate to="/procurement/purchase-orders/new" replace />} />
+            <Route path="/procurement/purchase-orders/:id" element={<KeyRoute requiredKey="procurement-purchase-orders"><PurchaseOrderDetail /></KeyRoute>} />
+            <Route path="/procurement/purchase-orders/:id/edit" element={<KeyRoute requiredKey="procurement-purchase-orders"><PurchaseOrderForm /></KeyRoute>} />
+            <Route path="/procurement/quotation-comparison" element={<KeyRoute requiredKey="procurement-quotation-comparison"><QuotationComparison /></KeyRoute>} />
+            <Route path="/procurement/reports" element={<PermissionRoute module="procurement"><ProcurementReports /></PermissionRoute>} />
+            <Route path="/procurement/notifications" element={<PermissionRoute module="procurement"><ProcurementNotifications /></PermissionRoute>} />
+
             {/* Outward Dispatch - Unified under Logistics */}
             <Route path="/logistics/dispatch-orders" element={<KeyRoute requiredKey="warehouse-dispatch"><Dispatch /></KeyRoute>} />
             <Route path="/logistics/dispatch-orders/new" element={<PermissionRoute module="logistics"><DispatchForm /></PermissionRoute>} />
@@ -521,9 +546,29 @@ const App = () => {
             <Route path="/warehouse/dispatch/:id" element={<RedirectToLogisticsDispatch />} />
             <Route path="/warehouse/dispatch/:id/acknowledge" element={<RedirectToLogisticsAcknowledge />} />
 
-
             {/* Inventory — guarded by 'inventory' permission */}
-            <Route path="/inventory" element={<Navigate to="/inventory/stock-balance" replace />} />
+            <Route path="/inventory" element={<ModuleIndexRedirect moduleId="inventory" fallback="/inventory/dashboard" />} />
+            <Route path="/inventory/dashboard" element={<PermissionRoute module="inventory"><InventoryDashboard /></PermissionRoute>} />
+            <Route path="/inventory/masters/items" element={<KeyRoute requiredKey="inventory-masters-items"><Items /></KeyRoute>} />
+            <Route path="/inventory/masters/items/new" element={<KeyRoute requiredKey="inventory-masters-items"><ItemForm /></KeyRoute>} />
+            <Route path="/inventory/masters/items/:id" element={<KeyRoute requiredKey="inventory-masters-items"><ItemDetail /></KeyRoute>} />
+            <Route path="/inventory/masters/items/:id/edit" element={<KeyRoute requiredKey="inventory-masters-items"><ItemForm /></KeyRoute>} />
+            <Route path="/inventory/masters/categories" element={<KeyRoute requiredKey="inventory-masters-categories"><Categories /></KeyRoute>} />
+            <Route path="/inventory/masters/packaging" element={<KeyRoute requiredKey="inventory-masters-packaging"><PackagingHierarchy /></KeyRoute>} />
+            <Route path="/inventory/masters/user-material-mapping" element={<KeyRoute requiredKey="inventory-masters-user-material-mapping"><UserMaterialMapping /></KeyRoute>} />
+            <Route path="/inventory/masters/uom" element={<KeyRoute requiredKey="inventory-masters-uom"><UOM /></KeyRoute>} />
+            <Route path="/inventory/masters/brands" element={<KeyRoute requiredKey="inventory-masters-brands"><Brands /></KeyRoute>} />
+            <Route path="/inventory/masters/features" element={<KeyRoute requiredKey="inventory-masters-features"><Features /></KeyRoute>} />
+            <Route path="/inventory/masters/item-types" element={<KeyRoute requiredKey="inventory-masters-item-types"><ItemTypes /></KeyRoute>} />
+            <Route path="/inventory/masters/item-attributes" element={<KeyRoute requiredKey="inventory-masters-item-attributes"><ItemAttributes /></KeyRoute>} />
+            <Route path="/inventory/masters/category-attribute-mapping" element={<KeyRoute requiredKey="inventory-masters-category-attribute-mapping"><CategoryAttributeMapping /></KeyRoute>} />
+            <Route path="/inventory/masters/specs" element={<KeyRoute requiredKey="inventory-masters-specs"><Specs /></KeyRoute>} />
+            <Route path="/inventory/masters/boms" element={<KeyRoute requiredKey="inventory-masters-boms"><BOMs /></KeyRoute>} />
+            <Route path="/inventory/masters/boms/new" element={<KeyRoute requiredKey="inventory-masters-boms"><BOMForm /></KeyRoute>} />
+            <Route path="/inventory/masters/boms/:id/edit" element={<KeyRoute requiredKey="inventory-masters-boms"><BOMForm /></KeyRoute>} />
+            <Route path="/inventory/masters/price-lists" element={<KeyRoute requiredKey="inventory-masters-price-lists"><PriceLists /></KeyRoute>} />
+            <Route path="/inventory/masters/price-lists/new" element={<KeyRoute requiredKey="inventory-masters-price-lists"><PriceListForm /></KeyRoute>} />
+            <Route path="/inventory/masters/price-lists/:id/edit" element={<KeyRoute requiredKey="inventory-masters-price-lists"><PriceListForm /></KeyRoute>} />
             <Route path="/inventory/stock" element={<Navigate to="/inventory/stock-balance" replace />} />
             <Route path="/inventory/stock-balance" element={<KeyRoute requiredKey="inventory-stock-balance"><StockBalance /></KeyRoute>} />
             <Route path="/inventory/stock-ledger" element={<KeyRoute requiredKey="inventory-stock-ledger"><StockLedger /></KeyRoute>} />
@@ -534,10 +579,12 @@ const App = () => {
             <Route path="/inventory/stock-audit/new" element={<PermissionRoute module="inventory"><StockAuditForm /></PermissionRoute>} />
             <Route path="/inventory/stock-audit/:id" element={<PermissionRoute module="inventory"><StockAuditForm /></PermissionRoute>} />
             <Route path="/inventory/replenishment" element={<KeyRoute requiredKey="inventory-replenishment"><Replenishment /></KeyRoute>} />
-
-
+            <Route path="/inventory/reports" element={<PermissionRoute module="inventory"><InventoryReports /></PermissionRoute>} />
+            <Route path="/inventory/notifications" element={<PermissionRoute module="inventory"><InventoryNotifications /></PermissionRoute>} />
 
             {/* Indent — guarded by 'indent' permission */}
+            <Route path="/indent" element={<ModuleIndexRedirect moduleId="indent" fallback="/indent/dashboard" />} />
+            <Route path="/indent/dashboard" element={<PermissionRoute module="indent"><IndentDashboard /></PermissionRoute>} />
             <Route path="/indent/indents" element={<KeyRoute requiredKey="indent-indents"><Indents /></KeyRoute>} />
             <Route path="/indent/indents/kanban" element={<PermissionRoute module="indent"><IndentsKanban /></PermissionRoute>} />
             <Route path="/indent/indents/new" element={<PermissionRoute module="indent"><IndentForm /></PermissionRoute>} />
@@ -545,8 +592,11 @@ const App = () => {
             <Route path="/indent/indents/:id" element={<PermissionRoute module="indent"><IndentForm /></PermissionRoute>} />
             <Route path="/indent/acknowledgement" element={<KeyRoute requiredKey="indent-acknowledgement"><IndentAcknowledgement /></KeyRoute>} />
             <Route path="/indent/acknowledgement/new" element={<KeyRoute requiredKey="indent-acknowledgement"><AcknowledgementForm /></KeyRoute>} />
+            <Route path="/indent/reports" element={<PermissionRoute module="indent"><IndentReports /></PermissionRoute>} />
+            <Route path="/indent/notifications" element={<PermissionRoute module="indent"><IndentNotifications /></PermissionRoute>} />
 
             {/* Consumption — guarded by 'consumption' permission */}
+            <Route path="/consumption" element={<ModuleIndexRedirect moduleId="consumption" fallback="/consumption/entry" />} />
             <Route path="/consumption/entry" element={<KeyRoute requiredKey="consumption-entry"><ConsumptionEntry /></KeyRoute>} />
             <Route path="/consumption/entry/new" element={<PermissionRoute module="consumption"><ConsumptionEntryForm /></PermissionRoute>} />
             <Route path="/consumption/entry/:id" element={<PermissionRoute module="consumption"><ConsumptionEntryForm /></PermissionRoute>} />
@@ -562,10 +612,11 @@ const App = () => {
             <Route path="/approvals/business-rules" element={<PermissionRoute module="approvals"><BusinessRules /></PermissionRoute>} />
 
             {/* Accounts — guarded by 'accounts' permission */}
-            <Route path="/accounts" element={<Navigate to="/accounts/coa" replace />} />
+            <Route path="/accounts" element={<ModuleIndexRedirect moduleId="accounts" fallback="/accounts/coa" />} />
             <Route path="/accounts/coa" element={<PermissionRoute module="accounts"><ChartOfAccountsPage /></PermissionRoute>} />
             <Route path="/accounts/mappings" element={<PermissionRoute module="accounts"><AccountMappingsPage /></PermissionRoute>} />
-            <Route path="/accounts/reports" element={<PermissionRoute module="accounts"><FinancialReportsPage /></PermissionRoute>} />
+            <Route path="/accounts/reports" element={<PermissionRoute module="accounts"><AccountsReports /></PermissionRoute>} />
+            <Route path="/accounts/financial-reports" element={<PermissionRoute module="accounts"><FinancialReportsPage /></PermissionRoute>} />
             <Route path="/accounts/invoices" element={<KeyRoute requiredKey="accounts-invoices"><Invoices /></KeyRoute>} />
             <Route path="/accounts/invoices/new" element={<PermissionRoute module="accounts"><InvoiceForm /></PermissionRoute>} />
             <Route path="/accounts/invoices/:id" element={<PermissionRoute module="accounts"><InvoiceForm /></PermissionRoute>} />
@@ -601,18 +652,50 @@ const App = () => {
             {/* Alerts & Insights — closes audit gaps G-04/05/06/08 */}
             <Route path="/alerts" element={<PermissionRoute module={['inventory','warehouse','procurement']}><AlertsDashboard /></PermissionRoute>} />
 
-            {/* Report Builder — Wave 10 */}
-            <Route path="/reports/builder" element={<PermissionRoute module="reports"><ReportBuilder /></PermissionRoute>} />
+            {/* Legacy redirects for reports */}
+            <Route path="/reports/inventory" element={<Navigate to="/inventory/reports" replace />} />
+            <Route path="/reports/procurement" element={<Navigate to="/procurement/reports" replace />} />
+            <Route path="/reports/consumption" element={<Navigate to="/consumption/reports" replace />} />
+            <Route path="/reports/accounts" element={<Navigate to="/accounts/reports" replace />} />
+            <Route path="/reports/system" element={<Navigate to="/settings/reports/system" replace />} />
+            <Route path="/reports/builder" element={<Navigate to="/settings/reports-v2" replace />} />
+            <Route path="/reports" element={<Navigate to="/launcher" replace />} />
 
-            {/* Reports — guarded by 'reports' permission */}
-            <Route path="/reports" element={<PermissionRoute module="reports"><ReportsDashboard /></PermissionRoute>} />
-            <Route path="/reports/inventory" element={<PermissionRoute module="reports"><InventoryReports /></PermissionRoute>} />
-            <Route path="/reports/procurement" element={<PermissionRoute module="reports"><ProcurementReports /></PermissionRoute>} />
-            <Route path="/reports/consumption" element={<PermissionRoute module="reports"><ConsumptionReportPage /></PermissionRoute>} />
-            <Route path="/reports/sales" element={<PermissionRoute module="reports"><SalesReports /></PermissionRoute>} />
-            <Route path="/reports/accounts" element={<PermissionRoute module="reports"><AccountsReports /></PermissionRoute>} />
-
-            <Route path="/reports/system" element={<PermissionRoute module="reports"><SystemReports /></PermissionRoute>} />
+            {/* Legacy redirects for masters */}
+            <Route path="/masters/items" element={<Navigate to="/inventory/masters/items" replace />} />
+            <Route path="/masters/items/new" element={<Navigate to="/inventory/masters/items/new" replace />} />
+            <Route path="/masters/items/:id" element={<RedirectToItemDetail />} />
+            <Route path="/masters/items/:id/edit" element={<RedirectToItemEdit />} />
+            <Route path="/masters/categories" element={<Navigate to="/inventory/masters/categories" replace />} />
+            <Route path="/masters/vendors" element={<Navigate to="/procurement/masters/vendors" replace />} />
+            <Route path="/masters/vendor-material-mapping" element={<Navigate to="/procurement/masters/vendor-material-mapping" replace />} />
+            <Route path="/masters/user-material-mapping" element={<Navigate to="/inventory/masters/user-material-mapping" replace />} />
+            <Route path="/masters/vendors/new" element={<Navigate to="/procurement/masters/vendors/new" replace />} />
+            <Route path="/masters/vendors/:id" element={<RedirectToVendorDetail />} />
+            <Route path="/masters/vendors/:id/edit" element={<RedirectToVendorEdit />} />
+            <Route path="/masters/warehouses" element={<Navigate to="/warehouse/masters/warehouses" replace />} />
+            <Route path="/masters/warehouses/new" element={<Navigate to="/warehouse/masters/warehouses/new" replace />} />
+            <Route path="/masters/warehouses/:id" element={<RedirectToWarehouseDetail />} />
+            <Route path="/masters/warehouses/:id/edit" element={<RedirectToWarehouseEdit />} />
+            <Route path="/masters/uom" element={<Navigate to="/inventory/masters/uom" replace />} />
+            <Route path="/masters/packaging" element={<Navigate to="/inventory/masters/packaging" replace />} />
+            <Route path="/masters/price-lists" element={<Navigate to="/inventory/masters/price-lists" replace />} />
+            <Route path="/masters/price-lists/new" element={<Navigate to="/inventory/masters/price-lists/new" replace />} />
+            <Route path="/masters/price-lists/:id/edit" element={<RedirectToPriceListEdit />} />
+            <Route path="/masters/brands" element={<Navigate to="/inventory/masters/brands" replace />} />
+            <Route path="/masters/features" element={<Navigate to="/inventory/masters/features" replace />} />
+            <Route path="/masters/item-types" element={<Navigate to="/inventory/masters/item-types" replace />} />
+            <Route path="/masters/item-attributes" element={<Navigate to="/inventory/masters/item-attributes" replace />} />
+            <Route path="/masters/category-attribute-mapping" element={<Navigate to="/inventory/masters/category-attribute-mapping" replace />} />
+            <Route path="/masters/specs" element={<Navigate to="/inventory/masters/specs" replace />} />
+            <Route path="/masters/users" element={<Navigate to="/settings/users" replace />} />
+            <Route path="/masters/user-groups" element={<Navigate to="/settings/masters/user-groups" replace />} />
+            <Route path="/masters/organization-structure" element={<Navigate to="/settings/masters/organization-structure" replace />} />
+            <Route path="/masters/organization-structure/hr-sync" element={<Navigate to="/settings/masters/organization-structure/hr-sync" replace />} />
+            <Route path="/masters/boms" element={<Navigate to="/inventory/masters/boms" replace />} />
+            <Route path="/masters/boms/new" element={<Navigate to="/inventory/masters/boms/new" replace />} />
+            <Route path="/masters/boms/:id/edit" element={<Navigate to="/inventory/masters/boms/:id/edit" replace />} />
+            <Route path="/masters" element={<Navigate to="/launcher" replace />} />
 
             {/* Logistics Module */}
             <Route path="/logistics" element={<Navigate to="/logistics/dashboard" replace />} />
@@ -642,6 +725,11 @@ const App = () => {
             <Route path="/settings/api-keys" element={<PermissionRoute module="settings"><ApiKeys /></PermissionRoute>} />
             <Route path="/settings/profile" element={<Profile />} />
             <Route path="/settings/change-password" element={<ChangePassword />} />
+            <Route path="/settings/masters/user-groups" element={<KeyRoute requiredKey="settings-masters-user-groups"><UserGroups /></KeyRoute>} />
+            <Route path="/settings/masters/organization-structure" element={<KeyRoute requiredKey="settings-masters-organization-structure"><OrganizationStructure /></KeyRoute>} />
+            <Route path="/settings/masters/organization-structure/hr-sync" element={<KeyRoute requiredKey="settings-masters-organization-structure"><HRSyncDashboard /></KeyRoute>} />
+            <Route path="/settings/reports-v2" element={<KeyRoute requiredKey="settings-reports-v2"><ReportBuilder /></KeyRoute>} />
+            <Route path="/settings/reports/system" element={<KeyRoute requiredKey="settings-reports-system"><SystemReports /></KeyRoute>} />
 
             {/* Catch-all redirect.
                 BUG-AUTH-125 fix: this route lives INSIDE ProtectedRoute so

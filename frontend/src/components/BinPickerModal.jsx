@@ -71,7 +71,7 @@ const BinPickerModal = ({
         <Button key="close" onClick={onClose}>Close</Button>,
       ]}
       width={920}
-      bodyStyle={{ padding: 16 }}
+      styles={{ body: { padding: 16 } }}
     >
       <Space wrap style={{ marginBottom: 12 }}>
         <Select

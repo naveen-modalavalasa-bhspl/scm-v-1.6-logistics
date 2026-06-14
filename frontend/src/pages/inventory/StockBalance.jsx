@@ -750,7 +750,7 @@ const StockBalance = () => {
         width={1000}
       >
         {/* Weighted Average Cost (WAC) Valuation card for consumables only */}
-        {String(drillDownItem?.item_type || '').toLowerCase() === 'consumable' && drillDownData && drillDownData.length > 0 && (() => {
+        {String(drillDownItem?.item_type || '').toLowerCase().includes('consumable') && drillDownData && drillDownData.length > 0 && (() => {
           let overallTotalValue = 0;
           let overallTotalQty = 0;
           drillDownData.forEach((row) => {

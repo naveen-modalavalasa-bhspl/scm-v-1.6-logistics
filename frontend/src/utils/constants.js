@@ -119,8 +119,6 @@ export const STATUS_LABELS = {
 };
 
 export const MODULES = {
-  DASHBOARD: 'dashboard',
-  MASTERS: 'masters',
   PROCUREMENT: 'procurement',
   WAREHOUSE: 'warehouse',
   INVENTORY: 'inventory',
@@ -129,7 +127,6 @@ export const MODULES = {
   APPROVALS: 'approvals',
   ACCOUNTS: 'accounts',
   ASSETS: 'assets',
-  REPORTS: 'reports',
   SETTINGS: 'settings',
 };
 
@@ -204,39 +201,6 @@ export const DATETIME_FORMAT = 'DD/MM/YYYY HH:mm';
 export const API_DATE_FORMAT = 'YYYY-MM-DD';
 
 export const MENU_CONFIG = [
-  {
-    key: 'dashboard',
-    label: 'Dashboard',
-    icon: 'DashboardOutlined',
-    path: '/dashboard',
-  },
-  {
-    key: 'masters',
-    label: 'Masters',
-    icon: 'DatabaseOutlined',
-    children: [
-      { key: 'masters-items', label: 'Items', path: '/masters/items' },
-      { key: 'masters-categories', label: 'Categories', path: '/masters/categories' },
-      { key: 'masters-brands', label: 'Brands', path: '/masters/brands' },
-      { key: 'masters-features', label: 'Features', path: '/masters/features' },
-      { key: 'masters-item-types', label: 'Item Types', path: '/masters/item-types' },
-      { key: 'masters-item-attributes', label: 'Attributes', path: '/masters/item-attributes' },
-      { key: 'masters-attribute-mapping', label: 'Attribute Mapping', path: '/masters/category-attribute-mapping' },
-      { key: 'masters-specs', label: 'Specs', path: '/masters/specs' },
-      { key: 'masters-vendors', label: 'Vendors', path: '/masters/vendors' },
-      { key: 'masters-vendor-material-mapping', label: 'Vendor Material Mapping', path: '/masters/vendor-material-mapping' },
-      { key: 'masters-user-material-mapping', label: 'User Material Mapping', path: '/masters/user-material-mapping' },
-      { key: 'masters-warehouses', label: 'Warehouses', path: '/masters/warehouses' },
-      { key: 'masters-uom', label: 'UOM', path: '/masters/uom' },
-      { key: 'masters-packaging', label: 'Packaging', path: '/masters/packaging' },
-      { key: 'masters-price-lists', label: 'Price Lists', path: '/masters/price-lists' },
-      { key: 'masters-boms', label: 'BOM', path: '/masters/boms' },
-      { key: 'masters-users', label: 'Users', path: '/masters/users' },
-      { key: 'masters-user-groups', label: 'User Groups', path: '/masters/user-groups' },
-      { key: 'masters-organization-structure', label: 'Org Structure', path: '/masters/organization-structure' },
-      { key: 'masters-hr-sync', label: 'HR Sync', path: '/masters/organization-structure/hr-sync' },
-    ],
-  },
   {
     key: 'procurement',
     label: 'Procurement',
@@ -341,18 +305,7 @@ export const MENU_CONFIG = [
       { key: 'healthcare-dashboard', label: 'Healthcare Dashboard', path: '/healthcare' },
     ],
   },
-  {
-    key: 'reports',
-    label: 'Reports',
-    icon: 'BarChartOutlined',
-    children: [
-      { key: 'reports-inventory', label: 'Inventory', path: '/reports/inventory' },
-      { key: 'reports-procurement', label: 'Procurement', path: '/reports/procurement' },
-      { key: 'reports-consumption', label: 'Consumption', path: '/reports/consumption' },
-      { key: 'reports-accounts', label: 'Accounts', path: '/reports/accounts' },
-      { key: 'reports-system', label: 'System', path: '/reports/system' },
-    ],
-  },
+
   {
     key: 'settings',
     label: 'Settings',
