@@ -1,0 +1,61 @@
+=== POSITION 2178 ===
+ID: 2178
+Name: LAB TECHNICIAN - AP 104 MMU - GOURAVARAM
+Code: LT@GOURAVARAM-AP-104-MMUS
+Role ID: 37
+Project ID: 24
+Parent Position ID: 2131
+Employee ID: 10193
+
+=== POSITION 2131 ===
+ID: 2131
+Name: OE
+Code: OECHODAVARAM@-AP-104-MMUS
+Role ID: 18
+Project ID: 23
+Parent Position ID: 5880
+Employee ID: 7115
+
+=== ANCESTORS OF 2178 ===
+1. ID: 2131, Name: OE, Code: OECHODAVARAM@-AP-104-MMUS, ParentID: 5880, RoleID: 18, ProjectID: 23
+2. ID: 5880, Name: DIVISIONAL MANAGER-AP-104-MMU-ANAKAPALLI, Code: DIVISIONAL-MANAGER-AP-104-MMU-ANAKAPALLI, ParentID: 137, RoleID: 19, ProjectID: None
+3. ID: 137, Name: REGIONAL MANAGER, Code: RM@VIZIANAGARAM-AP-104-MMUS, ParentID: 5929, RoleID: 22, ProjectID: 23
+4. ID: 5929, Name: SPH-AP-104-MMU, Code: SPH-AP-104-MMU, ParentID: None, RoleID: 28, ProjectID: None
+
+=== USERS ASSIGNED TO POSITION 2131 ===
+User ID: 60, Username: hr_emp_07298, Active Role ID: 19, Employee ID: 7115, Employee Position ID: 169
+  Roles: ['oe', 'district_manager']
+
+=== USERS ASSIGNED TO POSITION 2178 ===
+User ID: 59, Username: hr_emp_15029, Active Role ID: 34, Employee ID: 10193, Employee Position ID: 3049
+
+=== INDENTS RAISED BY EMPLOYEES OF POSITION 2178 ===
+Employees in Position 2178: []
+No users found to have raised indents.
+
+=== WORKFLOW CONFIGS FOR PROJECTS [24, 23] ===
+Project ID 24:
+  Role ID 18: indent_approve=True, indent_view=True
+  Role ID 19: indent_approve=True, indent_view=True
+  Role ID 20: indent_approve=False, indent_view=False
+  Role ID 21: indent_approve=False, indent_view=False
+  Role ID 22: indent_approve=False, indent_view=True
+  Role ID 23: indent_approve=False, indent_view=False
+  Role ID 24: indent_approve=False, indent_view=False
+  Role ID 25: indent_approve=False, indent_view=False
+  Role ID 26: indent_approve=False, indent_view=False
+  Role ID 27: indent_approve=False, indent_view=False
+  Role ID 28: indent_approve=False, indent_view=True
+  Role ID 29: indent_approve=False, indent_view=True
+  Role ID 37: indent_approve=False, indent_view=False
+Project ID 23:
+  Role ID 18: indent_approve=True, indent_view=True
+  Role ID 19: indent_approve=True, indent_view=True
+  Role ID 20: indent_approve=False, indent_view=False
+  Role ID 21: indent_approve=False, indent_view=False
+  Role ID 22: indent_approve=False, indent_view=True
+  Role ID 23: indent_approve=False, indent_view=False
+  Role ID 27: indent_approve=False, indent_view=False
+  Role ID 34: indent_approve=False, indent_view=False
+  Role ID 37: indent_approve=False, indent_view=False
+  Role ID 38: indent_approve=False, indent_view=True

@@ -1,0 +1,96 @@
+Total Indents found: 19
+
+Indent ID: 83, Indent No: BHSPL/26-27/FA-IND/0000019, Status: pending_approval
+  Raised by User: ID=63, Username=hr_emp_15030, EmpName=Mahesh Reddy, PosName=STOREKEEPER, PosID=3050
+  Approval Request ID: 204, Status: pending, Current Level: 2, Total Levels: 2
+    Current Active Approval Position: ID=5880, Name=DIVISIONAL MANAGER-AP-104-MMU-ANAKAPALLI, Code=DIVISIONAL-MANAGER-AP-104-MMU-ANAKAPALLI, RoleID=19
+
+Indent ID: 82, Indent No: BHSPL/26-27/FA-IND/0000018, Status: pending_approval
+  Raised by User: ID=59, Username=hr_emp_15029, EmpName=Naresh Kumar, PosName=STOREKEEPER, PosID=3049
+  Approval Request ID: 203, Status: approved, Current Level: 1, Total Levels: 1
+    No Active Approval Position found for current level!
+
+Indent ID: 81, Indent No: BHSPL/26-27/FA-IND/0000017, Status: pending_approval
+  Raised by User: ID=59, Username=hr_emp_15029, EmpName=Naresh Kumar, PosName=STOREKEEPER, PosID=3049
+  Approval Request ID: 199, Status: pending, Current Level: 3, Total Levels: 3
+    No Active Approval Position found for current level!
+
+Indent ID: 78, Indent No: BHSPL/26-27/IND/0000012, Status: approved
+  Raised by User: ID=63, Username=hr_emp_15030, EmpName=Mahesh Reddy, PosName=STOREKEEPER, PosID=3050
+  Approval Request ID: 196, Status: approved, Current Level: 2, Total Levels: 2
+    Current Active Approval Position: ID=5880, Name=DIVISIONAL MANAGER-AP-104-MMU-ANAKAPALLI, Code=DIVISIONAL-MANAGER-AP-104-MMU-ANAKAPALLI, RoleID=19
+
+Indent ID: 73, Indent No: BHSPL/26-27/IND/0000011, Status: approved
+  Raised by User: ID=63, Username=hr_emp_15030, EmpName=Mahesh Reddy, PosName=STOREKEEPER, PosID=3050
+  Approval Request ID: 191, Status: approved, Current Level: 2, Total Levels: 2
+    Current Active Approval Position: ID=5880, Name=DIVISIONAL MANAGER-AP-104-MMU-ANAKAPALLI, Code=DIVISIONAL-MANAGER-AP-104-MMU-ANAKAPALLI, RoleID=19
+
+Indent ID: 72, Indent No: BHSPL/26-27/IND/0000010, Status: approved
+  Raised by User: ID=63, Username=hr_emp_15030, EmpName=Mahesh Reddy, PosName=STOREKEEPER, PosID=3050
+  Approval Request ID: 190, Status: approved, Current Level: 2, Total Levels: 2
+    Current Active Approval Position: ID=5880, Name=DIVISIONAL MANAGER-AP-104-MMU-ANAKAPALLI, Code=DIVISIONAL-MANAGER-AP-104-MMU-ANAKAPALLI, RoleID=19
+
+Indent ID: 71, Indent No: BHSPL/26-27/FA-IND/0000013, Status: pending_approval
+  Raised by User: ID=59, Username=hr_emp_15029, EmpName=Naresh Kumar, PosName=STOREKEEPER, PosID=3049
+  Approval Request ID: 189, Status: approved, Current Level: 1, Total Levels: 1
+    No Active Approval Position found for current level!
+
+Indent ID: 70, Indent No: BHSPL/26-27/FA-IND/0000012, Status: pending_approval
+  Raised by User: ID=59, Username=hr_emp_15029, EmpName=Naresh Kumar, PosName=STOREKEEPER, PosID=3049
+  Approval Request ID: 188, Status: approved, Current Level: 1, Total Levels: 1
+    No Active Approval Position found for current level!
+
+Indent ID: 69, Indent No: BHSPL/26-27/FA-IND/0000011, Status: pending_approval
+  Raised by User: ID=59, Username=hr_emp_15029, EmpName=Naresh Kumar, PosName=STOREKEEPER, PosID=3049
+  Approval Request ID: 187, Status: approved, Current Level: 1, Total Levels: 1
+    Current Active Approval Position: ID=2131, Name=OE, Code=OECHODAVARAM@-AP-104-MMUS, RoleID=18
+
+Indent ID: 68, Indent No: BHSPL/26-27/FA-IND/0000010, Status: pending_approval
+  Raised by User: ID=7, Username=himaja, EmpName=N/A, PosName=N/A, PosID=N/A
+  Approval Request ID: 186, Status: pending, Current Level: 1, Total Levels: 1
+    No Active Approval Position found for current level!
+
+Indent ID: 67, Indent No: BHSPL/26-27/IND/0000008, Status: partially_fulfilled
+  Raised by User: ID=49, Username=john, EmpName=Prasad, PosName=LAB TECHNICIAN, PosID=2375
+  Approval Request ID: 182, Status: approved, Current Level: 1, Total Levels: 1
+    No Active Approval Position found for current level!
+
+Indent ID: 66, Indent No: BHSPL/26-27/IND/0000009, Status: approved
+  Raised by User: ID=7, Username=himaja, EmpName=N/A, PosName=N/A, PosID=N/A
+  Approval Request ID: 181, Status: approved, Current Level: 1, Total Levels: 1
+    No Active Approval Position found for current level!
+
+Indent ID: 65, Indent No: BHSPL/26-27/IND/0000007, Status: fulfilled
+  Raised by User: ID=49, Username=john, EmpName=Prasad, PosName=LAB TECHNICIAN, PosID=2375
+  Approval Request ID: 174, Status: approved, Current Level: 1, Total Levels: 1
+    No Active Approval Position found for current level!
+
+Indent ID: 64, Indent No: BHSPL/26-27/IND/0000006, Status: approved
+  Raised by User: ID=49, Username=john, EmpName=Prasad, PosName=LAB TECHNICIAN, PosID=2375
+  Approval Request ID: 173, Status: approved, Current Level: 1, Total Levels: 1
+    No Active Approval Position found for current level!
+
+Indent ID: 63, Indent No: BHSPL/26-27/IND/0000004, Status: fulfilled
+  Raised by User: ID=7, Username=himaja, EmpName=N/A, PosName=N/A, PosID=N/A
+  Approval Request ID: 167, Status: approved, Current Level: 1, Total Levels: 1
+    No Active Approval Position found for current level!
+
+Indent ID: 62, Indent No: BHSPL/26-27/IND/0000005, Status: fulfilled
+  Raised by User: ID=49, Username=john, EmpName=Prasad, PosName=LAB TECHNICIAN, PosID=2375
+  Approval Request ID: 166, Status: approved, Current Level: 1, Total Levels: 1
+    No Active Approval Position found for current level!
+
+Indent ID: 61, Indent No: BHSPL/26-27/IND/0000002, Status: fulfilled
+  Raised by User: ID=7, Username=himaja, EmpName=N/A, PosName=N/A, PosID=N/A
+  Approval Request ID: 163, Status: approved, Current Level: 1, Total Levels: 1
+    No Active Approval Position found for current level!
+
+Indent ID: 60, Indent No: BHSPL/26-27/IND/0000003, Status: fulfilled
+  Raised by User: ID=49, Username=john, EmpName=Prasad, PosName=LAB TECHNICIAN, PosID=2375
+  Approval Request ID: 162, Status: approved, Current Level: 1, Total Levels: 1
+    No Active Approval Position found for current level!
+
+Indent ID: 59, Indent No: BHSPL/26-27/IND/0000001, Status: partially_fulfilled
+  Raised by User: ID=7, Username=himaja, EmpName=N/A, PosName=N/A, PosID=N/A
+  Approval Request ID: 158, Status: approved, Current Level: 1, Total Levels: 1
+    No Active Approval Position found for current level!

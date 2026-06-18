@@ -1,0 +1,30 @@
+Position 2178: Project ID=24
+Position 2131: Project ID=23
+Employee linked to Position 2178: ID=10193, Code=HR-EMP-15029, Name=Naresh Kumar, Position_id=3049
+  User: ID=59, Username=hr_emp_15029, active_role_id=34
+  Found 5 indents raised by this user:
+    Indent ID: 69, Indent No: BHSPL/26-27/FA-IND/0000011, Status: pending_approval, ProjectID: 23
+      Approval Request: ID=187, Status=approved, Current Level=1, Total Levels=1
+      Eligible Approver IDs at Level 1: [60]
+      Is User 60 (OE/DM) in eligible list? True
+      Current Active Approval Position: ID=2131, Name=OE, ProjectID=23, RoleID=18
+    Indent ID: 70, Indent No: BHSPL/26-27/FA-IND/0000012, Status: pending_approval, ProjectID: None
+      Approval Request: ID=188, Status=approved, Current Level=1, Total Levels=1
+      Eligible Approver IDs at Level 1: [14]
+      Is User 60 (OE/DM) in eligible list? False
+      Current Active Approval Position: None
+    Indent ID: 71, Indent No: BHSPL/26-27/FA-IND/0000013, Status: pending_approval, ProjectID: None
+      Approval Request: ID=189, Status=approved, Current Level=1, Total Levels=1
+      Eligible Approver IDs at Level 1: [14]
+      Is User 60 (OE/DM) in eligible list? False
+      Current Active Approval Position: None
+    Indent ID: 81, Indent No: BHSPL/26-27/FA-IND/0000017, Status: pending_approval, ProjectID: 23
+      Approval Request: ID=199, Status=pending, Current Level=3, Total Levels=3
+      Eligible Approver IDs at Level 3: []
+      Is User 60 (OE/DM) in eligible list? False
+      Current Active Approval Position: None
+    Indent ID: 82, Indent No: BHSPL/26-27/FA-IND/0000018, Status: pending_approval, ProjectID: None
+      Approval Request: ID=203, Status=approved, Current Level=1, Total Levels=1
+      Eligible Approver IDs at Level 1: [14]
+      Is User 60 (OE/DM) in eligible list? False
+      Current Active Approval Position: None
