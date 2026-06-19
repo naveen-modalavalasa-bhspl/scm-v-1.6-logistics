@@ -73,32 +73,19 @@ async def get_stock_balances(
     )
     count_query = select(func.count(StockBalance.id))
 
-    from app.utils.dependencies import user_is_managerial, user_warehouse_ids, get_user_role_codes, get_warehouse_and_descendants
-    from app.models.warehouse import Warehouse as _Wh
+    from app.utils.dependencies import get_user_warehouse_scope_ids
 
-    role_codes = await get_user_role_codes(db, current_user.id)
-    is_admin = bool({"super_admin", "admin"} & set(role_codes))
-    assigned_whs = await user_warehouse_ids(db, current_user.id)
-
-    is_managerial = await user_is_managerial(db, current_user.id)
-
-    if is_admin or is_managerial:
-        # Admins and managerial users see all real warehouses (excluding virtual)
-        real_wh_subq = select(_Wh.id).where(_Wh.type != "virtual").subquery()
-        query = query.where(StockBalance.warehouse_id.in_(select(real_wh_subq)))
-        count_query = count_query.where(StockBalance.warehouse_id.in_(select(real_wh_subq)))
-    elif assigned_whs:
-        # Non-admins who have warehouse mappings see their mapped warehouses + children recursively
-        scoped_wh = await get_warehouse_and_descendants(db, assigned_whs)
-        print(f"DEBUG: user_id={current_user.id}, warehouse_id={warehouse_id}, scoped_wh={scoped_wh}")
-        if warehouse_id is not None and warehouse_id not in scoped_wh:
-            print(f"DEBUG: Authorization failed. {warehouse_id} not in {scoped_wh}")
-            raise HTTPException(status_code=403, detail="Not authorized to view stock for this warehouse")
-        query = query.where(StockBalance.warehouse_id.in_(scoped_wh))
-        count_query = count_query.where(StockBalance.warehouse_id.in_(scoped_wh))
-    else:
-        # Non-managerial with no warehouses assigned see nothing
+    scoped_wh = await get_user_warehouse_scope_ids(
+        db,
+        current_user.id,
+        exclude_virtual=True,
+    )
+    if not scoped_wh:
         return build_paginated_response([], 0, page, page_size)
+    if warehouse_id is not None and warehouse_id not in scoped_wh:
+        raise HTTPException(status_code=403, detail="Not authorized to view stock for this warehouse")
+    query = query.where(StockBalance.warehouse_id.in_(scoped_wh))
+    count_query = count_query.where(StockBalance.warehouse_id.in_(scoped_wh))
 
     # Handle single item_id or comma-separated list (e.g., "335,337,349")
     if item_id:
@@ -451,17 +438,16 @@ async def get_stock_ledger(
     )
     count_query = select(func.count(StockLedger.id))
 
-    # R-005: warehouse-scope isolation
-    from app.utils.dependencies import user_is_managerial, user_warehouse_ids, get_warehouse_and_descendants
-    if not await user_is_managerial(db, current_user.id):
-        assigned_whs = await user_warehouse_ids(db, current_user.id)
-        if not assigned_whs:
-            return build_paginated_response([], 0, page, page_size)
-        scoped_wh = await get_warehouse_and_descendants(db, assigned_whs)
-        if warehouse_id is not None and warehouse_id not in scoped_wh:
-            raise HTTPException(status_code=403, detail="Not authorized to view this warehouse's ledger")
-        query = query.where(StockLedger.warehouse_id.in_(scoped_wh))
-        count_query = count_query.where(StockLedger.warehouse_id.in_(scoped_wh))
+    # Warehouse-scope isolation: users see their mapped warehouses plus all
+    # descendants. super_admin keeps unrestricted stock visibility.
+    from app.utils.dependencies import get_user_warehouse_scope_ids
+    scoped_wh = await get_user_warehouse_scope_ids(db, current_user.id)
+    if not scoped_wh:
+        return build_paginated_response([], 0, page, page_size)
+    if warehouse_id is not None and warehouse_id not in scoped_wh:
+        raise HTTPException(status_code=403, detail="Not authorized to view this warehouse's ledger")
+    query = query.where(StockLedger.warehouse_id.in_(scoped_wh))
+    count_query = count_query.where(StockLedger.warehouse_id.in_(scoped_wh))
 
     if item_id:
         query = query.where(StockLedger.item_id == item_id)
@@ -1383,6 +1369,9 @@ async def get_stock_balance_alias(
     item_id: str = Query(None),
     warehouse_id: int = Query(None),
     batch_id: int = Query(None),
+    category: str = Query(None),
+    batch: str = Query(None),
+    show_zero_stock: bool = Query(False),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -1390,10 +1379,7 @@ async def get_stock_balance_alias(
     return await get_stock_balances(
         page=page, page_size=page_size, item_id=item_id,
         warehouse_id=warehouse_id, batch_id=batch_id,
-        # BUG-INV-138: alias must pass category/batch as None, otherwise the
-        # inner signature receives the raw Query(None) sentinel and crashes
-        # on `batch.strip()`.
-        category=None, batch=None,
+        category=category, batch=batch, show_zero_stock=show_zero_stock,
         db=db, current_user=current_user,
     )
 

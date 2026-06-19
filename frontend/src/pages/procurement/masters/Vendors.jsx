@@ -841,7 +841,6 @@ const Vendors = () => {
               ...(supplierLoginMode === 'create' ? [
                 { min: 8, message: 'Minimum 8 characters' },
                 { pattern: /[A-Z]/, message: 'Must include uppercase letter' },
-                { pattern: /[a-z]/, message: 'Must include lowercase letter' },
                 { pattern: /\d/, message: 'Must include a number' },
               ] : [
                 {
@@ -849,7 +848,6 @@ const Vendors = () => {
                     if (!value) return Promise.resolve();
                     if (value.length < 8) return Promise.reject(new Error('Minimum 8 characters'));
                     if (!/[A-Z]/.test(value)) return Promise.reject(new Error('Must include uppercase letter'));
-                    if (!/[a-z]/.test(value)) return Promise.reject(new Error('Must include lowercase letter'));
                     if (!/\d/.test(value)) return Promise.reject(new Error('Must include a number'));
                     return Promise.resolve();
                   }

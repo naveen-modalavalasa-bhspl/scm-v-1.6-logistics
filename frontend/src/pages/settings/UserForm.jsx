@@ -235,10 +235,10 @@ const UserForm = () => {
                 label="Username"
                 rules={[
                   { required: true, message: 'Username is required' },
-                  { pattern: /^[a-zA-Z0-9_]{3,50}$/, message: 'Only letters, numbers, underscore (3-50 chars)' },
+                  { pattern: /^[a-zA-Z0-9_]{3,100}$/, message: 'Only letters, numbers, underscore (3-100 chars)' },
                 ]}
               >
-                <Input placeholder="Enter username" disabled={!isNew} maxLength={50} />
+                <Input placeholder="Enter username" disabled={!isNew} maxLength={100} />
               </Form.Item>
             </Col>
           </Row>
@@ -302,7 +302,6 @@ const UserForm = () => {
                       validator: (_, value) => {
                         if (!value) return Promise.resolve();
                         if (!/[A-Z]/.test(value)) return Promise.reject(new Error('Must include an uppercase letter'));
-                        if (!/[a-z]/.test(value)) return Promise.reject(new Error('Must include a lowercase letter'));
                         if (!/\d/.test(value)) return Promise.reject(new Error('Must include a digit'));
                         if (!/[!@#$%^&*(),.?":{}|<>]/.test(value)) return Promise.reject(new Error('Must include a special character'));
                         return Promise.resolve();
@@ -323,7 +322,6 @@ const UserForm = () => {
                       validator: (_, value) => {
                         if (!value) return Promise.resolve();
                         if (!/[A-Z]/.test(value)) return Promise.reject(new Error('Must include an uppercase letter'));
-                        if (!/[a-z]/.test(value)) return Promise.reject(new Error('Must include a lowercase letter'));
                         if (!/\d/.test(value)) return Promise.reject(new Error('Must include a digit'));
                         if (!/[!@#$%^&*(),.?":{}|<>]/.test(value)) return Promise.reject(new Error('Must include a special character'));
                         return Promise.resolve();

@@ -25,6 +25,12 @@ from app.config import settings
 router = APIRouter()
 
 
+def _normalize_login_identifier(value: str) -> str:
+    """Normalize UI labels used as login identifiers for exact comparison."""
+    normalized = (value or "").strip().replace("–", "-").replace("—", "-")
+    return " ".join(normalized.split()).lower()
+
+
 async def get_user_positions(db: AsyncSession, employee_id: Optional[int], employee_position_id: Optional[int]) -> List[UserPositionInfo]:
     if not employee_id:
         return []
@@ -162,6 +168,26 @@ async def login(
         )
     )
     user = result.scalar_one_or_none()
+
+    if user is None:
+        from app.models.master import Employee, Position
+
+        normalized_identifier = _normalize_login_identifier(identifier)
+        position_label = func.lower(func.concat(Position.code, " - ", Position.name))
+        position_result = await db.execute(
+            select(User)
+            .join(Employee, Employee.id == User.employee_id)
+            .join(Position, Position.id == Employee.position_id)
+            .options(selectinload(User.roles).selectinload(UserRole.role))
+            .where(
+                (func.lower(Position.code) == normalized_identifier)
+                | (position_label == normalized_identifier)
+            )
+            .limit(2)
+        )
+        position_users = position_result.scalars().all()
+        if len(position_users) == 1:
+            user = position_users[0]
 
     # BUG-AUTH-004 fix: always run a bcrypt compare even when the user does
     # not exist so an attacker cannot tell from response timing whether the

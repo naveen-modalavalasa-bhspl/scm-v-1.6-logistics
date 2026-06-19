@@ -64,8 +64,6 @@ class CarrierChangePassword(BaseModel):
             raise ValueError("Password too long")
         if not re.search(r"[A-Z]", v):
             raise ValueError("Password must contain at least one uppercase letter")
-        if not re.search(r"[a-z]", v):
-            raise ValueError("Password must contain at least one lowercase letter")
         if not re.search(r"\d", v):
             raise ValueError("Password must contain at least one digit")
         return v
@@ -131,8 +129,6 @@ class CarrierLoginCreate(BaseModel):
             raise ValueError("Password too long")
         if not re.search(r"[A-Z]", v):
             raise ValueError("Password must contain at least one uppercase letter")
-        if not re.search(r"[a-z]", v):
-            raise ValueError("Password must contain at least one lowercase letter")
         if not re.search(r"\d", v):
             raise ValueError("Password must contain at least one digit")
         return v
@@ -152,8 +148,8 @@ class CarrierLoginUpdate(BaseModel):
             return v
         if len(v) < 8:
             raise ValueError("Password must be at least 8 characters")
-        if not re.search(r"[A-Z]", v) or not re.search(r"[a-z]", v) or not re.search(r"\d", v):
-            raise ValueError("Password must contain upper, lower, and digit")
+        if not re.search(r"[A-Z]", v) or not re.search(r"\d", v):
+            raise ValueError("Password must contain upper and digit")
         return v
 
 

@@ -85,6 +85,12 @@ _ROLE_KEYS = {
         'consumption', 'consumption-entry',
         'inventory', 'inventory-dashboard', 'inventory-stock-balance', 'inventory-stock-ledger', 'inventory-notifications',
     },
+    'lab_technician': {
+        'lms',
+        'indent', 'indent-dashboard', 'indent-indents', 'indent-acknowledgement', 'indent-notifications',
+        'consumption', 'consumption-entry',
+        'inventory', 'inventory-dashboard', 'inventory-stock-balance', 'inventory-stock-ledger', 'inventory-notifications',
+    },
     'field_supervisor': {
         'lms',
         'approvals', 'approvals-pending',
@@ -225,7 +231,13 @@ async def allowed_keys_for_role(db: AsyncSession, role: Role) -> List[str]:
         if key == "indent-transactions":
             mapped_keys.append("indent-indents")
         elif key == "inventory-transactions":
-            mapped_keys.extend(["inventory-stock-transfer", "inventory-stock-audit", "inventory-replenishment"])
+            mapped_keys.extend([
+                "inventory-stock-balance",
+                "inventory-stock-ledger",
+                "inventory-stock-transfer",
+                "inventory-stock-audit",
+                "inventory-replenishment",
+            ])
             
         for k in mapped_keys:
             dynamic_keys.add(k)
@@ -233,7 +245,7 @@ async def allowed_keys_for_role(db: AsyncSession, role: Role) -> List[str]:
                 dynamic_keys.add(k.split("-", 1)[0])
 
     keys = list(dynamic_keys) if dynamic_keys else list(_allowed_for_role(role.code))
-    if role.code in {"field_staff", "field_supervisor", "storekeeper", "store_keeper"}:
+    if role.code in {"field_staff", "field_supervisor", "storekeeper", "store_keeper", "lab_technician"}:
         # Ensure field staff/supervisors and storekeepers can always access stock balance and stock ledger
         for k in ["inventory", "inventory-stock-balance", "inventory-stock-ledger"]:
             if k not in keys:

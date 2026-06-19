@@ -565,6 +565,42 @@ async def get_warehouse_and_descendants(db: AsyncSession, warehouse_ids: List[in
     return list(descendants)
 
 
+async def get_user_warehouse_scope_ids(
+    db: AsyncSession,
+    user_id: int,
+    *,
+    super_admin_all: bool = True,
+    exclude_virtual: bool = False,
+) -> List[int]:
+    """Return warehouse visibility for stock/transaction views.
+
+    The list contains the user's mapped warehouses plus every active descendant
+    warehouse. When enabled, super_admin gets every active warehouse.
+    """
+    from app.models.warehouse import Warehouse
+
+    role_codes = set(await get_user_role_codes(db, user_id))
+    if super_admin_all and "super_admin" in role_codes:
+        stmt = select(Warehouse.id).where(Warehouse.is_active == True)  # noqa: E712
+        if exclude_virtual:
+            stmt = stmt.where(Warehouse.type != "virtual")
+        result = await db.execute(stmt)
+        return [row[0] for row in result.all()]
+
+    assigned_whs = await user_warehouse_ids(db, user_id)
+    scoped_whs = await get_warehouse_and_descendants(db, assigned_whs)
+    if exclude_virtual and scoped_whs:
+        result = await db.execute(
+            select(Warehouse.id).where(
+                Warehouse.id.in_(scoped_whs),
+                Warehouse.type != "virtual",
+            )
+        )
+        scoped_whs = [row[0] for row in result.all()]
+
+    return scoped_whs
+
+
 # =============================================================
 # Carrier portal authentication
 # =============================================================

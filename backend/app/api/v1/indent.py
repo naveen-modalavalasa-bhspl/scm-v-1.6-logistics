@@ -28,27 +28,11 @@ from app.services.number_series import generate_number
 from app.services.approval_service import submit_for_approval
 from app.utils.dependencies import (
     get_current_user, require_any_role,
-    user_is_managerial, user_warehouse_ids,
+    user_is_managerial, user_warehouse_ids, require_permission,
 )
 from app.utils.helpers import paginate_params, build_paginated_response, apply_search_filter
 
-# Roles allowed to approve / reject indents.
-# R-007 fix: field_supervisor (= Department Head per manual) and project_manager
-# (= Doctor) added so they can approve indents from their dept.
-# `require_any_role` additionally bypasses for super_admin.
-APPROVER_ROLES = (
-    "warehouse_manager", "purchase_manager", "admin", "store_keeper",
-    "field_supervisor", "project_manager",
-)
-# Separation of duties (workflow rebuild 2026-04-30): approvers MUST NOT also
-# be raisers. Specifically `field_supervisor` and `project_manager` are
-# approval-only — letting them raise their own indents and then approve them
-# defeats the whole control. So CREATOR_ROLES is hand-listed instead of
-# union'd over APPROVER_ROLES.
-CREATOR_ROLES = (
-    "warehouse_manager", "admin", "store_keeper",
-    "purchase_officer", "warehouse_operator", "field_staff",
-)
+# Roles allowed to approve / reject / create indents are managed via permissions dynamically.
 
 # Main indent router — mounted at /indent/indents and /indents
 router = APIRouter()
@@ -179,6 +163,7 @@ async def list_indents(
     _FIELD_ONLY_CODES = frozenset({
         "field_staff", "field_user", "field_operator",
         "nurse", "pharmacy_assistant", "site_user",
+        "lab_technician",
     })
     # Roles that need org-wide visibility to do their job properly.
     _ORG_WIDE_CODES = frozenset({
@@ -668,7 +653,7 @@ async def get_indent(
 async def create_indent(
     payload: IndentCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_any_role(*CREATOR_ROLES)),
+    current_user: User = Depends(require_permission("indent-transactions", "create", "indent-transactions")),
 ):
     if not payload.items:
         raise HTTPException(status_code=422, detail="At least one item is required")
@@ -1022,7 +1007,7 @@ async def approve_indent(
     indent_id: int,
     payload: ApproveIndentPayload = ApproveIndentPayload(),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_any_role(*APPROVER_ROLES)),
+    current_user: User = Depends(require_permission("indent-transactions", "approve", "indent-transactions")),
 ):
     """Wave 11C — approve fires the lifecycle: stock check + auto-issue/auto-MR.
 
@@ -1168,7 +1153,7 @@ async def approve_indent(
 async def reject_indent(
     indent_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_any_role(*APPROVER_ROLES)),
+    current_user: User = Depends(require_permission("indent-transactions", "approve", "indent-transactions")),
 ):
     result = await db.execute(select(Indent).where(Indent.id == indent_id))
     indent = result.scalar_one_or_none()
@@ -1390,7 +1375,7 @@ async def list_indent_acknowledgements(
 async def convert_indent_to_mr(
     indent_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_any_role(*APPROVER_ROLES)),
+    current_user: User = Depends(require_permission("indent-transactions", "approve", "indent-transactions")),
 ):
     """Convert an approved indent to a Material Request when stock is not available.
 

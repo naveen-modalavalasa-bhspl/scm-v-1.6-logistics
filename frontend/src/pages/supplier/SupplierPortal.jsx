@@ -1027,7 +1027,6 @@ export default function SupplierPortal() {
                 { required: true },
                 { min: 8, message: 'Minimum 8 characters' },
                 { pattern: /[A-Z]/, message: 'Must include uppercase letter' },
-                { pattern: /[a-z]/, message: 'Must include lowercase letter' },
                 { pattern: /\d/, message: 'Must include a number' },
               ]}
             >
@@ -1484,7 +1483,6 @@ export default function SupplierPortal() {
               { required: true },
               { min: 8 },
               { pattern: /[A-Z]/, message: 'Must include an uppercase letter' },
-              { pattern: /[a-z]/, message: 'Must include a lowercase letter' },
               { pattern: /\d/, message: 'Must include a number' },
             ]}
           >

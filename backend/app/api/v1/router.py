@@ -327,7 +327,7 @@ async def stock_balance_summary_alias(
     from app.models.stock import StockBalance
     from app.models.master import Item as _Item
     from app.models.warehouse import Batch as _Batch
-    from app.utils.dependencies import user_is_managerial, user_warehouse_ids
+    from app.utils.dependencies import get_user_warehouse_scope_ids
     q_total_stmt = select(StockBalance.item_id, StockBalance.warehouse_id).distinct()
     q_value = select(func.coalesce(func.sum(StockBalance.stock_value), 0))
     today = _date.today()
@@ -349,23 +349,18 @@ async def stock_balance_summary_alias(
             StockBalance.total_qty > 0,
         )
     )
-    from app.utils.dependencies import get_user_role_codes, get_warehouse_and_descendants
-    role_codes = await get_user_role_codes(db, current_user.id)
-    is_admin = bool({"super_admin", "admin"} & set(role_codes))
-    assigned_whs = await user_warehouse_ids(db, current_user.id)
-
-    if not is_admin:
-        if assigned_whs:
-            scoped = await get_warehouse_and_descendants(db, assigned_whs)
-            q_total_stmt = q_total_stmt.where(StockBalance.warehouse_id.in_(scoped))
-            q_value = q_value.where(StockBalance.warehouse_id.in_(scoped))
-            q_low = q_low.where(StockBalance.warehouse_id.in_(scoped))
-            q_exp = q_exp.where(StockBalance.warehouse_id.in_(scoped))
-        else:
-            is_managerial = await user_is_managerial(db, current_user.id)
-            if not is_managerial:
-                return {"total_items": 0, "total_value": 0.0, "total_stock_value": 0.0,
-                        "low_stock_alerts": 0, "expiring_soon": 0}
+    scoped = await get_user_warehouse_scope_ids(
+        db,
+        current_user.id,
+        exclude_virtual=True,
+    )
+    if not scoped:
+        return {"total_items": 0, "total_value": 0.0, "total_stock_value": 0.0,
+                "low_stock_alerts": 0, "expiring_soon": 0}
+    q_total_stmt = q_total_stmt.where(StockBalance.warehouse_id.in_(scoped))
+    q_value = q_value.where(StockBalance.warehouse_id.in_(scoped))
+    q_low = q_low.where(StockBalance.warehouse_id.in_(scoped))
+    q_exp = q_exp.where(StockBalance.warehouse_id.in_(scoped))
     total = (await db.execute(select(func.count()).select_from(q_total_stmt.subquery()))).scalar() or 0
     value = (await db.execute(q_value)).scalar() or 0
     try:

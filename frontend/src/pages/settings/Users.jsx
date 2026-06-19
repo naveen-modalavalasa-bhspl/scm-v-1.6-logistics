@@ -538,7 +538,6 @@ const Users = () => {
                 validator: (_, value) => {
                   if (!value) return Promise.resolve();
                   if (!/[A-Z]/.test(value)) return Promise.reject(new Error('Must include an uppercase letter'));
-                  if (!/[a-z]/.test(value)) return Promise.reject(new Error('Must include a lowercase letter'));
                   if (!/\d/.test(value)) return Promise.reject(new Error('Must include a digit'));
                   if (!/[!@#$%^&*(),.?":{}|<>]/.test(value)) return Promise.reject(new Error('Must include a special character'));
                   return Promise.resolve();

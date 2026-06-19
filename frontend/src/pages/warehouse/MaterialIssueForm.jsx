@@ -15,6 +15,7 @@ import StatusTag from '../../components/StatusTag';
 import ItemSelector from '../../components/ItemSelector';
 import SerialNumbersModal from '../../components/SerialNumbersModal';
 import api from '../../config/api';
+import useAuthStore from '../../store/authStore';
 import {
   formatDate, formatCurrency, formatNumber, getErrorMessage,
   formatDateForAPI,
@@ -30,6 +31,7 @@ const MaterialIssueForm = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const isNew = !id || id === 'new';
+  const user = useAuthStore((s) => s.user);
 
   const [form] = Form.useForm();
   const [loading, setLoading] = useState(!isNew);
@@ -500,6 +502,27 @@ const MaterialIssueForm = () => {
       }
     }
   }, [id, isNew, fetchRecord, loadLookups, loadIndentOptions, loadMROptions, form, location.search, prefillFromIndent]);
+
+  useEffect(() => {
+    if (!isNew || warehouses.length === 0) return;
+    if (form.getFieldValue('warehouse_id') || form.getFieldValue('indent_id')) return;
+
+    const queryParams = new URLSearchParams(location.search);
+    if (queryParams.get('indent_id')) return;
+
+    const assignedWarehouseId = Number(user?.warehouse_id);
+    const assignedWarehouseOption = warehouses.find(
+      (warehouse) => Number(warehouse.value) === assignedWarehouseId
+    );
+    const defaultWarehouseId = assignedWarehouseOption
+      ? assignedWarehouseOption.value
+      : (warehouses.length === 1 ? warehouses[0].value : null);
+
+    if (!defaultWarehouseId) return;
+
+    form.setFieldsValue({ warehouse_id: defaultWarehouseId });
+    loadIndentOptions();
+  }, [form, isNew, loadIndentOptions, location.search, user?.warehouse_id, warehouses]);
 
   // --- Actions ---
   const handleIssue = async () => {

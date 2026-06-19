@@ -644,14 +644,6 @@ async def create_grn(
     else:
         grn.status = "pending_qi"
 
-    # BUG-INV-125: honor "save as draft" — was always force-bumped to
-    # pending_qi, even when the FE clearly asked for draft. Now if the caller
-    # asks for draft we respect it and skip the auto-QI creation block below.
-    if getattr(payload, "is_draft", False):
-        grn.status = "draft"
-    else:
-        grn.status = "pending_qi"
-
     # Update PO status
     if payload.po_id:
         po_result = await db.execute(select(PurchaseOrder).where(PurchaseOrder.id == payload.po_id))
@@ -2619,11 +2611,13 @@ async def create_material_issue(
     _role_codes = await _get_role_codes(db, current_user.id)
     if not ({"super_admin", "admin"} & set(_role_codes)):
         _wh_ids = await _user_wh_ids(db, current_user.id)
-        if payload.warehouse_id not in _wh_ids:
+        if not _wh_ids or payload.warehouse_id not in _wh_ids:
             raise HTTPException(
                 status_code=403,
                 detail="You are not authorised to issue from this warehouse",
             )
+
+
 
     # PATIENT SAFETY: block issuing expired medicine batches.
     # BUG-INV-046: use <= today (a batch expiring TODAY is already unusable —
@@ -4801,26 +4795,32 @@ async def list_warehouses(
     # dropdowns and on the warehouse picker, even though stock queries
     # against unauthorized warehouses are rejected — confusing UX and a
     # listing-side privilege leak.
-    from app.utils.dependencies import user_is_managerial, user_warehouse_ids, get_user_role_codes
+    from app.utils.dependencies import get_user_warehouse_scope_ids
 
     # When user_id is explicitly provided, scope to that user's assignments.
     # This lets the frontend (e.g. IndentForm) fetch a scoped list even for
     # managerial/fulfillment roles that normally see every warehouse.
     if user_id is not None:
-        scoped_wh = await user_warehouse_ids(db, user_id)
+        scoped_wh = await get_user_warehouse_scope_ids(
+            db,
+            user_id,
+            super_admin_all=False,
+            exclude_virtual=exclude_virtual,
+        )
         if not scoped_wh:
             return []
         query = query.where(Warehouse.id.in_(scoped_wh))
     else:
-        # Default scope: non-managerial, non-fulfillment users see only their
-        # assigned warehouses. Managerial and fulfillment roles see all.
-        role_codes = set(await get_user_role_codes(db, current_user.id))
-        is_fulfillment = bool({"store_keeper", "storekeeper", "warehouse_manager"} & role_codes)
-        if not await user_is_managerial(db, current_user.id) and not is_fulfillment:
-            scoped_wh = await user_warehouse_ids(db, current_user.id)
-            if not scoped_wh:
-                return []
-            query = query.where(Warehouse.id.in_(scoped_wh))
+        # Default scope: stock/transaction users see their assigned warehouses
+        # plus every active child/descendant warehouse. super_admin sees all.
+        scoped_wh = await get_user_warehouse_scope_ids(
+            db,
+            current_user.id,
+            exclude_virtual=exclude_virtual,
+        )
+        if not scoped_wh:
+            return []
+        query = query.where(Warehouse.id.in_(scoped_wh))
 
     result = await db.execute(query)
     whs = result.scalars().all()
