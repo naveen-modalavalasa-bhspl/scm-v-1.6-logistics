@@ -1154,6 +1154,7 @@ class ProjectMasterResponse(BaseModel):
 class OfficeCreate(BaseModel):
     name: str
     level: Optional[str] = None
+    parent_office_id: Optional[int] = None
     country: Optional[str] = None
     state: Optional[str] = None
     district: Optional[str] = None
@@ -1162,6 +1163,7 @@ class OfficeCreate(BaseModel):
     cluster_type: Optional[str] = None
     specific_location: Optional[str] = None
     address: Optional[str] = None
+
 
     @field_validator("name")
     @classmethod
@@ -1181,7 +1183,9 @@ class OfficeCreate(BaseModel):
 
 class OfficeResponse(OfficeCreate):
     id: int
+    parent_office_name: Optional[str] = None
     model_config = {"from_attributes": True}
+
 
 
 class PositionCreate(BaseModel):

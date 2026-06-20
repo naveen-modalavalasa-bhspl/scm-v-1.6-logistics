@@ -52,6 +52,11 @@ class Office(Base):
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     name = Column(String(255), unique=True, nullable=False)
     level = Column(String(50))
+
+    # Office hierarchy (HRMS "office reporting to"), nullable so masters
+    # can be imported even when the external payload doesn't include hierarchy.
+    parent_office_id = Column(BigInteger, ForeignKey("offices.id", ondelete="SET NULL"), nullable=True)
+
     country = Column(String(100))
     state = Column(String(100))
     district = Column(String(100))
@@ -63,7 +68,9 @@ class Office(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
+    parent_office = relationship("Office", remote_side=[id], backref="child_offices")
     positions = relationship("Position", back_populates="office")
+
 
 
 class Position(Base):

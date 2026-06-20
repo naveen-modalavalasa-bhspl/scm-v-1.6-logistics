@@ -476,11 +476,44 @@ const IndentForm = () => {
         <ItemSelector
           value={val}
           onChange={(itemId, item) => {
-            updateItemRow(record.key, 'item_id', itemId);
-            if (item) {
-              updateItemRow(record.key, 'item_name', item.item_name || item.name || '');
-              updateItemRow(record.key, 'uom_id', item.primary_uom_id || null);
-              updateItemRow(record.key, 'uom', item.primary_uom?.name || item.primary_uom_name || '');
+            if (!itemId) {
+              setIndentItems((prev) =>
+                prev.map((it) =>
+                  it.key === record.key
+                    ? { ...it, item_id: null, item_name: '', uom_id: null, uom: '' }
+                    : it
+                )
+              );
+              return;
+            }
+
+            const duplicateIndex = indentItems.findIndex((it) => it.item_id === itemId && it.key !== record.key);
+            if (duplicateIndex !== -1) {
+              message.warning('Item already exists in the list. Added quantity to the existing item.');
+              const duplicateItem = indentItems[duplicateIndex];
+              const additionalQty = record.requested_qty || 1;
+              const newQty = (duplicateItem.requested_qty || 0) + additionalQty;
+
+              setIndentItems((prev) => {
+                const updated = prev.map((it) =>
+                  it.key === duplicateItem.key ? { ...it, requested_qty: newQty } : it
+                );
+                return updated.filter((it) => it.key !== record.key);
+              });
+            } else {
+              setIndentItems((prev) =>
+                prev.map((it) =>
+                  it.key === record.key
+                    ? {
+                        ...it,
+                        item_id: itemId,
+                        item_name: item ? (item.item_name || item.name || '') : '',
+                        uom_id: item ? (item.primary_uom_id || null) : null,
+                        uom: item ? (item.primary_uom?.name || item.primary_uom_name || '') : '',
+                      }
+                    : it
+                )
+              );
             }
           }}
           style={{ width: '100%' }}

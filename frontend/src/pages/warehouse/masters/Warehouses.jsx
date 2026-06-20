@@ -42,6 +42,7 @@ const LEVEL_LABELS = {
 const Warehouses = () => {
   const navigate = useNavigate();
   const [warehouses, setWarehouses] = useState([]);
+  const [searchText, setSearchText] = useState('');
   const [loading, setLoading] = useState(false);
   const [selectedWarehouse, setSelectedWarehouse] = useState(null);
   const [treeData, setTreeData] = useState([]);
@@ -389,7 +390,20 @@ const Warehouses = () => {
     );
   };
 
-
+  const filteredWarehouses = warehouses.filter((wh) => {
+    const searchLower = searchText.toLowerCase().trim();
+    if (!searchLower) return true;
+    const name = (wh.name || wh.warehouse_name || '').toLowerCase();
+    const code = (wh.code || '').toLowerCase();
+    const type = (wh.warehouse_type || '').toLowerCase();
+    const parentName = (wh.parent_name || '').toLowerCase();
+    return (
+      name.includes(searchLower) ||
+      code.includes(searchLower) ||
+      type.includes(searchLower) ||
+      parentName.includes(searchLower)
+    );
+  });
 
   return (
     <div>
@@ -414,108 +428,117 @@ const Warehouses = () => {
               <Button size="small" icon={<ReloadOutlined />} onClick={fetchWarehouses} loading={loading} />
             }
           >
+            <Input
+              placeholder="Search warehouses..."
+              value={searchText}
+              onChange={(e) => setSearchText(e.target.value)}
+              style={{ marginBottom: 12 }}
+              allowClear
+            />
             {loading ? (
               <div style={{ textAlign: 'center', padding: 40 }}><Spin /></div>
-            ) : warehouses.length === 0 ? (
-              <Empty description="No warehouses" />
+            ) : filteredWarehouses.length === 0 ? (
+              <Empty description="No warehouses found" />
             ) : (
-              <List
-                size="small"
-                dataSource={warehouses}
-                renderItem={(wh) => (
-                  <List.Item
-                    onClick={() => setSelectedWarehouse(wh)}
-                    style={{
-                      cursor: 'pointer',
-                      background: selectedWarehouse?.id === wh.id ? '#e6f7ff' : 'transparent',
-                      borderRadius: 4,
-                      padding: '8px 12px',
-                      marginBottom: 4,
-                    }}
-                    actions={[
-                      <Tooltip key="floor-plan" title="View 2D Floor Plan">
+              <div style={{ maxHeight: '500px', overflowY: 'auto', paddingRight: '4px' }}>
+                <List
+                  size="small"
+                  dataSource={filteredWarehouses}
+                  renderItem={(wh) => (
+                    <List.Item
+                      onClick={() => setSelectedWarehouse(wh)}
+                      style={{
+                        cursor: 'pointer',
+                        background: selectedWarehouse?.id === wh.id ? '#e6f7ff' : 'transparent',
+                        borderRadius: 4,
+                        padding: '8px 12px',
+                        marginBottom: 4,
+                      }}
+                      actions={[
+                        <Tooltip key="floor-plan" title="View 2D Floor Plan">
+                          <Button
+                            type="text"
+                            size="small"
+                            icon={<BlockOutlined />}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              navigate(`/warehouse/floor-plan?warehouse_id=${wh.id}`);
+                            }}
+                          />
+                        </Tooltip>,
                         <Button
+                          key="edit"
                           type="text"
                           size="small"
-                          icon={<BlockOutlined />}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            navigate(`/warehouse/floor-plan?warehouse_id=${wh.id}`);
-                          }}
-                        />
-                      </Tooltip>,
-                      <Button
-                        key="edit"
-                        type="text"
-                        size="small"
-                        icon={<EditOutlined />}
-                        onClick={(e) => { e.stopPropagation(); handleEditWarehouse(wh); }}
-                      />,
-                      <Popconfirm
-                        key="del"
-                        title="Delete warehouse?"
-                        onConfirm={() => handleDeleteWarehouse(wh.id)}
-                        onCancel={(e) => { if (e) e.stopPropagation(); }}
-                        okButtonProps={{ danger: true }}
-                      >
-                        <Button
-                          type="text"
-                          size="small"
-                          danger
-                          icon={<DeleteOutlined />}
-                          onClick={(e) => e.stopPropagation()}
-                        />
-                      </Popconfirm>,
-                    ]}
-                  >
-                    <List.Item.Meta
-                      avatar={<HomeOutlined style={{ fontSize: 18, color: '#eb2f96', marginTop: 4 }} />}
-                      title={
-                        <Tooltip title={wh.name || wh.warehouse_name} placement="topLeft">
-                          <div style={{
-                            fontWeight: 600,
-                            fontSize: '13px',
-                            color: '#262626',
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap',
-                          }}>
-                            {wh.name || wh.warehouse_name}
-                          </div>
-                        </Tooltip>
-                      }
-                      description={
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '4px', overflow: 'hidden' }}>
-                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', alignItems: 'center' }}>
-                            {wh.warehouse_type && (
-                              <Tag style={{ fontSize: '10px', lineHeight: '16px', margin: 0, padding: '0 4px', textTransform: 'capitalize' }}>
-                                {wh.warehouse_type}
-                              </Tag>
-                            )}
-                            {wh.code && (
-                              <span style={{ fontSize: '11px', color: '#8c8c8c', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100px' }} title={wh.code}>
-                                {wh.code}
-                              </span>
-                            )}
-                          </div>
-                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', alignItems: 'center' }}>
-                            {wh.parent_name && (
-                              <Tooltip title={`Parent: ${wh.parent_name}`} placement="topLeft">
-                                <Tag color="purple" style={{ fontSize: '10px', lineHeight: '16px', margin: 0, padding: '0 4px', maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                  Parent: {wh.parent_name}
+                          icon={<EditOutlined />}
+                          onClick={(e) => { e.stopPropagation(); handleEditWarehouse(wh); }}
+                        />,
+                        <Popconfirm
+                          key="del"
+                          title="Delete warehouse?"
+                          onConfirm={() => handleDeleteWarehouse(wh.id)}
+                          onCancel={(e) => { if (e) e.stopPropagation(); }}
+                          okButtonProps={{ danger: true }}
+                        >
+                          <Button
+                            type="text"
+                            size="small"
+                            danger
+                            icon={<DeleteOutlined />}
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                        </Popconfirm>,
+                      ]}
+                    >
+                      <List.Item.Meta
+                        avatar={<HomeOutlined style={{ fontSize: 18, color: '#eb2f96', marginTop: 4 }} />}
+                        title={
+                          <Tooltip title={wh.name || wh.warehouse_name} placement="topLeft">
+                            <div style={{
+                              fontWeight: 600,
+                              fontSize: '13px',
+                              color: '#262626',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                            }}>
+                              {wh.name || wh.warehouse_name}
+                            </div>
+                          </Tooltip>
+                        }
+                        description={
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '4px', overflow: 'hidden' }}>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', alignItems: 'center' }}>
+                              {wh.warehouse_type && (
+                                <Tag style={{ fontSize: '10px', lineHeight: '16px', margin: 0, padding: '0 4px', textTransform: 'capitalize' }}>
+                                  {wh.warehouse_type}
                                 </Tag>
-                              </Tooltip>
-                            )}
-                            <Tag color={wh.status === 'active' || wh.is_active ? 'green' : 'red'} style={{ fontSize: '10px', lineHeight: '16px', margin: 0, padding: '0 4px' }}>
-                              {wh.status === 'active' || wh.is_active ? 'Active' : 'Inactive'}
-                            </Tag>
+                              )}
+                              {wh.code && (
+                                <span style={{ fontSize: '11px', color: '#8c8c8c', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100px' }} title={wh.code}>
+                                  {wh.code}
+                                </span>
+                              )}
+                            </div>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', alignItems: 'center' }}>
+                              {wh.parent_name && (
+                                <Tooltip title={`Parent: ${wh.parent_name}`} placement="topLeft">
+                                  <Tag color="purple" style={{ fontSize: '10px', lineHeight: '16px', margin: 0, padding: '0 4px', maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                    Parent: {wh.parent_name}
+                                  </Tag>
+                                </Tooltip>
+                              )}
+                              <Tag color={wh.status === 'active' || wh.is_active ? 'green' : 'red'} style={{ fontSize: '10px', lineHeight: '16px', margin: 0, padding: '0 4px' }}>
+                                {wh.status === 'active' || wh.is_active ? 'Active' : 'Inactive'}
+                              </Tag>
+                            </div>
                           </div>
-                        </div>
-                      }
-                    />
-                  </List.Item>
-                )}
-              />
+                        }
+                      />
+                    </List.Item>
+                  )}
+                />
+              </div>
             )}
           </Card>
         </Col>
