@@ -4250,7 +4250,7 @@ async def complete_purchase_return(
 from app.models.dispatch import GatePass
 from app.schemas.warehouse import GatePassCreate, GatePassResponse
 
-@router.get("/gate-entries/{gp_id}", response_model=GatePassResponse)
+@router.get("/gate-entries/{gp_id}")
 async def get_gate_entry(gp_id: int, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     result = await db.execute(
         select(GatePass)
@@ -4263,15 +4263,27 @@ async def get_gate_entry(gp_id: int, db: AsyncSession = Depends(get_db), current
     gp = result.scalar_one_or_none()
     if not gp:
         raise HTTPException(status_code=404, detail="Gate entry not found")
-    
-    data = GatePassResponse.model_validate(gp)
+
+    data = GatePassResponse.model_validate(gp).model_dump()
+    data["warehouse_name"] = gp.warehouse.name if gp.warehouse else None
+    data["created_by_name"] = None  # no created_by FK currently
+
+    # Resolve linked service order number
     if gp.grn_id:
         from app.models.logistics import LogisticsServiceOrder
         so_res = await db.execute(select(LogisticsServiceOrder).where(LogisticsServiceOrder.id == gp.grn_id))
         so = so_res.scalar_one_or_none()
         if so:
-            data.so_id = so.id
-            data.so_number = so.so_number
+            data["so_id"] = so.id
+            data["so_number"] = so.so_number
+
+    # Resolve referenced inward gate pass number
+    if gp.ref_gate_pass_id:
+        ref_res = await db.execute(select(GatePass).where(GatePass.id == gp.ref_gate_pass_id))
+        ref_gp = ref_res.scalar_one_or_none()
+        if ref_gp:
+            data["ref_gate_pass_number"] = ref_gp.gate_pass_number
+
     return data
 
 @router.post("/gate-entries/{gp_id}/cancel")
@@ -4331,7 +4343,17 @@ async def list_gate_entries(
         data["so_number"] = so_map.get(e.grn_id)
         data["so_id"] = e.grn_id if e.grn_id in so_map else None
         data["warehouse_name"] = e.warehouse.name if e.warehouse else None
+        data["ref_gate_pass_id"] = e.ref_gate_pass_id
         items_list.append(data)
+
+    # Bulk-resolve ref_gate_pass_number for outward entries that have a ref
+    ref_ids = [e.ref_gate_pass_id for e in entries if e.ref_gate_pass_id]
+    if ref_ids:
+        ref_result = await db.execute(select(GatePass.id, GatePass.gate_pass_number).where(GatePass.id.in_(ref_ids)))
+        ref_map = {row.id: row.gate_pass_number for row in ref_result.all()}
+        for data in items_list:
+            if data.get("ref_gate_pass_id"):
+                data["ref_gate_pass_number"] = ref_map.get(data["ref_gate_pass_id"])
 
     return build_paginated_response(items_list, total, page, page_size)
 
@@ -4343,6 +4365,16 @@ async def create_gate_entry(
 ):
     doc_type = "gate_pass_inward" if payload.gate_type == "inward" else "gate_pass_outward"
     gp_number = await generate_number(db, "warehouse", doc_type, pad_length=8)
+
+    # Validate ref_gate_pass_id if provided — must be an inward gate pass
+    if payload.ref_gate_pass_id:
+        ref_res = await db.execute(select(GatePass).where(GatePass.id == payload.ref_gate_pass_id))
+        ref_gp = ref_res.scalar_one_or_none()
+        if not ref_gp:
+            raise HTTPException(status_code=400, detail="Referenced gate pass not found")
+        if ref_gp.gate_type != "inward":
+            raise HTTPException(status_code=400, detail="Reference gate pass must be an inward gate pass")
+
     gp = GatePass(
         gate_pass_number=gp_number,
         gate_type=payload.gate_type,
@@ -4356,6 +4388,7 @@ async def create_gate_entry(
         remarks=payload.remarks,
         visitor_type=payload.visitor_type,
         visitor_details=payload.visitor_details,
+        ref_gate_pass_id=payload.ref_gate_pass_id or None,
         status="pending",
         created_at=datetime.now(timezone.utc),
     )
