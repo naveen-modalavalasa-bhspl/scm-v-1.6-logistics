@@ -46,7 +46,7 @@ ack_router = APIRouter()
 @router.get("")
 async def list_indents(
     page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
+    page_size: int = Query(20, ge=1, le=500),
     search: str = Query(None),
     status: str = Query(None),
     indent_type: str = Query(None),

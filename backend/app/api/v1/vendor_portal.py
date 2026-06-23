@@ -144,7 +144,7 @@ async def supplier_list_rfqs(
             "mr_number": mr.mr_number if mr else None,
             "rfq_no": q.rfq_number or q.quotation_number,
             "department": mr.department if mr else None,
-            "priority": mr.priority if mr else None,
+            "priority": "critical" if mr and mr.priority == "urgent" else (mr.priority if mr else None),
             "required_date": mr.required_date if mr else None,
             "request_date": mr.request_date if mr else None,
             "status": mr.status if mr else q.status,

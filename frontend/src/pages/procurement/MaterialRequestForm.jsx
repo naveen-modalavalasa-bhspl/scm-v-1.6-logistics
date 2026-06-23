@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   Button, Form, Input, InputNumber, Select, Space, DatePicker,
   message, Row, Col, Table, Card, Descriptions, Tabs, Divider,
-  Typography, Tooltip, Tag, Empty, Spin, Popconfirm,
+  Typography, Tooltip, Tag, Empty, Spin, Popconfirm, App,
 } from 'antd';
 import {
   PlusOutlined, ArrowLeftOutlined, SendOutlined, EditOutlined,
@@ -44,6 +44,7 @@ const PRIORITY_COLORS = { low: 'blue', medium: 'gold', high: 'orange', critical:
 const MR_STATUS_FLOW = ['draft', 'pending_approval', 'approved', 'partially_ordered', 'ordered'];
 
 const MaterialRequestForm = () => {
+  const { message } = App.useApp();
   const { id } = useParams();
   const navigate = useNavigate();
   const location = useLocation();

@@ -66,8 +66,9 @@ async def list_material_requests(
         query = query.where(MaterialRequest.status == status)
         count_query = count_query.where(MaterialRequest.status == status)
     if priority:
-        query = query.where(MaterialRequest.priority == priority)
-        count_query = count_query.where(MaterialRequest.priority == priority)
+        db_priority = "urgent" if priority == "critical" else priority
+        query = query.where(MaterialRequest.priority == db_priority)
+        count_query = count_query.where(MaterialRequest.priority == db_priority)
     if request_type:
         query = query.where(MaterialRequest.request_type == request_type)
         count_query = count_query.where(MaterialRequest.request_type == request_type)
@@ -90,6 +91,8 @@ async def list_material_requests(
     response_items = []
     for mr in mrs:
         data = MRResponse.model_validate(mr).model_dump()
+        if data.get("priority") == "urgent":
+            data["priority"] = "critical"
         # Resolve requested_by to user name
         if mr.requested_by and mr.requested_by in user_map:
             data["requested_by_name"] = user_map[mr.requested_by]
@@ -121,6 +124,8 @@ async def get_material_request(
     if not mr:
         raise HTTPException(status_code=404, detail="Material request not found")
     data = MRResponse.model_validate(mr).model_dump()
+    if data.get("priority") == "urgent":
+        data["priority"] = "critical"
 
     # Warehouse name
     if mr.warehouse_id:
@@ -186,7 +191,7 @@ async def create_material_request(
             if payload.request_date else datetime.now(timezone.utc)
         ),
         required_date=payload.required_date,
-        priority=payload.priority,
+        priority="urgent" if payload.priority == "critical" else (payload.priority or "medium"),
         remarks=payload.remarks,
     )
     db.add(mr)
@@ -225,6 +230,8 @@ async def update_material_request(
         raise HTTPException(status_code=404, detail="Material request not found")
 
     for k, v in payload.model_dump(exclude_unset=True).items():
+        if k == "priority" and v == "critical":
+            v = "urgent"
         setattr(mr, k, v)
     await db.flush()
     return {"success": True, "message": "Material request updated"}
