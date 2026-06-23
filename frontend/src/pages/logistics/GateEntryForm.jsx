@@ -33,6 +33,7 @@ const GateEntryForm = () => {
   const [entry, setEntry] = useState(null);
   const [warehouses, setWarehouses] = useState([]);
   const [serviceOrderOptions, setServiceOrderOptions] = useState([]);
+  const [inwardPassOptions, setInwardPassOptions] = useState([]);
   const [gateType, setGateType] = useState('inward');
   const [visitorType, setVisitorType] = useState('employee');
 
@@ -78,6 +79,30 @@ const GateEntryForm = () => {
     }
   }, []);
 
+  const loadInwardPassOptions = useCallback(async (search = '') => {
+    try {
+      const res = await api.get('/warehouse/gate-entries', {
+        params: { gate_type: 'inward', page_size: 100 },
+      });
+      const items = res.data?.items || res.data?.data || [];
+      const filtered = search
+        ? items.filter((p) =>
+            p.gate_pass_number?.toLowerCase().includes(search.toLowerCase()) ||
+            p.person_name?.toLowerCase().includes(search.toLowerCase()) ||
+            p.vehicle_number?.toLowerCase().includes(search.toLowerCase())
+          )
+        : items;
+      setInwardPassOptions(
+        filtered.map((p) => ({
+          label: `${p.gate_pass_number}${p.person_name ? ` – ${p.person_name}` : ''}${p.vehicle_number ? ` [${p.vehicle_number}]` : ''}`,
+          value: p.id,
+        }))
+      );
+    } catch {
+      // silent
+    }
+  }, []);
+
   // --- Load existing entry ---
   const fetchEntry = useCallback(async () => {
     if (isNew) return;
@@ -100,13 +125,14 @@ const GateEntryForm = () => {
     if (isNew) {
       loadWarehouses();
       loadServiceOrderOptions();
+      loadInwardPassOptions();
       const defaultType = getDefaultGateType();
       setGateType(defaultType);
       form.setFieldsValue({ gate_type: defaultType });
     } else {
       fetchEntry();
     }
-  }, [isNew, fetchEntry, loadWarehouses, loadServiceOrderOptions]);
+  }, [isNew, fetchEntry, loadWarehouses, loadServiceOrderOptions, loadInwardPassOptions]);
 
   const getQueryParam = (key) => {
     const params = new URLSearchParams(location.search);
@@ -172,6 +198,7 @@ const GateEntryForm = () => {
         remarks: values.remarks || null,
         visitor_type: values.visitor_type || null,
         visitor_details: visitor_details,
+        ref_gate_pass_id: values.ref_gate_pass_id || null,
       };
 
       const res = await api.post('/warehouse/gate-entries', payload);
@@ -295,6 +322,13 @@ const GateEntryForm = () => {
             <Descriptions.Item label="Warehouse">
               {entry.warehouse_name || '-'}
             </Descriptions.Item>
+            {entry.gate_type === 'outward' && entry.ref_gate_pass_number && (
+              <Descriptions.Item label="Reference Gate Pass (Inward)">
+                <Tag color="blue" icon={<LoginOutlined />}>
+                  {entry.ref_gate_pass_number}
+                </Tag>
+              </Descriptions.Item>
+            )}
             {entry.so_number && (
               <Descriptions.Item label="Service Order Reference">
                 {entry.so_number}
@@ -484,7 +518,8 @@ const GateEntryForm = () => {
                   ]}
                   onChange={(v) => {
                     setGateType(v);
-                    form.setFieldsValue({ so_id: undefined });
+                    form.setFieldsValue({ so_id: undefined, ref_gate_pass_id: undefined });
+                    if (v === 'outward') loadInwardPassOptions();
                   }}
                 />
               </Form.Item>
@@ -548,6 +583,28 @@ const GateEntryForm = () => {
                         });
                       }
                     }}
+                  />
+                </Form.Item>
+              </Col>
+            </Row>
+          )}
+
+          {/* Reference Gate Pass (Inward) — only shown for outward gate passes */}
+          {gateType === 'outward' && (
+            <Row gutter={24}>
+              <Col xs={24} sm={12} md={10}>
+                <Form.Item
+                  name="ref_gate_pass_id"
+                  label="Reference Gate Pass (Inward)"
+                  tooltip="Optionally link the inward gate pass that this outward movement is related to"
+                >
+                  <Select
+                    options={inwardPassOptions}
+                    placeholder="Search and select an inward gate pass (optional)"
+                    showSearch
+                    optionFilterProp="label"
+                    allowClear
+                    onSearch={(v) => loadInwardPassOptions(v)}
                   />
                 </Form.Item>
               </Col>

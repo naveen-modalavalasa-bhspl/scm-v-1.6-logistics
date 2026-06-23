@@ -96,10 +96,19 @@ class GatePass(Base):
     remarks = Column(Text)
     visitor_type = Column(String(50), nullable=True)
     visitor_details = Column(JSON, nullable=True)
+    # Links an outward gate pass back to the originating inward gate pass.
+    ref_gate_pass_id = Column(BigInteger, ForeignKey("gate_passes.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     dispatch_order = relationship("DispatchOrder")
     warehouse = relationship("Warehouse")
+    ref_gate_pass = relationship(
+        "GatePass",
+        foreign_keys="[GatePass.ref_gate_pass_id]",
+        primaryjoin="GatePass.ref_gate_pass_id == GatePass.id",
+        remote_side="GatePass.id",
+        uselist=False,
+    )
 
 
 class DispatchOrderItem(Base):

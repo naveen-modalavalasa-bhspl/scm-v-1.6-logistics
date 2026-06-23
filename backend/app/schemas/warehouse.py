@@ -632,6 +632,8 @@ class GatePassCreate(BaseModel):
     remarks: Optional[str] = None
     visitor_type: Optional[str] = None
     visitor_details: Optional[dict] = None
+    # Optional: link this outward gate pass to the originating inward gate pass
+    ref_gate_pass_id: Optional[int] = None
 
     @field_validator("material_description")
     @classmethod
@@ -659,6 +661,10 @@ class GatePassResponse(BaseModel):
     so_number: Optional[str] = None
     visitor_type: Optional[str] = None
     visitor_details: Optional[dict] = None
+    ref_gate_pass_id: Optional[int] = None
+    ref_gate_pass_number: Optional[str] = None
+    warehouse_name: Optional[str] = None
+    created_by_name: Optional[str] = None
     model_config = {"from_attributes": True}
 
 # ---- Sales Order ----
