@@ -911,7 +911,8 @@ async def create_gate_pass(
                         f"not match dispatch vehicle '{d.vehicle_number}'"
                     ),
                 )
-    gp_number = await generate_number(db, "warehouse", "gate_pass")
+    doc_type = "gate_pass_inward" if payload.gate_type == "inward" else "gate_pass_outward"
+    gp_number = await generate_number(db, "warehouse", doc_type, pad_length=8)
     from app.services.barcode_service import generate_barcode_value
     barcode_val = generate_barcode_value("gate_pass", 0)
 
@@ -925,6 +926,8 @@ async def create_gate_pass(
         person_name=payload.person_name,
         person_contact=payload.person_contact,
         material_description=payload.material_description,
+        visitor_type=payload.visitor_type,
+        visitor_details=payload.visitor_details,
         # BUG-ISS-083 — persist security_guard at create time when supplied.
         security_guard=getattr(payload, "security_guard", None),
         barcode=barcode_val,

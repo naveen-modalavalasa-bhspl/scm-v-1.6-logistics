@@ -38,6 +38,8 @@ DOC_TOKEN_MAP = {
     "unapproved_indent": "FA-IND",
     "unapproved_material_request": "FA-MR",
     "bom": "BOM",
+    "gate_pass_inward": "GP-IN",
+    "gate_pass_outward": "GP-OUT",
 }
 
 DEFAULT_ORG_PREFIX = "BHSPL"
@@ -80,6 +82,12 @@ async def generate_number_v2(
     series = result.scalar_one_or_none()
 
     if not series:
+        format_tmpl = None
+        if document_type == "gate_pass_inward":
+            format_tmpl = "GP-{fy}-BHSPL-In-{seq}"
+        elif document_type == "gate_pass_outward":
+            format_tmpl = "GP-{fy}-BHSPL-Out-{seq}"
+
         series = NumberSeries(
             prefix=token,
             module=module,
@@ -88,6 +96,7 @@ async def generate_number_v2(
             current_number=0,
             pad_length=pad_length,
             org_prefix=org_prefix,
+            format_template=format_tmpl,
         )
         db.add(series)
     else:

@@ -12,6 +12,7 @@ import {
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { useReactToPrint } from 'react-to-print';
+import { useNavigate, useLocation } from 'react-router-dom';
 import PageHeader from '../../components/PageHeader';
 import DataTable from '../../components/DataTable';
 import StatusTag from '../../components/StatusTag';
@@ -36,6 +37,9 @@ const GATE_STATUSES = [
 ];
 
 const GateEntry = () => {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const modulePrefix = location.pathname.startsWith('/warehouse') ? '/warehouse' : '/logistics';
   const [activeTab, setActiveTab] = useState('inward');
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [viewModalOpen, setViewModalOpen] = useState(false);
@@ -128,14 +132,7 @@ const GateEntry = () => {
 
   // --- Open Drawer ---
   const handleAdd = () => {
-    form.resetFields();
-    const type = activeTab;
-    setGateType(type);
-    form.setFieldsValue({ gate_type: type });
-    loadLookups();
-    if (type === 'inward') loadServiceOrderOptions();
-    if (type === 'outward') loadDispatchOptions();
-    setDrawerOpen(true);
+    navigate(`${modulePrefix}/gate-entry/new?type=${activeTab}`);
   };
 
   // --- View Detail ---
@@ -291,10 +288,26 @@ const GateEntry = () => {
       ),
     },
     {
+      title: 'Category',
+      dataIndex: 'visitor_type',
+      key: 'visitor_type',
+      width: 130,
+      render: (v) => {
+        const mapping = {
+          employee: 'Employee',
+          courier: 'Courier',
+          third_party: 'Third Party',
+          company_vehicle: 'Company Vehicle'
+        };
+        return v ? <Tag color="purple">{mapping[v] || v}</Tag> : '-';
+      },
+    },
+    {
       title: 'Reference',
       key: 'reference',
       width: 150,
       render: (_, record) => {
+        if (record.visitor_details?.reference_no) return <Text>{record.visitor_details.reference_no}</Text>;
         if (record.so_number) return <Text>{record.so_number}</Text>;
         if (record.dispatch_number) return <Text>{record.dispatch_number}</Text>;
         return '-';
@@ -682,20 +695,76 @@ const GateEntry = () => {
                   {viewData.gate_type === 'inward' ? 'Inward' : 'Outward'}
                 </Tag>
               </Descriptions.Item>
+              <Descriptions.Item label="Visitor Category">
+                <Tag color="purple">
+                  {viewData.visitor_type === 'employee' && 'Employee'}
+                  {viewData.visitor_type === 'courier' && 'Courier'}
+                  {viewData.visitor_type === 'third_party' && 'Third Party'}
+                  {viewData.visitor_type === 'company_vehicle' && 'Company Vehicle'}
+                  {!viewData.visitor_type && '-'}
+                </Tag>
+              </Descriptions.Item>
               <Descriptions.Item label="Warehouse">{viewData.warehouse_name || '-'}</Descriptions.Item>
+              <Descriptions.Item label="Vehicle No.">
+                {viewData.vehicle_number ? (
+                  <Tag icon={<CarOutlined />}>{viewData.vehicle_number}</Tag>
+                ) : '-'}
+              </Descriptions.Item>
               {viewData.so_number && (
                 <Descriptions.Item label="Service Order Reference">{viewData.so_number}</Descriptions.Item>
               )}
               {viewData.dispatch_number && (
                 <Descriptions.Item label="Dispatch Reference">{viewData.dispatch_number}</Descriptions.Item>
               )}
-              <Descriptions.Item label="Vehicle No.">
-                {viewData.vehicle_number ? (
-                  <Tag icon={<CarOutlined />}>{viewData.vehicle_number}</Tag>
-                ) : '-'}
-              </Descriptions.Item>
-              <Descriptions.Item label="Person Name">{viewData.person_name || '-'}</Descriptions.Item>
-              <Descriptions.Item label="Person Contact">{viewData.person_contact || '-'}</Descriptions.Item>
+
+              {viewData.visitor_type === 'employee' && (
+                <>
+                  <Descriptions.Item label="Employee Code (CID)">{viewData.visitor_details?.employee_code || '-'}</Descriptions.Item>
+                  <Descriptions.Item label="Employee Name">{viewData.person_name || '-'}</Descriptions.Item>
+                  {viewData.gate_type === 'outward' && (
+                    <Descriptions.Item label="Dispatch Reference" span={2}>{viewData.visitor_details?.reference_no || '-'}</Descriptions.Item>
+                  )}
+                </>
+              )}
+
+              {viewData.visitor_type === 'courier' && (
+                <>
+                  <Descriptions.Item label="Courier Company">{viewData.visitor_details?.courier_company || '-'}</Descriptions.Item>
+                  <Descriptions.Item label="Agent Name">{viewData.person_name || '-'}</Descriptions.Item>
+                  <Descriptions.Item label="Agent Contact">{viewData.person_contact || '-'}</Descriptions.Item>
+                  {viewData.gate_type === 'outward' && (
+                    <Descriptions.Item label="Dispatch Reference">{viewData.visitor_details?.reference_no || '-'}</Descriptions.Item>
+                  )}
+                </>
+              )}
+
+              {viewData.visitor_type === 'third_party' && (
+                <>
+                  <Descriptions.Item label="PO / SO Ref">{viewData.visitor_details?.reference_no || '-'}</Descriptions.Item>
+                  <Descriptions.Item label="Provider Name">{viewData.visitor_details?.provider_name || '-'}</Descriptions.Item>
+                  <Descriptions.Item label="Contact Person">{viewData.person_name || '-'}</Descriptions.Item>
+                  <Descriptions.Item label="Contact Phone">{viewData.person_contact || '-'}</Descriptions.Item>
+                </>
+              )}
+
+              {viewData.visitor_type === 'company_vehicle' && (
+                <>
+                  <Descriptions.Item label="Driver Code">{viewData.visitor_details?.driver_code || '-'}</Descriptions.Item>
+                  <Descriptions.Item label="Driver Name">{viewData.person_name || '-'}</Descriptions.Item>
+                  <Descriptions.Item label="Driver Contact">{viewData.person_contact || '-'}</Descriptions.Item>
+                  {viewData.gate_type === 'outward' && (
+                    <Descriptions.Item label="Dispatch Reference">{viewData.visitor_details?.reference_no || '-'}</Descriptions.Item>
+                  )}
+                </>
+              )}
+
+              {!viewData.visitor_type && (
+                <>
+                  <Descriptions.Item label="Person Name">{viewData.person_name || '-'}</Descriptions.Item>
+                  <Descriptions.Item label="Person Contact">{viewData.person_contact || '-'}</Descriptions.Item>
+                </>
+              )}
+
               <Descriptions.Item label="Created">{formatDateTime(viewData.created_at)}</Descriptions.Item>
             </Descriptions>
 

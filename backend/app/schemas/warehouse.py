@@ -627,21 +627,17 @@ class GatePassCreate(BaseModel):
     vehicle_number: Optional[str] = None
     person_name: Optional[str] = None
     person_contact: Optional[str] = None
-    # CR_04 — destination is mandatory on gate-pass creation. We reuse the
-    # material_description column for now (no migration needed) but enforce
-    # presence at the schema level. UI labels this field "Destination".
-    material_description: str  # destination + material info, required
-    # BUG-ISS-083 — capture the security guard who approved entry/exit so the
-    # gate-pass record is auditable. Optional at create; can also be set at
-    # complete. Backed by GatePass.security_guard column.
+    material_description: Optional[str] = None
     security_guard: Optional[str] = None
     remarks: Optional[str] = None
+    visitor_type: Optional[str] = None
+    visitor_details: Optional[dict] = None
 
     @field_validator("material_description")
     @classmethod
     def _val_destination(cls, v):
-        if not v or not str(v).strip():
-            raise ValueError("Destination is required")
+        if v is None:
+            return None
         return str(v).strip()
 
 class GatePassResponse(BaseModel):
@@ -650,12 +646,19 @@ class GatePassResponse(BaseModel):
     gate_type: str
     warehouse_id: int
     vehicle_number: Optional[str] = None
+    person_name: Optional[str] = None
+    person_contact: Optional[str] = None
+    material_description: Optional[str] = None
+    security_guard: Optional[str] = None
+    remarks: Optional[str] = None
     status: str
     gate_in_time: Optional[datetime] = None
     gate_out_time: Optional[datetime] = None
     created_at: Optional[datetime] = None
     so_id: Optional[int] = None
     so_number: Optional[str] = None
+    visitor_type: Optional[str] = None
+    visitor_details: Optional[dict] = None
     model_config = {"from_attributes": True}
 
 # ---- Sales Order ----
