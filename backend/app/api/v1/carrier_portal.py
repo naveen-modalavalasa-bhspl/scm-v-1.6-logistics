@@ -35,7 +35,7 @@ async def carrier_list_rfqs(
         .where(LogisticsRfqVendor.vendor_id == vendor_id)
         .options(
             selectinload(LogisticsRfqMaster.invited_vendors),
-            selectinload(LogisticsRfqMaster.mappings).joinedload(LogisticsRfqDispatchMapping.sdo),
+            selectinload(LogisticsRfqMaster.mappings).joinedload(LogisticsRfqDispatchMapping.sdo).selectinload(LogisticsSubDispatchOrder.materials).joinedload(LogisticsDispatchMaterial.material),
             selectinload(LogisticsRfqMaster.responses).selectinload(LogisticsRfqResponse.vehicles),
         )
         .order_by(LogisticsRfqMaster.id.desc())
@@ -72,6 +72,38 @@ async def carrier_list_rfqs(
                 ],
             }
 
+        materials_list = []
+        for mapping in r.mappings:
+            if mapping.sdo and mapping.sdo.materials:
+                for mat in mapping.sdo.materials:
+                    materials_list.append({
+                        "id": mat.id,
+                        "material_id": mat.material_id,
+                        "material_code": mat.material.item_code if mat.material else None,
+                        "material_name": mat.material.name if mat.material else None,
+                        "quantity": float(mat.quantity),
+                        "unit_of_measure": mat.unit_of_measure,
+                        "total_weight_kg": float(mat.total_weight_kg),
+                        "total_volume_cft": float(mat.total_volume_cft),
+                        "unit_price": float(mat.unit_price),
+                        "total_value": float(mat.total_value),
+                        "number_of_packages": mat.number_of_packages,
+                        "package_type": mat.package_type,
+                        "handling_instructions": mat.handling_instructions,
+                        "special_storage_condition": mat.material.special_storage_condition if mat.material else False,
+                        "storage_min_temp": float(mat.material.storage_min_temp) if (mat.material and mat.material.storage_min_temp is not None) else None,
+                        "storage_max_temp": float(mat.material.storage_max_temp) if (mat.material and mat.material.storage_max_temp is not None) else None,
+                        "storage_min_moisture": float(mat.material.storage_min_moisture) if (mat.material and mat.material.storage_min_moisture is not None) else None,
+                        "storage_max_moisture": float(mat.material.storage_max_moisture) if (mat.material and mat.material.storage_max_moisture is not None) else None,
+                        "storage_breakable": mat.material.storage_breakable if mat.material else False,
+                        "special_transport_condition": mat.material.special_transport_condition if mat.material else False,
+                        "transport_min_temp": float(mat.material.transport_min_temp) if (mat.material and mat.material.transport_min_temp is not None) else None,
+                        "transport_max_temp": float(mat.material.transport_max_temp) if (mat.material and mat.material.transport_max_temp is not None) else None,
+                        "transport_min_moisture": float(mat.material.transport_min_moisture) if (mat.material and mat.material.transport_min_moisture is not None) else None,
+                        "transport_max_moisture": float(mat.material.transport_max_moisture) if (mat.material and mat.material.transport_max_moisture is not None) else None,
+                        "transport_breakable": mat.material.transport_breakable if mat.material else False
+                    })
+
         output.append({
             "id": r.id,
             "rfq_number": r.rfq_number,
@@ -95,6 +127,7 @@ async def carrier_list_rfqs(
             } if my_invite else None,
             "my_quote": my_quote_dict,
             "sdo_count": len(r.mappings or []),
+            "materials": materials_list,
         })
     return output
 

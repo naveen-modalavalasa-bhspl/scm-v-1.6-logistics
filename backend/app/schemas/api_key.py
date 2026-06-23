@@ -7,6 +7,7 @@ class ApiKeyBase(BaseModel):
     scopes: Optional[List[str]] = []
     linked_user_ids: Optional[List[int]] = []
     linked_role_ids: Optional[List[int]] = []
+    endpoint: Optional[str] = None
     expires_at: Optional[datetime] = None
 
 class ApiKeyCreate(ApiKeyBase):

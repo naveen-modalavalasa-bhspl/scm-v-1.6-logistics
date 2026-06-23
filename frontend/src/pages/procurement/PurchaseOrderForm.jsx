@@ -659,8 +659,26 @@ const PurchaseOrderForm = () => {
               </Form.Item>
             </Col>
             <Col span={8}>
-              <Form.Item name="expected_delivery_date" label="Expected Delivery Date" rules={[{ required: true, message: 'Required' }]}>
-                <DatePicker style={{ width: '100%' }} format={DATE_FORMAT} />
+              <Form.Item
+                name="expected_delivery_date"
+                label="Expected Delivery Date"
+                rules={[
+                  { required: true, message: 'Required' },
+                  () => ({
+                    validator(_, value) {
+                      if (value && value.isBefore(dayjs(), 'day')) {
+                        return Promise.reject(new Error('Expected delivery date cannot be in the past'));
+                      }
+                      return Promise.resolve();
+                    },
+                  }),
+                ]}
+              >
+                <DatePicker
+                  style={{ width: '100%' }}
+                  format={DATE_FORMAT}
+                  disabledDate={(current) => current && current.isBefore(dayjs().startOf('day'))}
+                />
               </Form.Item>
             </Col>
             <Col span={8}>

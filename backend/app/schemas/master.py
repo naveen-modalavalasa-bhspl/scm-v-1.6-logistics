@@ -12,12 +12,23 @@ VALID_WAREHOUSE_TYPES = ("main", "sub", "transit", "quarantine", "returns")
 VALID_PRICE_LIST_TYPES = ("buying", "selling")
 
 GST_PATTERN = re.compile(r"^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$")
-PHONE_PATTERN = re.compile(r"^[0-9+\-\s()]{6,20}$")
+PHONE_PATTERN = re.compile(r"^(?:\+?91|0)?[6-9]\d{9}$")
+INTL_PHONE_PATTERN = re.compile(r"^\+?[1-9]\d{9,14}$")
 EMAIL_PATTERN = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
 PINCODE_PATTERN = re.compile(r"^[0-9]{5,10}$")
 # BUG-PRO-104 fix: format-validate PAN (Indian Permanent Account Number).
 # 5 letters + 4 digits + 1 letter, e.g. ABCDE1234F.
 PAN_PATTERN = re.compile(r"^[A-Z]{5}[0-9]{4}[A-Z]{1}$")
+
+
+def validate_phone_number(v: str) -> str:
+    if not v or not str(v).strip():
+        raise ValueError("Phone number is required and cannot be empty")
+    cleaned = re.sub(r"[\s\-\(\)]", "", str(v).strip())
+    if PHONE_PATTERN.match(cleaned) or INTL_PHONE_PATTERN.match(cleaned):
+        return cleaned
+    raise ValueError("Invalid phone number format. Must be a valid 10-digit mobile number, optionally prefixed with country code.")
+
 
 
 def _strip_or_none(v, max_len=255):
@@ -367,6 +378,18 @@ class ItemCreate(BaseModel):
     min_storage_temp_c: Optional[Decimal] = None
     max_storage_temp_c: Optional[Decimal] = None
     regulatory_notes: Optional[str] = None
+    special_storage_condition: bool = False
+    storage_min_temp: Optional[Decimal] = None
+    storage_max_temp: Optional[Decimal] = None
+    storage_min_moisture: Optional[Decimal] = None
+    storage_max_moisture: Optional[Decimal] = None
+    storage_breakable: bool = False
+    special_transport_condition: bool = False
+    transport_min_temp: Optional[Decimal] = None
+    transport_max_temp: Optional[Decimal] = None
+    transport_min_moisture: Optional[Decimal] = None
+    transport_max_moisture: Optional[Decimal] = None
+    transport_breakable: bool = False
     description: Optional[str] = None
     item_type: str
     is_kit: bool = False
@@ -515,6 +538,18 @@ class ItemUpdate(BaseModel):
     min_storage_temp_c: Optional[Decimal] = None
     max_storage_temp_c: Optional[Decimal] = None
     regulatory_notes: Optional[str] = None
+    special_storage_condition: Optional[bool] = None
+    storage_min_temp: Optional[Decimal] = None
+    storage_max_temp: Optional[Decimal] = None
+    storage_min_moisture: Optional[Decimal] = None
+    storage_max_moisture: Optional[Decimal] = None
+    storage_breakable: Optional[bool] = None
+    special_transport_condition: Optional[bool] = None
+    transport_min_temp: Optional[Decimal] = None
+    transport_max_temp: Optional[Decimal] = None
+    transport_min_moisture: Optional[Decimal] = None
+    transport_max_moisture: Optional[Decimal] = None
+    transport_breakable: Optional[bool] = None
     kit_components: Optional[List[ItemKitComponentCreate]] = None
 
     @field_validator("name")
@@ -593,6 +628,18 @@ class ItemResponse(BaseModel):
     min_storage_temp_c: Optional[Decimal] = None
     max_storage_temp_c: Optional[Decimal] = None
     regulatory_notes: Optional[str] = None
+    special_storage_condition: bool = False
+    storage_min_temp: Optional[Decimal] = None
+    storage_max_temp: Optional[Decimal] = None
+    storage_min_moisture: Optional[Decimal] = None
+    storage_max_moisture: Optional[Decimal] = None
+    storage_breakable: bool = False
+    special_transport_condition: bool = False
+    transport_min_temp: Optional[Decimal] = None
+    transport_max_temp: Optional[Decimal] = None
+    transport_min_moisture: Optional[Decimal] = None
+    transport_max_moisture: Optional[Decimal] = None
+    transport_breakable: bool = False
     is_active: bool
     status: Optional[str] = None
     created_at: Optional[datetime] = None
@@ -700,8 +747,8 @@ class VendorCreate(BaseModel):
     state: Optional[str] = None
     pincode: Optional[str] = None
     country: str = "India"
-    gst_number: Optional[str] = None
-    pan_number: Optional[str] = None
+    gst_number: str
+    pan_number: str
     bank_name: Optional[str] = None
     bank_account: Optional[str] = None
     bank_ifsc: Optional[str] = None
@@ -743,32 +790,27 @@ class VendorCreate(BaseModel):
     @classmethod
     def val_phone(cls, v):
         if v and v.strip():
-            v = v.strip()
-            if not PHONE_PATTERN.match(v):
-                raise ValueError("Invalid phone number. Use digits, +, -, spaces, or parentheses (6-20 chars)")
-            return v[:20]
+            return validate_phone_number(v)
         return None
 
     @field_validator("gst_number")
     @classmethod
     def val_gst(cls, v):
-        if v and v.strip():
-            v = v.strip().upper()
-            if len(v) != 15 or not GST_PATTERN.match(v):
-                raise ValueError("Invalid GSTIN format. Must be 15-char alphanumeric (e.g., 29ABCDE1234F1Z5)")
-            return v
-        return None
+        v = _require_non_empty(v, "GST Number")
+        v = v.strip().upper()
+        if len(v) != 15 or not GST_PATTERN.match(v):
+            raise ValueError("Invalid GSTIN format. Must be 15-char alphanumeric (e.g., 29ABCDE1234F1Z5)")
+        return v
 
-    # BUG-PRO-104 fix: validate PAN format on create.
     @field_validator("pan_number")
     @classmethod
     def val_pan(cls, v):
-        if v and v.strip():
-            v = v.strip().upper()
-            if not PAN_PATTERN.match(v):
-                raise ValueError("Invalid PAN format. Must be 10-char alphanumeric (e.g., ABCDE1234F)")
-            return v
-        return None
+        v = _require_non_empty(v, "PAN Number")
+        v = v.strip().upper()
+        if not PAN_PATTERN.match(v):
+            raise ValueError("Invalid PAN format. Must be 10-char alphanumeric (e.g., ABCDE1234F)")
+        return v
+
 
     @field_validator("pincode")
     @classmethod
@@ -855,10 +897,7 @@ class VendorUpdate(BaseModel):
     @classmethod
     def val_phone(cls, v):
         if v and v.strip():
-            v = v.strip()
-            if not PHONE_PATTERN.match(v):
-                raise ValueError("Invalid phone number")
-            return v[:20]
+            return validate_phone_number(v)
         return v
 
     @field_validator("gst_number")
@@ -867,7 +906,7 @@ class VendorUpdate(BaseModel):
         if v and v.strip():
             v = v.strip().upper()
             if len(v) != 15 or not GST_PATTERN.match(v):
-                raise ValueError("Invalid GSTIN format")
+                raise ValueError("Invalid GSTIN format. Must be 15-char alphanumeric (e.g., 29ABCDE1234F1Z5)")
             return v
         return v
 
@@ -994,6 +1033,23 @@ class CustomerCreate(BaseModel):
     def val_name(cls, v):
         return _require_non_empty(v, "Customer name")[:255]
 
+    @field_validator("phone")
+    @classmethod
+    def val_phone(cls, v):
+        if v and v.strip():
+            return validate_phone_number(v)
+        return v
+
+    @field_validator("gst_number")
+    @classmethod
+    def val_gst(cls, v):
+        if v and v.strip():
+            v = v.strip().upper()
+            if len(v) != 15 or not GST_PATTERN.match(v):
+                raise ValueError("Invalid GSTIN format. Must be 15-char alphanumeric (e.g., 29ABCDE1234F1Z5)")
+            return v
+        return v
+
 
 class CustomerUpdate(BaseModel):
     name: Optional[str] = None
@@ -1009,6 +1065,30 @@ class CustomerUpdate(BaseModel):
     credit_limit: Optional[Decimal] = None
     payment_terms_days: Optional[int] = None
     is_active: Optional[bool] = None
+
+    @field_validator("name")
+    @classmethod
+    def val_name(cls, v):
+        if v is not None and not v.strip():
+            raise ValueError("Customer name cannot be empty")
+        return v.strip()[:255] if v else v
+
+    @field_validator("phone")
+    @classmethod
+    def val_phone(cls, v):
+        if v and v.strip():
+            return validate_phone_number(v)
+        return v
+
+    @field_validator("gst_number")
+    @classmethod
+    def val_gst(cls, v):
+        if v and v.strip():
+            v = v.strip().upper()
+            if len(v) != 15 or not GST_PATTERN.match(v):
+                raise ValueError("Invalid GSTIN format. Must be 15-char alphanumeric (e.g., 29ABCDE1234F1Z5)")
+            return v
+        return v
 
 
 class CustomerResponse(BaseModel):
@@ -1078,10 +1158,7 @@ class WarehouseCreate(BaseModel):
     @classmethod
     def val_phone(cls, v):
         if v and v.strip():
-            v = v.strip()
-            if not PHONE_PATTERN.match(v):
-                raise ValueError("Invalid phone number — use digits, +, -, spaces, parentheses (6-20 chars)")
-            return v[:20]
+            return validate_phone_number(v)
         return None
 
 
@@ -1097,6 +1174,13 @@ class WarehouseUpdate(BaseModel):
     phone: Optional[str] = None
     is_active: Optional[bool] = None
     parent_id: Optional[int] = None
+
+    @field_validator("phone")
+    @classmethod
+    def val_phone(cls, v):
+        if v and v.strip():
+            return validate_phone_number(v)
+        return v
 
 
 class WarehouseResponse(BaseModel):
@@ -1265,10 +1349,12 @@ class EmployeeCreate(BaseModel):
     @field_validator("pan_number")
     @classmethod
     def val_pan(cls, v):
-        v = _strip_or_none(v, 10)
-        if v and not PAN_PATTERN.match(v.upper()):
-            raise ValueError("Invalid PAN number")
-        return v.upper() if v else None
+        if v and v.strip():
+            v = v.strip().upper()
+            if not PAN_PATTERN.match(v):
+                raise ValueError("Invalid PAN format. Must be 10-char alphanumeric (e.g., ABCDE1234F)")
+            return v
+        return None
 
     @field_validator("aadhaar_number")
     @classmethod
@@ -1289,9 +1375,8 @@ class EmployeeCreate(BaseModel):
     @field_validator("phone")
     @classmethod
     def val_phone(cls, v):
-        v = _strip_or_none(v, 15)
-        if v and not PHONE_PATTERN.match(v):
-            raise ValueError("Invalid phone number")
+        if v and v.strip():
+            return validate_phone_number(v)
         return v
 
     @model_validator(mode="after")

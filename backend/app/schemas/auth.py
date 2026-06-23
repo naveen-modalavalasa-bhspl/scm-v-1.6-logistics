@@ -97,6 +97,8 @@ class UserCreate(BaseModel):
 
 class UserUpdate(BaseModel):
     employee_id: Optional[int] = None
+    username: Optional[str] = None
+    password: Optional[str] = None
     first_name: Optional[str] = None
     last_name: Optional[str] = None
     email: Optional[EmailStr] = None
@@ -109,6 +111,41 @@ class UserUpdate(BaseModel):
     role_ids: Optional[List[int]] = None
     warehouse_assignments: Optional[List['WarehouseAssignment']] = None
     project_ids: Optional[List[int]] = None
+
+    @field_validator("username")
+    @classmethod
+    def validate_username_nonempty(cls, v):
+        if v is None:
+            return v
+        if not v.strip():
+            raise ValueError("Username cannot be empty")
+        v = v.strip()
+        if len(v) < 3:
+            raise ValueError("Username must be at least 3 characters")
+        if len(v) > 100:
+            raise ValueError("Username must be at most 100 characters")
+        import re as _re
+        if not _re.match(r"^[a-zA-Z0-9_]+$", v):
+            raise ValueError("Username can only contain letters, numbers, and underscores")
+        return v
+
+    @field_validator("password")
+    @classmethod
+    def validate_password_strength(cls, v):
+        if v is None or v == "":
+            return v
+        if len(v) < 8:
+            raise ValueError("Password must be at least 8 characters")
+        if len(v) > 128:
+            raise ValueError("Password too long")
+        if not re.search(r"[A-Z]", v):
+            raise ValueError("Password must contain at least one uppercase letter")
+        if not re.search(r"\d", v):
+            raise ValueError("Password must contain at least one digit")
+        if not re.search(r"[!@#$%^&*(),.?\":{}|<>]", v):
+            raise ValueError("Password must contain at least one special character")
+        return v
+
 
 
 class ResetPassword(BaseModel):

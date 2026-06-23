@@ -545,7 +545,12 @@ const Users = () => {
               },
             ]}
           >
-            <Input.Password placeholder="Enter new password" />
+            <Input.Password
+              placeholder="Enter new password"
+              onCopy={(e) => e.preventDefault()}
+              onPaste={(e) => e.preventDefault()}
+              onCut={(e) => e.preventDefault()}
+            />
           </Form.Item>
           <Form.Item
             name="confirm_password"
@@ -561,7 +566,12 @@ const Users = () => {
               }),
             ]}
           >
-            <Input.Password placeholder="Confirm new password" />
+            <Input.Password
+              placeholder="Confirm new password"
+              onCopy={(e) => e.preventDefault()}
+              onPaste={(e) => e.preventDefault()}
+              onCut={(e) => e.preventDefault()}
+            />
           </Form.Item>
         </Form>
       </Modal>

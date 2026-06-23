@@ -4,19 +4,21 @@ import {
   Form, Input, InputNumber, Table, Typography, Tag, Spin, Empty
 } from 'antd';
 import {
-  ArrowLeftOutlined, CheckCircleOutlined, InboxOutlined
+  ArrowLeftOutlined, CheckCircleOutlined, InboxOutlined, IdcardOutlined
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import PageHeader from '../../components/PageHeader';
 import BarcodeScanner from '../../components/BarcodeScanner';
 import api from '../../config/api';
 import { formatDate, formatDateTime, formatNumber, getErrorMessage } from '../../utils/helpers';
+import useAuthStore from '../../store/authStore';
 
 const { Text } = Typography;
 const { TextArea } = Input;
 
 const AcknowledgementForm = () => {
   const navigate = useNavigate();
+  const { user } = useAuthStore();
   const [form] = Form.useForm();
   const [submitting, setSubmitting] = useState(false);
   const [pendingIndents, setPendingIndents] = useState([]);
@@ -28,6 +30,10 @@ const AcknowledgementForm = () => {
 
   useEffect(() => {
     fetchPendingIndents();
+    // Pre-fill employee code from logged-in user profile
+    if (user?.employee_code) {
+      form.setFieldsValue({ employee_code: user.employee_code });
+    }
   }, []);
 
   const fetchPendingIndents = async () => {
@@ -123,6 +129,7 @@ const AcknowledgementForm = () => {
       setSubmitting(true);
       const payload = {
         indent_id: selectedIndent,
+        employee_code: values.employee_code || null,
         remarks: values.remarks || '',
         scan_timestamp: new Date().toISOString(),
         items: validItems.map((item) => ({
@@ -172,18 +179,41 @@ const AcknowledgementForm = () => {
 
       <Card variant="borderless" style={{ marginBottom: 16 }}>
         <Form form={form} layout="vertical">
-          <Form.Item label="Select Indent" required>
-            <Select
-              placeholder="Select pending indent..."
-              value={selectedIndent}
-              onChange={handleIndentSelect}
-              options={pendingIndents}
-              allowClear
-              showSearch
-              optionFilterProp="label"
-              style={{ width: '100%' }}
-            />
-          </Form.Item>
+          <Row gutter={16}>
+            <Col xs={24} md={16}>
+              <Form.Item label="Select Indent" required>
+                <Select
+                  placeholder="Select pending indent..."
+                  value={selectedIndent}
+                  onChange={handleIndentSelect}
+                  options={pendingIndents}
+                  allowClear
+                  showSearch
+                  optionFilterProp="label"
+                  style={{ width: '100%' }}
+                />
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={8}>
+              <Form.Item
+                name="employee_code"
+                label={
+                  <span>
+                    <IdcardOutlined style={{ marginRight: 6, color: '#6366f1' }} />
+                    Employee Code
+                  </span>
+                }
+                rules={[{ required: true, message: 'Employee code is required' }]}
+                tooltip="Your HR employee code. Auto-filled from your profile."
+              >
+                <Input
+                  placeholder="e.g. EMP-0042"
+                  prefix={<IdcardOutlined style={{ color: '#94a3b8' }} />}
+                  style={{ fontWeight: 600 }}
+                />
+              </Form.Item>
+            </Col>
+          </Row>
         </Form>
 
         {loadingIndent ? (
@@ -225,17 +255,19 @@ const AcknowledgementForm = () => {
               scroll={{ x: 700 }}
               columns={[
                 { title: '#', width: 40, render: (_, __, idx) => idx + 1 },
-                { title: 'Item', width: 200, render: (_, r) => r.item?.item_name || r.item_name || '-' },
+                { title: 'Item Code', width: 120, render: (_, r) => r.item?.item_code || r.item_code || '-' },
+                { title: 'Item Name', width: 200, render: (_, r) => r.item?.item_name || r.item_name || '-' },
                 { title: 'UOM', dataIndex: 'uom', width: 80, render: (v) => v || '-' },
                 { title: 'Approved Qty', dataIndex: 'approved_qty', width: 110, align: 'right', render: (v, r) => formatNumber(v || r.requested_qty) },
+                { title: 'Already Received', dataIndex: 'already_received_qty', width: 130, align: 'right', render: (v) => <Text type="secondary">{formatNumber(v)}</Text> },
                 {
-                  title: 'Received Qty',
+                  title: 'Receive Now',
                   dataIndex: 'received_qty',
                   width: 130,
                   render: (val, record, idx) => (
                     <InputNumber
                       min={0}
-                      max={record.approved_qty || record.requested_qty}
+                      max={record.remaining_qty || record.approved_qty || record.requested_qty}
                       value={val}
                       onChange={(v) => {
                         setAckItems((prev) =>

@@ -346,6 +346,9 @@ const Login = () => {
                     setCapsLockOn(e.getModifierState('CapsLock'));
                   }
                 }}
+                onCopy={(e) => e.preventDefault()}
+                onPaste={(e) => e.preventDefault()}
+                onCut={(e) => e.preventDefault()}
                 placeholder=" "
                 autoComplete="current-password"
                 disabled={loading}

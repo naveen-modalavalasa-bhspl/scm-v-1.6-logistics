@@ -67,7 +67,9 @@ class IndentAcknowledgement(Base):
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     indent_id = Column(BigInteger, ForeignKey("indents.id"), nullable=False)
+    warehouse_id = Column(BigInteger, ForeignKey("warehouses.id"), nullable=True)
     acknowledged_by = Column(BigInteger, ForeignKey("users.id"), nullable=False)
+    employee_code = Column(String(50))  # HR employee code of the acknowledger
     acknowledged_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
     received_qty = Column(Numeric(15, 3), default=0)
     status = Column(String(50), default="received")  # received, partial, completed
@@ -77,6 +79,7 @@ class IndentAcknowledgement(Base):
     scanned_barcodes_json = Column(Text)  # JSON array of scanned barcodes
 
     indent = relationship("Indent", back_populates="acknowledgements")
+    warehouse = relationship("Warehouse")
     acknowledger = relationship("User")
     items = relationship("IndentAcknowledgementItem", back_populates="acknowledgement", cascade="all, delete-orphan")
 

@@ -111,8 +111,14 @@ async def process_dispatch_stock_deduction(db: AsyncSession, d: DispatchOrder, c
             created_by=created_by_id,
         )
 
-        # 3. For inter-warehouse transfers, increase the transit_qty in the source warehouse
-        if d.destination_warehouse_id and d.destination_warehouse_id != d.warehouse_id:
+        # 3. For inter-warehouse transfers, increase the transit_qty in the source warehouse.
+        #    MULTI-LEVEL DISPATCH: transit_qty is managed by the SDO handover/receive workflow
+        #    (see sdo_handover and sdo_receive in logistics.py). Do NOT double-count transit_qty
+        #    here for multi-level dispatches — the SDO flow handles available→transit→available
+        #    transitions at each intermediate warehouse.
+        #    DIRECT DISPATCH: set transit_qty at source to reflect goods in transit.
+        dispatch_mode_val = getattr(d, "dispatch_mode", "direct") or "direct"
+        if d.destination_warehouse_id and d.destination_warehouse_id != d.warehouse_id and dispatch_mode_val.lower() != "multi-level":
             from app.services.stock_service import _get_or_create_balance
             src_balance = await _get_or_create_balance(
                 db,
@@ -230,8 +236,8 @@ async def sync_mdos_to_dispatches(db: AsyncSession):
                     db.add(item)
                 await db.flush()
 
-                # Trigger stock deduction if status is dispatched or in_transit
-                if mapped_st in ("dispatched", "in_transit"):
+                # Trigger stock deduction if status is dispatched, in_transit, delivered, or acknowledged
+                if mapped_st in ("dispatched", "in_transit", "delivered", "acknowledged"):
                     await process_dispatch_stock_deduction(db, disp, mdo.created_by or 1)
             else:
                 existing.expected_delivery_date = mdo.required_delivery_date
@@ -246,8 +252,8 @@ async def sync_mdos_to_dispatches(db: AsyncSession):
                     existing.delivery_acknowledged = (mdo.status == "ACKNOWLEDGED")
                     await db.flush()
 
-                    # Trigger stock deduction if transitioning to dispatched or in_transit
-                    if mapped_st in ("dispatched", "in_transit") and old_status not in ("dispatched", "in_transit", "delivered", "acknowledged"):
+                    # Trigger stock deduction if transitioning to dispatched, in_transit, delivered, or acknowledged
+                    if mapped_st in ("dispatched", "in_transit", "delivered", "acknowledged") and old_status not in ("dispatched", "in_transit", "delivered", "acknowledged"):
                         await process_dispatch_stock_deduction(db, existing, mdo.created_by or existing.dispatched_by or 1)
 
                 # Backfill missing items OR update serial_numbers on existing dispatch items
@@ -415,7 +421,19 @@ async def list_dispatches(
                 "request_date": item.request_date,
                 "material_name": item.material.name if item.material else None,
                 "material_code": item.material.item_code if item.material else None,
-                "serial_numbers": item.serial_numbers or []
+                "serial_numbers": item.serial_numbers or [],
+                "special_storage_condition": item.material.special_storage_condition if item.material else False,
+                "storage_min_temp": item.material.storage_min_temp if item.material else None,
+                "storage_max_temp": item.material.storage_max_temp if item.material else None,
+                "storage_min_moisture": item.material.storage_min_moisture if item.material else None,
+                "storage_max_moisture": item.material.storage_max_moisture if item.material else None,
+                "storage_breakable": item.material.storage_breakable if item.material else False,
+                "special_transport_condition": item.material.special_transport_condition if item.material else False,
+                "transport_min_temp": item.material.transport_min_temp if item.material else None,
+                "transport_max_temp": item.material.transport_max_temp if item.material else None,
+                "transport_min_moisture": item.material.transport_min_moisture if item.material else None,
+                "transport_max_moisture": item.material.transport_max_moisture if item.material else None,
+                "transport_breakable": item.material.transport_breakable if item.material else False
             })
         items_out.append(header_dict)
         
@@ -525,7 +543,19 @@ async def get_dispatch(
             "request_date": item.request_date,
             "material_name": item.material.name if item.material else None,
             "material_code": item.material.item_code if item.material else None,
-            "serial_numbers": rec_serials
+            "serial_numbers": rec_serials,
+            "special_storage_condition": item.material.special_storage_condition if item.material else False,
+            "storage_min_temp": item.material.storage_min_temp if item.material else None,
+            "storage_max_temp": item.material.storage_max_temp if item.material else None,
+            "storage_min_moisture": item.material.storage_min_moisture if item.material else None,
+            "storage_max_moisture": item.material.storage_max_moisture if item.material else None,
+            "storage_breakable": item.material.storage_breakable if item.material else False,
+            "special_transport_condition": item.material.special_transport_condition if item.material else False,
+            "transport_min_temp": item.material.transport_min_temp if item.material else None,
+            "transport_max_temp": item.material.transport_max_temp if item.material else None,
+            "transport_min_moisture": item.material.transport_min_moisture if item.material else None,
+            "transport_max_moisture": item.material.transport_max_moisture if item.material else None,
+            "transport_breakable": item.material.transport_breakable if item.material else False
         })
         
     is_ready_for_acknowledgement = True
@@ -621,10 +651,26 @@ async def get_destination_position_id(db: AsyncSession, destination_warehouse_id
     return None
 
 async def get_warehouse_for_position(db: AsyncSession, position_id: int) -> Optional[int]:
-    from app.models.settings_master import Employee
+    from app.models.settings_master import Employee, Position
     from app.models.user import User, UserWarehouse
     
-    # 1. Try to find via UserWarehouse mapping for users occupying this position
+    # 1. Try to find via the assignee (employee_id) directly set on the Position row
+    pos_res = await db.execute(
+        select(Position.employee_id).where(Position.id == position_id)
+    )
+    emp_id = pos_res.scalar_one_or_none()
+    if emp_id:
+        res = await db.execute(
+            select(UserWarehouse.warehouse_id)
+            .join(User, User.id == UserWarehouse.user_id)
+            .where(User.employee_id == emp_id)
+            .limit(1)
+        )
+        wh_id = res.scalar_one_or_none()
+        if wh_id:
+            return wh_id
+
+    # 2. Try to find via UserWarehouse mapping for users occupying this position via Employee.position_id
     res = await db.execute(
         select(UserWarehouse.warehouse_id)
         .join(User, User.id == UserWarehouse.user_id)

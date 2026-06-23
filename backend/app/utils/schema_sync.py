@@ -891,6 +891,39 @@ async def ensure_item_uom_category_schema(session: AsyncSession) -> None:
     if idx_exists is None:
         await conn.execute(text("CREATE INDEX ix_items_uom_category_id ON items (uom_category_id)"))
 
+    # Check and add the 12 new fields for special storage and transport conditions
+    items_cols = {
+        row[0]
+        for row in (await conn.execute(text("""
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = DATABASE()
+              AND table_name = 'items'
+        """))).all()
+    }
+
+    new_cols = {
+        "special_storage_condition": "ALTER TABLE items ADD COLUMN special_storage_condition TINYINT(1) NOT NULL DEFAULT 0",
+        "storage_min_temp": "ALTER TABLE items ADD COLUMN storage_min_temp DECIMAL(5, 2) NULL",
+        "storage_max_temp": "ALTER TABLE items ADD COLUMN storage_max_temp DECIMAL(5, 2) NULL",
+        "storage_min_moisture": "ALTER TABLE items ADD COLUMN storage_min_moisture DECIMAL(5, 2) NULL",
+        "storage_max_moisture": "ALTER TABLE items ADD COLUMN storage_max_moisture DECIMAL(5, 2) NULL",
+        "storage_breakable": "ALTER TABLE items ADD COLUMN storage_breakable TINYINT(1) NOT NULL DEFAULT 0",
+        "special_transport_condition": "ALTER TABLE items ADD COLUMN special_transport_condition TINYINT(1) NOT NULL DEFAULT 0",
+        "transport_min_temp": "ALTER TABLE items ADD COLUMN transport_min_temp DECIMAL(5, 2) NULL",
+        "transport_max_temp": "ALTER TABLE items ADD COLUMN transport_max_temp DECIMAL(5, 2) NULL",
+        "transport_min_moisture": "ALTER TABLE items ADD COLUMN transport_min_moisture DECIMAL(5, 2) NULL",
+        "transport_max_moisture": "ALTER TABLE items ADD COLUMN transport_max_moisture DECIMAL(5, 2) NULL",
+        "transport_breakable": "ALTER TABLE items ADD COLUMN transport_breakable TINYINT(1) NOT NULL DEFAULT 0",
+    }
+
+    for col, ddl in new_cols.items():
+        if col not in items_cols:
+            try:
+                await conn.execute(text(ddl))
+            except Exception as exc:
+                print(f"Failed to add column {col} to items: {exc}")
+
 
 async def ensure_specs_schema(session: AsyncSession) -> None:
     if not _should_sync("specs_schema"):

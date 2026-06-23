@@ -325,10 +325,11 @@ async def create_user(
     """Create a new user (admin only)."""
     from app.services.auth_service import hash_password
 
-    # Check if username or email already exists
+    # Check if username or email already exists (case-insensitive check)
     existing = await db.execute(
         select(User).where(
-            (User.username == payload.username) | (User.email == payload.email)
+            (func.lower(User.username) == payload.username.lower())
+            | (func.lower(User.email) == payload.email.lower())
         )
     )
     if existing.scalar_one_or_none():
@@ -349,8 +350,8 @@ async def create_user(
     org_id = payload.organization_id if payload.organization_id else current_user.organization_id
     user = User(
         organization_id=org_id,
-        username=payload.username,
-        email=payload.email,
+        username=payload.username.lower(),
+        email=payload.email.lower(),
         password_hash=hash_password(payload.password),
         first_name=payload.first_name,
         last_name=payload.last_name,
@@ -689,6 +690,28 @@ async def update_user(
 
     update_data = payload.model_dump(exclude_unset=True)
     employee_id = update_data.pop("employee_id", None)
+
+    # Process username update
+    new_username = update_data.pop("username", None)
+    if new_username is not None and new_username.strip():
+        new_username_lower = new_username.strip().lower()
+        if new_username_lower != user.username.lower():
+            # Check if this username is already taken by another user
+            existing_uname = await db.execute(
+                select(User).where(func.lower(User.username) == new_username_lower, User.id != user_id)
+            )
+            if existing_uname.scalar_one_or_none():
+                raise HTTPException(status_code=409, detail="Username already exists")
+            user.username = new_username_lower
+
+    # Process password update
+    new_password = update_data.pop("password", None)
+    if new_password is not None and new_password.strip():
+        from app.services.auth_service import hash_password
+        user.password_hash = hash_password(new_password)
+        user.password_changed_at = datetime.now(timezone.utc)
+        user.tokens_revoked_after = user.password_changed_at
+
 
     # BUG-AUTH-054 fix: an admin must not be able to demote / disable
     # themselves through the standard update flow — that would risk a
@@ -1608,12 +1631,12 @@ async def create_user_from_employee(
     username = re.sub(r"[^A-Za-z0-9_]+", "_", username).strip("_").lower()
     if len(username) < 3:
         username = f"emp_{employee.id}"
-    email = str(payload.get("email") or employee.email or f"{username}@bavya-scm.local").strip()
+    email = str(payload.get("email") or employee.email or f"{username}@bavya-scm.local").strip().lower()
     password = str(payload.get("password") or "").strip()
     if len(password) < 8:
         raise HTTPException(status_code=422, detail="Password is required and must be at least 8 characters")
 
-    duplicate = (await db.execute(select(User).where(or_(User.username == username, User.email == email)))).scalar_one_or_none()
+    duplicate = (await db.execute(select(User).where(or_(func.lower(User.username) == username.lower(), func.lower(User.email) == email.lower())))).scalar_one_or_none()
     if duplicate:
         raise HTTPException(status_code=409, detail="Username or email already exists")
 
@@ -1803,7 +1826,19 @@ async def _project_id_from_external(db: AsyncSession, row: dict, stats: dict[str
     project_code = _external_text(row, "project.code", "project_code", "projectCode", max_len=50) or _external_code(project_name, 50)
     if not project_code:
         return None
+    
     project = (await db.execute(select(Project).where(func.lower(Project.code) == project_code.lower()))).scalar_one_or_none()
+    
+    # Avoid duplicate project records if codes differ (e.g. slugified vs explicit) but project name is identical
+    if not project and project_name:
+        project = (await db.execute(select(Project).where(func.lower(Project.name) == project_name.lower()))).scalar_one_or_none()
+        if project:
+            # If explicit code is provided in the current row but the DB currently has an auto-generated slugified code, update it to the explicit code.
+            explicit_code_provided = _external_text(row, "project.code", "project_code", "projectCode", max_len=50)
+            if explicit_code_provided and project.code != explicit_code_provided:
+                project.code = explicit_code_provided
+                await db.flush()
+
     if not project:
         if not organization_id:
             organization_id = (await db.execute(select(Organization.id).order_by(Organization.id.asc()).limit(1))).scalar_one_or_none()

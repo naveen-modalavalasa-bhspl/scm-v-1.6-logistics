@@ -449,6 +449,76 @@ def require_stock_balance_scope():
     return get_api_key_user
 
 
+def require_items_scope():
+    async def get_api_key_user(
+        request: Request = None,
+        api_key: str = Depends(api_key_header),
+        db: AsyncSession = Depends(get_db),
+    ) -> User:
+        if not api_key:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Missing X-API-Key header",
+            )
+        
+        key_hash = hashlib.sha256(api_key.encode("utf-8")).hexdigest()
+        
+        result = await db.execute(select(ApiKey).where(ApiKey.key_hash == key_hash))
+        api_key_record = result.scalar_one_or_none()
+        
+        if not api_key_record:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid API Key",
+            )
+            
+        if not api_key_record.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="API Key is inactive",
+            )
+            
+        if api_key_record.expires_at and api_key_record.expires_at < datetime.now(timezone.utc).replace(tzinfo=None):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="API Key has expired",
+            )
+            
+        scopes = json.loads(api_key_record.scopes) if api_key_record.scopes else []
+        
+        has_access = "masters:items:read" in scopes
+        if not has_access:
+            for s in scopes:
+                if s.startswith("masters:items:"):
+                    has_access = True
+                    break
+                    
+        if not has_access:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="API Key missing required scope: masters:items:read or granular items scope",
+            )
+            
+        # Update last used
+        api_key_record.last_used_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        await db.commit()
+        
+        # Get user
+        user_result = await db.execute(select(User).where(User.id == api_key_record.user_id))
+        user = user_result.scalar_one_or_none()
+        
+        if not user or not user.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="User account is deactivated or missing",
+            )
+            
+        user.used_api_key = api_key_record
+        return user
+        
+    return get_api_key_user
+
+
 
 # Roles that see every indent/PO/MR regardless of warehouse mapping.
 # Anyone NOT in this set is scoped down to:

@@ -1242,11 +1242,35 @@ async def acknowledge_delivery(
                     if b:
                         batch_id = b.id
 
-                # Decrement transit_qty in correct transit warehouse
                 transit_wh_id = d.warehouse_id
                 if d.dispatch_mode == "multi-level":
                     from app.api.v1.dispatch import get_last_intermediate_warehouse
                     transit_wh_id = await get_last_intermediate_warehouse(db, d)
+                    if transit_wh_id == d.warehouse_id:
+                        try:
+                            from app.models.logistics import LogisticsMainDispatchOrder, LogisticsSubDispatchOrder
+                            from app.api.v1.dispatch import get_warehouse_for_position
+                            mdo_res = await db.execute(
+                                select(LogisticsMainDispatchOrder.id).where(
+                                    LogisticsMainDispatchOrder.mdo_number == d.dispatch_number
+                                )
+                            )
+                            mdo_id = mdo_res.scalar_one_or_none()
+                            if mdo_id:
+                                sdos_res = await db.execute(
+                                    select(LogisticsSubDispatchOrder)
+                                    .where(LogisticsSubDispatchOrder.mdo_id == mdo_id)
+                                    .order_by(LogisticsSubDispatchOrder.sequence_number.asc())
+                                )
+                                all_sdos = sdos_res.scalars().all()
+                                if len(all_sdos) >= 2:
+                                    last_int_sdo = all_sdos[-2]
+                                    resolved_wh = await get_warehouse_for_position(db, last_int_sdo.custodian_position_id)
+                                    if resolved_wh:
+                                        transit_wh_id = resolved_wh
+                        except Exception as ex:
+                            import logging
+                            logging.getLogger(__name__).warning(f"Failed to resolve intermediate fallback: {ex}")
 
                 from app.services.stock_service import _get_or_create_balance
                 from decimal import Decimal
@@ -1260,6 +1284,20 @@ async def acknowledge_delivery(
                 )
                 dispatched_qty = Decimal(str(it.quantity_dispatched or 0))
                 src_balance.transit_qty = max(Decimal("0"), (src_balance.transit_qty or Decimal("0")) - dispatched_qty)
+                if d.dispatch_mode == "multi-level" and transit_wh_id != dest_wh_id:
+                    await post_stock_ledger(
+                        db,
+                        item_id=it.material_id,
+                        warehouse_id=transit_wh_id,
+                        transaction_type="transfer_out",
+                        qty_out=dispatched_qty,
+                        batch_id=batch_id,
+                        bin_id=bin_id,
+                        reference_type="dispatch_acknowledgement",
+                        reference_id=new_ack.id,
+                        uom_id=1,
+                        created_by=current_user.id,
+                    )
 
                 await post_stock_ledger(
                     db,
@@ -1335,6 +1373,28 @@ async def acknowledge_delivery(
             if mdo:
                 mdo.status = "ACKNOWLEDGED"
                 db.add(mdo)
+
+                # Update the final SDO custody leg status to ACKNOWLEDGED
+                from app.models.logistics import LogisticsSubDispatchOrder
+                sdo_q = await db.execute(
+                    select(LogisticsSubDispatchOrder)
+                    .where(
+                        LogisticsSubDispatchOrder.mdo_id == mdo.id,
+                        LogisticsSubDispatchOrder.status == "PENDING"
+                    )
+                    .order_by(LogisticsSubDispatchOrder.sequence_number.desc())
+                    .limit(1)
+                )
+                final_sdo = sdo_q.scalar_one_or_none()
+                if final_sdo:
+                    final_sdo.status = "ACKNOWLEDGED"
+                    final_sdo.received_by_id = current_user.id
+                    final_sdo.received_at = datetime.now(timezone.utc)
+                    final_sdo.seal_intact = payload.seal_intact
+                    final_sdo.packaging_condition = payload.packaging_condition
+                    final_sdo.discrepancy_reported = payload.discrepancy_reported or (payload.total_items_damaged > 0 or payload.total_items_rejected > 0)
+                    final_sdo.receiving_remarks = payload.discrepancy_description or payload.quality_check_remarks or "Final delivery acknowledged."
+                    db.add(final_sdo)
 
                 # Update Service Order and vehicles
                 res_so = await db.execute(

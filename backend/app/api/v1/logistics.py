@@ -569,7 +569,9 @@ async def get_mdos(db: AsyncSession = Depends(get_db), current_user: User = Depe
             selectinload(LogisticsMainDispatchOrder.handover).joinedload(DispatchHandover.transporter),
             joinedload(LogisticsMainDispatchOrder.warehouse),
             joinedload(LogisticsMainDispatchOrder.destination_user),
-            joinedload(LogisticsMainDispatchOrder.creator)
+            joinedload(LogisticsMainDispatchOrder.creator),
+            joinedload(LogisticsMainDispatchOrder.indent),
+            joinedload(LogisticsMainDispatchOrder.material_issue)
         )
     )
     
@@ -681,7 +683,9 @@ async def get_mdos(db: AsyncSession = Depends(get_db), current_user: User = Depe
             created_at=m.created_at,
             updated_at=m.updated_at,
             material_issue_id=m.material_issue_id,
+            material_issue_number=m.material_issue.issue_number if m.material_issue else None,
             indent_id=m.indent_id,
+            indent_number=m.indent.indent_number if m.indent else None,
             destination_warehouse_id=m.destination_warehouse_id,
             destination_user_id=m.destination_user_id,
             destination_user_name=m.destination_user.username if m.destination_user else None,
@@ -722,7 +726,19 @@ async def get_mdos(db: AsyncSession = Depends(get_db), current_user: User = Depe
                     serial_numbers=mat.serial_numbers,
                     number_of_packages=mat.number_of_packages,
                     package_type=mat.package_type,
-                    handling_instructions=mat.handling_instructions
+                    handling_instructions=mat.handling_instructions,
+                    special_storage_condition=mat.material.special_storage_condition if mat.material else False,
+                    storage_min_temp=float(mat.material.storage_min_temp) if (mat.material and mat.material.storage_min_temp is not None) else None,
+                    storage_max_temp=float(mat.material.storage_max_temp) if (mat.material and mat.material.storage_max_temp is not None) else None,
+                    storage_min_moisture=float(mat.material.storage_min_moisture) if (mat.material and mat.material.storage_min_moisture is not None) else None,
+                    storage_max_moisture=float(mat.material.storage_max_moisture) if (mat.material and mat.material.storage_max_moisture is not None) else None,
+                    storage_breakable=mat.material.storage_breakable if mat.material else False,
+                    special_transport_condition=mat.material.special_transport_condition if mat.material else False,
+                    transport_min_temp=float(mat.material.transport_min_temp) if (mat.material and mat.material.transport_min_temp is not None) else None,
+                    transport_max_temp=float(mat.material.transport_max_temp) if (mat.material and mat.material.transport_max_temp is not None) else None,
+                    transport_min_moisture=float(mat.material.transport_min_moisture) if (mat.material and mat.material.transport_min_moisture is not None) else None,
+                    transport_max_moisture=float(mat.material.transport_max_moisture) if (mat.material and mat.material.transport_max_moisture is not None) else None,
+                    transport_breakable=mat.material.transport_breakable if mat.material else False
                 )
             )
 
@@ -793,7 +809,6 @@ async def resolve_indent_creator_position(db: AsyncSession, indent_id, material_
     from app.models.indent import Indent
     from app.models.issue import MaterialIssue
     from app.models.settings_master import Employee
-    from app.models.user import User
     
     indent_obj = None
     if indent_id:
@@ -889,7 +904,6 @@ async def preview_dispatch_chain(
     """Preview the multi-level dispatch chain before creating MDO."""
     from app.models.issue import MaterialIssue
     from app.models.settings_master import Position, Employee
-    from app.models.warehouse import Warehouse
     from app.api.v1.dispatch import get_destination_position_id
     
     mi_res = await db.execute(select(MaterialIssue).where(MaterialIssue.id == material_issue_id))
@@ -1138,13 +1152,100 @@ async def create_mdo(payload: MdoCreate, db: AsyncSession = Depends(get_db), cur
     new_mdo.total_value = tot_value
     db.add(new_mdo)
 
+    # INVENTORY: At MDO creation, convert source reserved_qty → transit_qty.
+    #
+    # CENTRAL WAREHOUSE (parent_id IS NULL): Stock was reserved via issue_material().
+    # At dispatch plan creation, convert reserved→transit:
+    #   - reserved_qty drops to 0 (goods committed to dispatch)
+    #   - transit_qty rises by qty (goods tracked as in-flight)
+    #   - total_qty UNCHANGED (physically still at CEN until destination acknowledges)
+    #   - available_qty stays 0 (already excluded by reservation)
+    #
+    # MULTI-LEVEL (other warehouses): Same reserved→transit conversion applies.
+    #
+    # DIRECT DISPATCH (other warehouses): Not applicable — process_dispatch_stock_deduction
+    # handles deduction separately.
+    #
+    # IMPORTANT: Only convert if reserved_qty > 0 (i.e. issue_material was called first).
+    # Never blindly set transit from qty — that caused premature transit before issue.
+    try:
+        from app.services.stock_service import _get_or_create_balance
+        from app.models.issue import MaterialIssueItem
+        from app.models.warehouse import Warehouse as _WHModel
+        from decimal import Decimal
+
+        src_wh_id = payload.warehouseId
+        is_multi_level = (payload.dispatch_mode or "direct").lower() == "multi-level"
+
+        # Identify Central Warehouse by parent_id IS NULL (top-level warehouse)
+        # Using parent_id=NULL is robust — not affected by name/code/id changes.
+        is_central_warehouse = False
+        if src_wh_id:
+            cen_res = await db.execute(
+                select(_WHModel).where(_WHModel.id == src_wh_id)
+            )
+            src_wh = cen_res.scalar_one_or_none()
+            if src_wh and src_wh.parent_id is None:
+                is_central_warehouse = True
+
+        # Run the reserved→transit conversion for:
+        #   • Central Warehouse (any dispatch mode, has Material Issue reservation)
+        #   • Multi-level dispatches from other warehouses
+        if src_wh_id and (is_central_warehouse or is_multi_level):
+            for mat in payload.materials:
+                batch_id_r = None
+                bin_id_r = None
+                if payload.material_issue_id:
+                    mi_item_res = await db.execute(
+                        select(MaterialIssueItem).where(
+                            MaterialIssueItem.issue_id == payload.material_issue_id,
+                            MaterialIssueItem.item_id == mat.materialId
+                        ).limit(1)
+                    )
+                    mi_item_r = mi_item_res.scalar_one_or_none()
+                    if mi_item_r:
+                        batch_id_r = mi_item_r.batch_id
+                        bin_id_r = mi_item_r.bin_id
+
+                qty_r = Decimal(str(mat.qty))
+                src_bal = await _get_or_create_balance(
+                    db,
+                    item_id=mat.materialId,
+                    warehouse_id=src_wh_id,
+                    bin_id=bin_id_r,
+                    batch_id=batch_id_r,
+                    lock=True,
+                )
+                # Convert existing reserved_qty → transit_qty only.
+                # (reserved was set by issue_material; now it's actively in-transit)
+                # NEVER add to transit if there is no reservation — that caused
+                # premature transit display before the Issue button was clicked.
+                convert_qty = min(src_bal.reserved_qty or Decimal("0"), qty_r)
+                if convert_qty > Decimal("0"):
+                    src_bal.reserved_qty = (src_bal.reserved_qty or Decimal("0")) - convert_qty
+                    src_bal.transit_qty = (src_bal.transit_qty or Decimal("0")) + convert_qty
+                    # Recompute available: total - reserved - transit
+                    src_bal.available_qty = max(
+                        Decimal("0"),
+                        (src_bal.total_qty or Decimal("0"))
+                        - (src_bal.reserved_qty or Decimal("0"))
+                        - (src_bal.transit_qty or Decimal("0"))
+                    )
+            await db.flush()
+    except Exception as mdo_transit_err:
+        import logging
+        logging.getLogger(__name__).warning(
+            "MDO source reserved→transit conversion failed (non-blocking): %s", mdo_transit_err
+        )
+
+
     db.add(ActivityLog(
         user_id=current_user.id,
         module="logistics",
         action="create_mdo",
         entity_type="mdo",
         entity_id=new_mdo.id,
-        description=f"Created Main Dispatch Order {mdo_num} with dispatch mode {dispatch_mode}."
+        description=f"Created Main Dispatch Order {mdo_num} with dispatch mode {dispatch_mode}. Source stock reserved at warehouse {payload.warehouseId}."
     ))
 
     db.add(Notification(
@@ -1177,6 +1278,25 @@ async def sdo_handover(
     mdo = res_mdo.scalar_one_or_none()
     if not mdo:
         raise HTTPException(404, "Parent MDO not found")
+
+    # Prevent handover on final terminal leg
+    try:
+        from app.api.v1.dispatch import get_destination_position_id
+        dest_pos_id = await get_destination_position_id(db, mdo.destination_warehouse_id, mdo.destination_user_id)
+        project_id = await resolve_mdo_project_id(db, mdo.indent_id, mdo.material_issue_id)
+        starting_pos_id = await resolve_indent_creator_position(db, mdo.indent_id, mdo.material_issue_id)
+
+        chain_data = []
+        if mdo.dispatch_mode == "multi-level" and project_id and starting_pos_id:
+            chain_data = await build_logistics_custody_chain(db, project_id, starting_pos_id, dest_pos_id)
+        chain = [entry["position"] for entry in chain_data if entry.get("can_approve", False) or entry.get("is_destination", False)]
+
+        if chain and sdo.sequence_number >= len(chain):
+            raise HTTPException(400, "Handover is not allowed on the final delivery leg.")
+    except HTTPException:
+        raise
+    except Exception:
+        pass
 
     is_authorized = False
     from app.utils.dependencies import get_user_role_codes
@@ -1237,6 +1357,94 @@ async def sdo_handover(
 
     mdo.status = "IN_TRANSIT"
     db.add(mdo)
+
+    # For multi-level intermediate handovers, move stock from available_qty to transit_qty
+    # at the sender's warehouse (custodian of the previous leg).
+    # This does NOT reduce total_qty — it only signals the stock is "in-transit" out of that warehouse.
+    # The actual total_qty deduction at that warehouse happens at SDO receive time.
+    if mdo.dispatch_mode == "multi-level":
+        try:
+            from app.api.v1.dispatch import get_warehouse_for_position
+            from app.services.stock_service import _get_or_create_balance
+            from decimal import Decimal
+
+            sender_wh_id = await get_warehouse_for_position(db, sdo.custodian_position_id)
+            if sender_wh_id:
+                res_mats = await db.execute(
+                    select(LogisticsDispatchMaterial).where(LogisticsDispatchMaterial.mdo_id == mdo.id)
+                )
+                mats = res_mats.scalars().all()
+
+                for mat in mats:
+                    batch_id = None
+                    bin_id = None
+                    if mdo.material_issue_id:
+                        from app.models.issue import MaterialIssueItem
+                        mi_item_res = await db.execute(
+                            select(MaterialIssueItem).where(
+                                MaterialIssueItem.issue_id == mdo.material_issue_id,
+                                MaterialIssueItem.item_id == mat.material_id
+                            ).limit(1)
+                        )
+                        mi_item = mi_item_res.scalar_one_or_none()
+                        if mi_item:
+                            batch_id = mi_item.batch_id
+                            bin_id = mi_item.bin_id
+
+                    qty = Decimal(str(mat.quantity))
+
+                    # INVENTORY RULE: On handover of leg N (N > 1), shift available_qty → transit_qty at sender warehouse
+                    sender_balance = await _get_or_create_balance(
+                        db,
+                        item_id=mat.material_id,
+                        warehouse_id=sender_wh_id,
+                        bin_id=bin_id,
+                        batch_id=batch_id,
+                        lock=True,
+                    )
+                    # Reduce available_qty (clamp at zero)
+                    sender_balance.available_qty = max(
+                        Decimal("0"),
+                        (sender_balance.available_qty or Decimal("0")) - qty
+                    )
+                    # Increment transit_qty
+                    sender_balance.transit_qty = (sender_balance.transit_qty or Decimal("0")) + qty
+
+                await db.flush()
+
+                # Notify next-leg custodian's warehouse users about incoming shipment
+                try:
+                    from app.api.v1.dispatch import get_destination_position_id as _get_dest_pos
+                    dest_pos_id_for_notify = await get_destination_position_id(db, mdo.destination_warehouse_id, mdo.destination_user_id)
+                    project_id_for_notify = await resolve_mdo_project_id(db, mdo.indent_id, mdo.material_issue_id)
+                    starting_pos_id_for_notify = await resolve_indent_creator_position(db, mdo.indent_id, mdo.material_issue_id)
+                    chain_notify_data = []
+                    if project_id_for_notify and starting_pos_id_for_notify:
+                        chain_notify_data = await build_logistics_custody_chain(db, project_id_for_notify, starting_pos_id_for_notify, dest_pos_id_for_notify)
+                    chain_notify = [entry["position"] for entry in chain_notify_data if entry.get("can_approve", False) or entry.get("is_destination", False)]
+                    if sdo.sequence_number < len(chain_notify):
+                        next_pos = chain_notify[sdo.sequence_number]
+                        from app.models.settings_master import Employee as _Emp
+                        from app.models.user import User as _User
+                        next_user_res = await db.execute(
+                            select(_User).join(_Emp, _Emp.id == _User.employee_id)
+                            .where(_Emp.position_id == next_pos.id)
+                        )
+                        for next_user in next_user_res.scalars().all():
+                            db.add(Notification(
+                                user_id=next_user.id,
+                                title="Dispatch Shipment En Route",
+                                message=f"Dispatch {mdo.mdo_number} (SDO leg {sdo.sequence_number}) has been handed over by {current_user.username} and is now in transit to your custody. Please be prepared to receive.",
+                                type="info",
+                                module="logistics",
+                                reference_type="MDO",
+                                reference_id=mdo.id
+                            ))
+                except Exception:
+                    pass
+        except Exception as handover_stock_err:
+            import logging
+            logging.getLogger(__name__).exception("Failed to perform intermediate warehouse handover stock transfer")
 
     # Dynamic creation of the next SDO leg
     from app.api.v1.dispatch import get_destination_position_id
@@ -1308,6 +1516,25 @@ async def sdo_receive(
     mdo = sdo.mdo
     if not mdo:
         raise HTTPException(404, "Parent MDO not found")
+
+    # Prevent receive on final terminal leg
+    try:
+        from app.api.v1.dispatch import get_destination_position_id
+        dest_pos_id = await get_destination_position_id(db, mdo.destination_warehouse_id, mdo.destination_user_id)
+        project_id = await resolve_mdo_project_id(db, mdo.indent_id, mdo.material_issue_id)
+        starting_pos_id = await resolve_indent_creator_position(db, mdo.indent_id, mdo.material_issue_id)
+
+        chain_data = []
+        if mdo.dispatch_mode == "multi-level" and project_id and starting_pos_id:
+            chain_data = await build_logistics_custody_chain(db, project_id, starting_pos_id, dest_pos_id)
+        chain = [entry["position"] for entry in chain_data if entry.get("can_approve", False) or entry.get("is_destination", False)]
+
+        if chain and sdo.sequence_number >= len(chain):
+            raise HTTPException(400, "Final delivery acknowledgement must be processed via the Acknowledge Delivery tab.")
+    except HTTPException:
+        raise
+    except Exception:
+        pass
 
     # Auth check: user must occupy the custodian position for this SDO.
     # Check ALL positions this employee holds, not just the currently-active one, so
@@ -1440,6 +1667,18 @@ async def sdo_receive(
         description=f"Custody of SDO leg {sdo.sdo_number} acknowledged by {current_user.username} (Status: {mdo.status})."
     ))
 
+    # Notify MDO creator/dispatcher of each custody acknowledgement for real-time visibility
+    if mdo.created_by:
+        db.add(Notification(
+            user_id=mdo.created_by,
+            title="Dispatch Custody Leg Acknowledged",
+            message=f"Dispatch {mdo.mdo_number}: SDO leg {sdo.sdo_number} (sequence {sdo.sequence_number}) has been acknowledged by {current_user.username}. Inventory updated accordingly.",
+            type="info",
+            module="logistics",
+            reference_type="MDO",
+            reference_id=mdo.id
+        ))
+
     # Resolve custody chain to check if this is the final leg.
     # Wrap in try/except so chain resolution failures don't crash the acknowledgement.
     is_last_leg = False
@@ -1468,23 +1707,47 @@ async def sdo_receive(
         if len(all_sdo_ids) <= 1:
             is_last_leg = True
 
-    # Stock transit movement for intermediate legs of multi-level dispatches
+    # Stock transit movement for intermediate legs of multi-level dispatches.
+    # INVENTORY RULE at SDO RECEIVE (intermediate leg):
+    #   1. Decrement transit_qty at PREVIOUS warehouse (the one that handed over)
+    #   2. Decrement total_qty at PREVIOUS warehouse (goods physically left that warehouse)
+    #   3. Increment available_qty at CURRENT warehouse (goods arrived and receivable)
+    #   4. Increment total_qty at CURRENT warehouse (goods physically present now)
+    # Notify current warehouse users that stock has arrived and DM dispatch can proceed.
     if mdo.dispatch_mode == "multi-level" and not is_last_leg:
         try:
             from app.api.v1.dispatch import get_warehouse_for_position
-            from app.models.logistics import LogisticsDispatchMaterial
-            from app.services.stock_service import _get_or_create_balance
+            from app.services.stock_service import _get_or_create_balance, post_stock_ledger
             from decimal import Decimal
 
-            prev_wh_id = mdo.warehouse_id
-            if sdo.sequence_number > 1 and "chain" in locals() and chain and len(chain) >= sdo.sequence_number - 1:
-                prev_pos = chain[sdo.sequence_number - 2]
-                prev_wh_id = await get_warehouse_for_position(db, prev_pos.id) or mdo.warehouse_id
+            # Resolve previous warehouse (the one that handed off to this SDO)
+            # PRIMARY: Look up the actual previous SDO in this MDO by sequence number
+            # and use its custodian_position_id to find the exact warehouse that handed over.
+            prev_wh_id = mdo.warehouse_id  # fallback to source
+            if sdo.sequence_number > 1:
+                prev_sdo_res = await db.execute(
+                    select(LogisticsSubDispatchOrder).where(
+                        LogisticsSubDispatchOrder.mdo_id == mdo.id,
+                        LogisticsSubDispatchOrder.sequence_number == sdo.sequence_number - 1
+                    ).order_by(LogisticsSubDispatchOrder.id.desc()).limit(1)
+                )
+                prev_sdo = prev_sdo_res.scalar_one_or_none()
+                if prev_sdo and prev_sdo.custodian_position_id:
+                    resolved_prev_wh = await get_warehouse_for_position(db, prev_sdo.custodian_position_id)
+                    if resolved_prev_wh:
+                        prev_wh_id = resolved_prev_wh
+                    elif "chain" in locals() and chain and len(chain) >= sdo.sequence_number - 1:
+                        # Secondary fallback: use chain index
+                        prev_pos = chain[sdo.sequence_number - 2]
+                        prev_wh_id = await get_warehouse_for_position(db, prev_pos.id) or mdo.warehouse_id
+                elif "chain" in locals() and chain and len(chain) >= sdo.sequence_number - 1:
+                    prev_pos = chain[sdo.sequence_number - 2]
+                    prev_wh_id = await get_warehouse_for_position(db, prev_pos.id) or mdo.warehouse_id
 
+            # Resolve current warehouse (the receiver / this SDO's custodian)
             curr_wh_id = await get_warehouse_for_position(db, sdo.custodian_position_id) or mdo.destination_warehouse_id
 
-            if prev_wh_id and curr_wh_id and prev_wh_id != curr_wh_id:
-                # Fetch materials for this MDO
+            if prev_wh_id and curr_wh_id:
                 res_mats = await db.execute(
                     select(LogisticsDispatchMaterial).where(LogisticsDispatchMaterial.mdo_id == mdo.id)
                 )
@@ -1506,30 +1769,80 @@ async def sdo_receive(
                             batch_id = mi_item.batch_id
                             bin_id = mi_item.bin_id
 
-                    # Decrement transit_qty in prev_wh_id
-                    prev_balance = await _get_or_create_balance(
-                        db,
-                        item_id=mat.material_id,
-                        warehouse_id=prev_wh_id,
-                        bin_id=bin_id,
-                        batch_id=batch_id,
-                        lock=True,
-                    )
                     qty = Decimal(str(mat.quantity))
-                    prev_balance.transit_qty = max(Decimal("0"), (prev_balance.transit_qty or Decimal("0")) - qty)
 
-                    # Increment transit_qty in curr_wh_id
-                    curr_balance = await _get_or_create_balance(
+                    # Step 1 & 2: At PREVIOUS warehouse — clear transit_qty AND total_qty.
+                    #
+                    # For multi-level dispatch, dispatch_material_issue() does NOT deduct
+                    # total_qty at source (it only converts reserved→transit at create_mdo).
+                    # The physical total_qty deduction at source happens HERE (SDO1 receive)
+                    # when RM confirms goods arrived. For subsequent legs (SDO2+), the
+                    # intermediate WH had its total credited at its own SDO receive, so
+                    # decrementing here is equally correct for all sequence numbers.
+                    if prev_wh_id != curr_wh_id:
+                        prev_balance = await _get_or_create_balance(
+                            db,
+                            item_id=mat.material_id,
+                            warehouse_id=prev_wh_id,
+                            bin_id=bin_id,
+                            batch_id=batch_id,
+                            lock=True,
+                        )
+                        # Clear transit_qty (was set at handover / MDO create)
+                        prev_balance.transit_qty = max(Decimal("0"), (prev_balance.transit_qty or Decimal("0")) - qty)
+                        
+                        # Post stock ledger entry to deduct total quantity and record the transfer out
+                        await post_stock_ledger(
+                            db,
+                            item_id=mat.material_id,
+                            warehouse_id=prev_wh_id,
+                            transaction_type="transfer_out",
+                            qty_out=qty,
+                            batch_id=batch_id,
+                            bin_id=bin_id,
+                            reference_type="sub_dispatch_order",
+                            reference_id=sdo.id,
+                            uom_id=1,
+                            created_by=current_user.id,
+                        )
+
+                    # Steps 3 & 4: At CURRENT warehouse — add to available_qty and total_qty (goods physically arrived)
+                    await post_stock_ledger(
                         db,
                         item_id=mat.material_id,
                         warehouse_id=curr_wh_id,
-                        bin_id=bin_id,
+                        transaction_type="transfer_in",
+                        qty_in=qty,
                         batch_id=batch_id,
-                        lock=True,
+                        bin_id=bin_id,
+                        reference_type="sub_dispatch_order",
+                        reference_id=sdo.id,
+                        uom_id=1,
+                        created_by=current_user.id,
                     )
-                    curr_balance.transit_qty = (curr_balance.transit_qty or Decimal("0")) + qty
 
                 await db.flush()
+
+                # Notify current warehouse users that stock has arrived (DM dispatch can now proceed)
+                try:
+                    from app.models.user import User as _NotifUser
+                    from app.models.user import UserWarehouse as _UW
+                    curr_wh_user_res = await db.execute(
+                        select(_NotifUser).join(_UW, _UW.user_id == _NotifUser.id)
+                        .where(_UW.warehouse_id == curr_wh_id)
+                    )
+                    for wh_user in curr_wh_user_res.scalars().all():
+                        db.add(Notification(
+                            user_id=wh_user.id,
+                            title="Stock Received at Your Warehouse",
+                            message=f"Dispatch {mdo.mdo_number}: Stock has arrived at your warehouse (SDO leg {sdo.sequence_number} received). Inventory updated. Proceed with DM dispatch when ready.",
+                            type="success",
+                            module="logistics",
+                            reference_type="MDO",
+                            reference_id=mdo.id
+                        ))
+                except Exception:
+                    pass
         except Exception as stock_move_err:
             import logging
             logging.getLogger(__name__).exception("Failed to perform intermediate warehouse transit stock transfer")
@@ -1578,7 +1891,6 @@ async def sdo_receive(
             db.add(disp)
             await db.flush()
 
-            from app.models.logistics import LogisticsDispatchMaterial
             res_mats = await db.execute(select(LogisticsDispatchMaterial).where(LogisticsDispatchMaterial.mdo_id == mdo.id))
             mats = res_mats.scalars().all()
             for mat in mats:
@@ -1598,14 +1910,142 @@ async def sdo_receive(
 
         # Process stock deduction; wrap in try/except so a stock failure
         # does not crash the acknowledgement itself.
+        # NOTE: For multi-level dispatches, the last-leg `process_dispatch_stock_deduction`
+        # deducts from mdo.warehouse_id (origin). But for multi-level, stock was already
+        # tracked through the SDO chain. Here we only need to add stock to the destination.
+        # Check if this is multi-level and skip the origin deduction in that case.
         try:
-            from app.api.v1.dispatch import process_dispatch_stock_deduction
-            await process_dispatch_stock_deduction(db, disp, mdo.created_by or 1)
+            dispatch_mode_val = getattr(mdo, "dispatch_mode", "direct") or "direct"
+            if dispatch_mode_val.lower() == "multi-level":
+                # For multi-level: stock was already removed from origin at SDO1 handover.
+                # We need only to credit destination warehouse with the received stock.
+                from app.services.stock_service import _get_or_create_balance, post_stock_ledger
+                from decimal import Decimal
+
+                dest_wh_id = mdo.destination_warehouse_id
+                if dest_wh_id:
+                    # Resolve last intermediate warehouse to decrement its transit_qty
+                    from app.api.v1.dispatch import get_last_intermediate_warehouse, get_warehouse_for_position
+                    last_int_wh_id = await get_last_intermediate_warehouse(db, disp)
+
+                    res_mats_final = await db.execute(select(LogisticsDispatchMaterial).where(LogisticsDispatchMaterial.mdo_id == mdo.id))
+                    mats_final = res_mats_final.scalars().all()
+
+                    for mat_f in mats_final:
+                        batch_id_f = None
+                        bin_id_f = None
+                        if mdo.material_issue_id:
+                            from app.models.issue import MaterialIssueItem
+                            mi_f_res = await db.execute(
+                                select(MaterialIssueItem).where(
+                                    MaterialIssueItem.issue_id == mdo.material_issue_id,
+                                    MaterialIssueItem.item_id == mat_f.material_id
+                                ).limit(1)
+                            )
+                            mi_f = mi_f_res.scalar_one_or_none()
+                            if mi_f:
+                                batch_id_f = mi_f.batch_id
+                                bin_id_f = mi_f.bin_id
+
+                        qty_f = Decimal(str(mat_f.quantity))
+
+                        # Decrement transit_qty from last intermediate warehouse
+                        if last_int_wh_id and last_int_wh_id != dest_wh_id:
+                            last_int_bal = await _get_or_create_balance(
+                                db,
+                                item_id=mat_f.material_id,
+                                warehouse_id=last_int_wh_id,
+                                bin_id=bin_id_f,
+                                batch_id=batch_id_f,
+                                lock=True,
+                            )
+                            last_int_bal.transit_qty = max(Decimal("0"), (last_int_bal.transit_qty or Decimal("0")) - qty_f)
+                            
+                            # Post stock ledger entry to deduct total quantity and record the transfer out
+                            await post_stock_ledger(
+                                db,
+                                item_id=mat_f.material_id,
+                                warehouse_id=last_int_wh_id,
+                                transaction_type="transfer_out",
+                                qty_out=qty_f,
+                                batch_id=batch_id_f,
+                                bin_id=bin_id_f,
+                                reference_type="sdo_final_delivery",
+                                reference_id=sdo.id,
+                                uom_id=1,
+                                created_by=current_user.id,
+                            )
+
+                        # Add to destination warehouse available_qty
+                        # Check for duplicate ledger entry to prevent double-posting
+                        from app.models.stock import StockLedger
+                        dup_check = await db.execute(
+                            select(StockLedger).where(
+                                StockLedger.reference_type == "sdo_final_delivery",
+                                StockLedger.reference_id == sdo.id,
+                                StockLedger.item_id == mat_f.material_id,
+                                StockLedger.warehouse_id == dest_wh_id,
+                            ).limit(1)
+                        )
+                        if not dup_check.scalar_one_or_none():
+                            await post_stock_ledger(
+                                db,
+                                item_id=mat_f.material_id,
+                                warehouse_id=dest_wh_id,
+                                transaction_type="transfer_in",
+                                qty_in=qty_f,
+                                batch_id=batch_id_f,
+                                bin_id=bin_id_f,
+                                reference_type="sdo_final_delivery",
+                                reference_id=sdo.id,
+                                uom_id=1,
+                                created_by=current_user.id,
+                            )
+                    await db.flush()
+            else:
+                from app.api.v1.dispatch import process_dispatch_stock_deduction
+                await process_dispatch_stock_deduction(db, disp, mdo.created_by or 1)
         except Exception as stock_err:
             import traceback
             traceback.print_exc()
-            print(f"[WARNING] Stock deduction failed for dispatch {disp.id}: {stock_err}")
-            # Continue — the acknowledgement is still valid even if stock deduction fails.
+            print(f"[WARNING] Stock movement failed for dispatch {disp.id}: {stock_err}")
+            # Continue — the acknowledgement is still valid even if stock movement fails.
+
+        # Notify destination warehouse users and MDO creator of final delivery
+        try:
+            from app.models.user import User as _FinalUser
+            from app.models.user import UserWarehouse as _FinalUW
+
+            # Notify destination warehouse users
+            if mdo.destination_warehouse_id:
+                dest_wh_user_res = await db.execute(
+                    select(_FinalUser).join(_FinalUW, _FinalUW.user_id == _FinalUser.id)
+                    .where(_FinalUW.warehouse_id == mdo.destination_warehouse_id)
+                )
+                for dw_user in dest_wh_user_res.scalars().all():
+                    db.add(Notification(
+                        user_id=dw_user.id,
+                        title="Dispatch Delivered — Inventory Updated",
+                        message=f"Dispatch {mdo.mdo_number} has been fully delivered and acknowledged by {current_user.username}. Stock has been credited to your warehouse.",
+                        type="success",
+                        module="logistics",
+                        reference_type="MDO",
+                        reference_id=mdo.id
+                    ))
+
+            # Notify MDO creator/dispatcher
+            if mdo.created_by and mdo.created_by != current_user.id:
+                db.add(Notification(
+                    user_id=mdo.created_by,
+                    title="Dispatch Delivery Confirmed",
+                    message=f"Dispatch {mdo.mdo_number} has been successfully delivered and acknowledged at the destination. All inventory records have been updated.",
+                    type="success",
+                    module="logistics",
+                    reference_type="MDO",
+                    reference_id=mdo.id
+                ))
+        except Exception:
+            pass
 
     await db.commit()
     return {"success": True, "message": "Custody leg acknowledgment processed successfully.", "is_last": is_last_leg}
@@ -1652,7 +2092,7 @@ async def get_rfqs(db: AsyncSession = Depends(get_db), current_user: User = Depe
     res = await db.execute(
         select(LogisticsRfqMaster)
         .options(
-            selectinload(LogisticsRfqMaster.mappings).joinedload(LogisticsRfqDispatchMapping.sdo),
+            selectinload(LogisticsRfqMaster.mappings).joinedload(LogisticsRfqDispatchMapping.sdo).selectinload(LogisticsSubDispatchOrder.materials).joinedload(LogisticsDispatchMaterial.material),
             selectinload(LogisticsRfqMaster.invited_vendors).joinedload(LogisticsRfqVendor.vendor),
             selectinload(LogisticsRfqMaster.responses).selectinload(LogisticsRfqResponse.vehicles),
             selectinload(LogisticsRfqMaster.responses).selectinload(LogisticsRfqResponse.assignments).joinedload(LogisticsRfqResponseSdoAssignment.sdo),
@@ -1685,8 +2125,46 @@ async def get_rfqs(db: AsyncSession = Depends(get_db), current_user: User = Depe
             evaluation_criteria=r.evaluation_criteria,
             created_at=r.created_at,
             invited_vendors=[],
-            responses=[]
+            responses=[],
+            materials=[]
         )
+
+        for mapping in r.mappings:
+            if mapping.sdo and mapping.sdo.materials:
+                for mat in mapping.sdo.materials:
+                    rfq_res.materials.append(
+                        DispatchMaterialResponse(
+                            id=mat.id,
+                            mdo_id=mat.mdo_id,
+                            sdo_id=mat.sdo_id,
+                            material_id=mat.material_id,
+                            material_code=mat.material.item_code if mat.material else None,
+                            material_name=mat.material.name if mat.material else None,
+                            quantity=float(mat.quantity),
+                            unit_of_measure=mat.unit_of_measure,
+                            total_weight_kg=float(mat.total_weight_kg),
+                            total_volume_cft=float(mat.total_volume_cft),
+                            unit_price=float(mat.unit_price),
+                            total_value=float(mat.total_value),
+                            batch_number=mat.batch_number,
+                            serial_numbers=mat.serial_numbers,
+                            number_of_packages=mat.number_of_packages,
+                            package_type=mat.package_type,
+                            handling_instructions=mat.handling_instructions,
+                            special_storage_condition=mat.material.special_storage_condition if mat.material else False,
+                            storage_min_temp=float(mat.material.storage_min_temp) if (mat.material and mat.material.storage_min_temp is not None) else None,
+                            storage_max_temp=float(mat.material.storage_max_temp) if (mat.material and mat.material.storage_max_temp is not None) else None,
+                            storage_min_moisture=float(mat.material.storage_min_moisture) if (mat.material and mat.material.storage_min_moisture is not None) else None,
+                            storage_max_moisture=float(mat.material.storage_max_moisture) if (mat.material and mat.material.storage_max_moisture is not None) else None,
+                            storage_breakable=mat.material.storage_breakable if mat.material else False,
+                            special_transport_condition=mat.material.special_transport_condition if mat.material else False,
+                            transport_min_temp=float(mat.material.transport_min_temp) if (mat.material and mat.material.transport_min_temp is not None) else None,
+                            transport_max_temp=float(mat.material.transport_max_temp) if (mat.material and mat.material.transport_max_temp is not None) else None,
+                            transport_min_moisture=float(mat.material.transport_min_moisture) if (mat.material and mat.material.transport_min_moisture is not None) else None,
+                            transport_max_moisture=float(mat.material.transport_max_moisture) if (mat.material and mat.material.transport_max_moisture is not None) else None,
+                            transport_breakable=mat.material.transport_breakable if mat.material else False
+                        )
+                    )
 
         for iv in r.invited_vendors:
             rfq_res.invited_vendors.append(
@@ -1806,7 +2284,7 @@ async def create_rfq(payload: RfqCreateSchema, db: AsyncSession = Depends(get_db
         expected_delivery_date=expected_delivery_dt,
         total_estimated_weight_kg=total_wt,
         total_estimated_volume_cft=total_vol,
-        vehicle_type_required=vehicle_req,
+        vehicle_type_required=payload.vehicle_type_required or vehicle_req,
         payment_terms=payload.paymentTerms,
         advance_payment_percentage=payload.advancePercentage,
         insurance_required=payload.insuranceRequired,
@@ -2457,14 +2935,55 @@ async def update_so_vehicle_status(vehicle_id: int, payload: VehicleStatusUpdate
             db.add(so)
 
             if so.mdo_id:
-                await db.execute(
-                    update(LogisticsMainDispatchOrder)
-                    .where(LogisticsMainDispatchOrder.id == so.mdo_id)
-                    .values(status="COMPLETED")
-                )
-                await db.flush()
-                from app.api.v1.dispatch import sync_mdos_to_dispatches
-                await sync_mdos_to_dispatches(db)
+                # In multi-level dispatch, only complete the MDO if this is the final leg
+                res_mdo = await db.execute(select(LogisticsMainDispatchOrder).where(LogisticsMainDispatchOrder.id == so.mdo_id))
+                mdo = res_mdo.scalar_one_or_none()
+                is_mdo_completed = True
+                
+                if mdo and mdo.dispatch_mode == "multi-level":
+                    # Check if any SDO in this Service Order is not the last leg
+                    for m in mappings:
+                        res_sdo = await db.execute(select(LogisticsSubDispatchOrder).where(LogisticsSubDispatchOrder.id == m.sdo_id))
+                        current_sdo = res_sdo.scalar_one_or_none()
+                        if current_sdo:
+                            # Safely check if this is an intermediate leg based on the SDOs associated with this MDO in database
+                            res_mdo_sdos = await db.execute(
+                                select(LogisticsSubDispatchOrder)
+                                .where(LogisticsSubDispatchOrder.mdo_id == mdo.id)
+                            )
+                            mdo_sdos = res_mdo_sdos.scalars().all()
+                            max_seq = max((s.sequence_number for s in mdo_sdos), default=1)
+                            if current_sdo.sequence_number < max_seq:
+                                is_mdo_completed = False
+                                break
+
+                            try:
+                                from app.api.v1.dispatch import get_destination_position_id
+                                from app.api.v1.logistics import resolve_mdo_project_id, resolve_indent_creator_position, build_logistics_custody_chain
+                                dest_pos_id = await get_destination_position_id(db, mdo.destination_warehouse_id, mdo.destination_user_id)
+                                project_id = await resolve_mdo_project_id(db, mdo.indent_id, mdo.material_issue_id)
+                                starting_pos_id = await resolve_indent_creator_position(db, mdo.indent_id, mdo.material_issue_id)
+
+                                chain_data = []
+                                if project_id and starting_pos_id:
+                                    chain_data = await build_logistics_custody_chain(db, project_id, starting_pos_id, dest_pos_id)
+                                chain = [entry["position"] for entry in chain_data if entry.get("can_approve", False) or entry.get("is_destination", False)]
+
+                                if chain and current_sdo.sequence_number < len(chain):
+                                    is_mdo_completed = False
+                                    break
+                            except Exception:
+                                pass
+
+                if is_mdo_completed:
+                    await db.execute(
+                        update(LogisticsMainDispatchOrder)
+                        .where(LogisticsMainDispatchOrder.id == so.mdo_id)
+                        .values(status="COMPLETED")
+                    )
+                    await db.flush()
+                    from app.api.v1.dispatch import sync_mdos_to_dispatches
+                    await sync_mdos_to_dispatches(db)
 
     db.add(v)
 
@@ -3035,6 +3554,11 @@ async def acknowledge_mdo(id: int, db: AsyncSession = Depends(get_db), current_u
 
     mdo.status = "ACKNOWLEDGED"
     db.add(mdo)
+    await db.flush()
+
+    # Sync MDO to DispatchOrder first so we have the DispatchOrder and sync the status to 'acknowledged'
+    from app.api.v1.dispatch import sync_mdos_to_dispatches
+    await sync_mdos_to_dispatches(db)
 
     # Trigger auto acknowledgement merge!
     from app.services.scm_integration import auto_acknowledge_scm_dispatch

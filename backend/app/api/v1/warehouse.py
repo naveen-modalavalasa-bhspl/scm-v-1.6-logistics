@@ -3370,8 +3370,45 @@ async def dispatch_material_issue(
         raise HTTPException(status_code=400, detail="Material issue has no items")
 
     from app.services.stock_service import release_reservation, post_stock_ledger
+    from decimal import Decimal
+
+    # ── Determine if this MI is part of a multi-level MDO ──────────────────
+    # For multi-level dispatch, stock state is managed by the SDO handover/receive
+    # workflow in logistics.py. The reserved→transit conversion was done at create_mdo().
+    # The physical total_qty deduction happens at SDO1 receive (RM confirmation).
+    # We must NOT release reservation or deduct total here for multi-level.
+    #
+    # For the Central Warehouse (parent_id IS NULL), the reserved→transit conversion
+    # is ALSO handled at create_mdo() — so if this MI has an MDO of any dispatch_mode
+    # from the Central WH, the stock is already in transit and we skip the standard flow.
+    is_multi_level_mdo = False
+    try:
+        from app.models.logistics import LogisticsMainDispatchOrder as _LMDO_DISP
+        mdo_disp_chk = await db.execute(
+            select(_LMDO_DISP).where(
+                _LMDO_DISP.material_issue_id == mi.id,
+                _LMDO_DISP.dispatch_mode == "multi-level"
+            ).limit(1)
+        )
+        if mdo_disp_chk.scalar_one_or_none():
+            is_multi_level_mdo = True
+    except Exception:
+        pass
+
     issue_gl_items: list[dict] = []
     for item in mi.items:
+        if is_multi_level_mdo:
+            # Multi-level: stock state was handled at create_mdo (reserved→transit).
+            # Physical deduction happens at SDO1 receive. Skip stock moves here.
+            # Just collect GL items using the item's current rate for accounting.
+            issue_gl_items.append({
+                "item_id": item.item_id,
+                "qty": item.qty,
+                "rate": item.rate or Decimal("0"),
+            })
+            continue
+
+        # ── Direct dispatch: standard release + deduct flow ──────────────
         # 1. Release reservation
         await release_reservation(
             db,
@@ -3409,7 +3446,7 @@ async def dispatch_material_issue(
             "rate": (ledger_row.rate if ledger_row else None) or item.rate or Decimal("0"),
         })
 
-        # 3. For inter-warehouse transfers, increase the transit_qty in the source warehouse
+        # 3. For direct inter-warehouse transfers, set transit_qty at source
         if mi.destination_warehouse_id and mi.destination_warehouse_id != mi.warehouse_id:
             from app.services.stock_service import _get_or_create_balance
             src_balance = await _get_or_create_balance(
@@ -3444,6 +3481,7 @@ async def dispatch_material_issue(
 
     await db.flush()
     return {"id": mi.id, "issue_number": mi.issue_number, "message": "Material issue dispatched successfully"}
+
 
 
 @router.post("/material-issues/{issue_id}/cancel", dependencies=[Depends(require_key("warehouse-material-issues"))])
@@ -3658,6 +3696,22 @@ async def acknowledge_material_issue(
     # Post stock ledger entries at the destination warehouse if destination_warehouse_id is set
     if mi.destination_warehouse_id:
         from app.services.stock_service import post_stock_ledger, _get_or_create_balance
+
+        # Determine if source is Central Warehouse (uses deferred-deduction model)
+        _is_central_ack = False
+        try:
+            from app.models.warehouse import Warehouse as _WHAck
+            _wh_ack_res = await db.execute(select(_WHAck).where(_WHAck.id == mi.warehouse_id))
+            _src_wh_ack = _wh_ack_res.scalar_one_or_none()
+            if _src_wh_ack and (
+                (_src_wh_ack.name or "").upper() == "CENTRAL"
+                or (_src_wh_ack.code or "") == "20070"
+                or _src_wh_ack.id == 18
+            ):
+                _is_central_ack = True
+        except Exception:
+            pass
+
         for item in mi.items:
             # Decrement transit_qty in source warehouse
             if mi.destination_warehouse_id != mi.warehouse_id:
@@ -3670,6 +3724,25 @@ async def acknowledge_material_issue(
                     lock=True,
                 )
                 src_balance.transit_qty = max(Decimal("0"), (src_balance.transit_qty or Decimal("0")) - Decimal(str(item.qty)))
+
+                # Central Warehouse deferred deduction: the dispatch step only did
+                # reserved→transit, so we must post the physical stock deduction here
+                # at acknowledgement time (when goods leave CEN custody permanently).
+                if _is_central_ack:
+                    await post_stock_ledger(
+                        db,
+                        item_id=item.item_id,
+                        warehouse_id=mi.warehouse_id,
+                        transaction_type="material_issue",
+                        qty_out=item.qty,
+                        rate=item.rate,
+                        bin_id=item.bin_id,
+                        batch_id=item.batch_id,
+                        reference_type="material_issue",
+                        reference_id=mi.id,
+                        uom_id=item.uom_id,
+                        created_by=current_user.id,
+                    )
 
             await post_stock_ledger(
                 db,
@@ -3685,6 +3758,7 @@ async def acknowledge_material_issue(
                 uom_id=item.uom_id,
                 created_by=current_user.id,
             )
+
 
     # -----------------------------------------------------------------------
     # After acknowledgement, update the linked indent's fulfillment status.

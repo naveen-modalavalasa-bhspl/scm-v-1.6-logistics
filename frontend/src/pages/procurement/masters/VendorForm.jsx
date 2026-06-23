@@ -85,6 +85,8 @@ const VendorForm = () => {
       const values = await form.validateFields();
       const payload = {
         ...values,
+        phone: values.phone ? values.phone.replace(/[\s\-()]/g, '') : values.phone,
+        alt_phone: values.alt_phone ? values.alt_phone.replace(/[\s\-()]/g, '') : values.alt_phone,
         is_active: values.status === 'inactive' ? false : true,
       };
 
@@ -199,12 +201,42 @@ const VendorForm = () => {
                     </Row>
                     <Row gutter={16}>
                       <Col span={12}>
-                        <Form.Item name="phone" label="Phone" rules={[{ pattern: /^[0-9+\-\s()]{6,20}$/, message: 'Please enter a valid phone number (6-20 digits)' }]}>
+                        <Form.Item
+                          name="phone"
+                          label="Phone"
+                          rules={[
+                            {
+                              validator: (_, value) => {
+                                if (!value) return Promise.resolve();
+                                const cleaned = value.replace(/[\s\-()]/g, '');
+                                if (/^(?:\+?91|0)?[6-9]\d{9}$/.test(cleaned) || /^\+?[1-9]\d{9,14}$/.test(cleaned)) {
+                                  return Promise.resolve();
+                                }
+                                return Promise.reject(new Error('Enter a valid 10-digit mobile number starting with 6-9, optionally with country code'));
+                              }
+                            }
+                          ]}
+                        >
                           <Input placeholder="Phone number" />
                         </Form.Item>
                       </Col>
                       <Col span={12}>
-                        <Form.Item name="alt_phone" label="Alt Phone" rules={[{ pattern: /^[0-9+\-\s()]{6,20}$/, message: 'Please enter a valid alternate phone number' }]}>
+                        <Form.Item
+                          name="alt_phone"
+                          label="Alt Phone"
+                          rules={[
+                            {
+                              validator: (_, value) => {
+                                if (!value) return Promise.resolve();
+                                const cleaned = value.replace(/[\s\-()]/g, '');
+                                if (/^(?:\+?91|0)?[6-9]\d{9}$/.test(cleaned) || /^\+?[1-9]\d{9,14}$/.test(cleaned)) {
+                                  return Promise.resolve();
+                                }
+                                return Promise.reject(new Error('Enter a valid 10-digit mobile number, optionally with country code'));
+                              }
+                            }
+                          ]}
+                        >
                           <Input placeholder="Alternate phone" />
                         </Form.Item>
                       </Col>
@@ -278,7 +310,10 @@ const VendorForm = () => {
                         <Form.Item
                           name="gst_number"
                           label="GST Number"
-                          rules={[{ pattern: /^[0-9]{2}[A-Z0-9]{10}[A-Z0-9]{3}$/, message: 'Enter a valid 15-character GSTIN' }]}
+                          rules={[
+                            { required: true, message: 'GST Number is required' },
+                            { pattern: /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/, message: 'Enter a valid 15-character GSTIN (e.g., 29ABCDE1234F1Z5)' }
+                          ]}
                         >
                           <Input placeholder="GSTIN" style={{ textTransform: 'uppercase' }} onChange={(e) => form.setFieldsValue({ gst_number: e.target.value.toUpperCase() })} />
                         </Form.Item>
@@ -287,7 +322,10 @@ const VendorForm = () => {
                         <Form.Item
                           name="pan_number"
                           label="PAN Number"
-                          rules={[{ pattern: /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/, message: 'Enter a valid 10-character PAN number' }]}
+                          rules={[
+                            { required: true, message: 'PAN Number is required' },
+                            { pattern: /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/, message: 'Enter a valid 10-character PAN number (e.g., ABCDE1234F)' }
+                          ]}
                         >
                           <Input placeholder="PAN" style={{ textTransform: 'uppercase' }} onChange={(e) => form.setFieldsValue({ pan_number: e.target.value.toUpperCase() })} />
                         </Form.Item>

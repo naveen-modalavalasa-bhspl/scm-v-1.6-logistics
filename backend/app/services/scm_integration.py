@@ -245,6 +245,21 @@ async def auto_acknowledge_scm_dispatch(db: AsyncSession, mdo_id: int, current_u
                         qty = Decimal(str(mat.quantity))
                         src_balance.transit_qty = max(Decimal("0"), (src_balance.transit_qty or Decimal("0")) - qty)
 
+                        if mdo.dispatch_mode.lower() == "multi-level" and transit_wh_id != dest_wh_id:
+                            await post_stock_ledger(
+                                db,
+                                item_id=mat.material_id,
+                                warehouse_id=transit_wh_id,
+                                transaction_type="transfer_out",
+                                qty_out=qty,
+                                batch_id=batch_id,
+                                bin_id=bin_id,
+                                reference_type="indent_acknowledgement",
+                                reference_id=ack.id,
+                                uom_id=1,
+                                created_by=current_user_id,
+                            )
+
                         # Increment available quantity in destination warehouse
                         await post_stock_ledger(
                             db,

@@ -42,6 +42,7 @@ export const MODULE_NAVS = {
           { label: 'Items', path: '/inventory/masters/items' },
           { label: 'Packaging', path: '/inventory/masters/packaging' },
           { label: 'Categories', path: '/inventory/masters/categories' },
+          { label: 'Features', path: '/inventory/masters/features' },
           { label: 'User Mapping', path: '/inventory/masters/user-material-mapping' },
           { label: 'UOM', path: '/inventory/masters/uom' },
           { label: 'Brands', path: '/inventory/masters/brands' },

@@ -163,11 +163,7 @@ const MaterialIssueForm = () => {
 
   const loadIndentOptions = useCallback(async (search = '') => {
     try {
-      const warehouseId = form.getFieldValue('warehouse_id');
       const params = { page_size: 50, search, available_for_issue: true };
-      if (warehouseId) {
-        params.warehouse_id = warehouseId;
-      }
       const res = await api.get('/indent/indents', { params });
       const data = res.data;
       const items = data.items || data.data || data || [];
@@ -1003,9 +999,26 @@ const MaterialIssueForm = () => {
                   rateUpdate = { rate: selectedBatch.rate };
                 }
               }
+              
+              // Filter current bin selection to only bins that are valid for the new batch selection
+              let updatedBinIds = record.bin_ids || (record.bin_id ? [record.bin_id] : []);
+              if (selectedValues.length > 0) {
+                const details = itemStockDetails[record.item_id] || { rawRows: [] };
+                const validBinIds = new Set(
+                  (details.rawRows || [])
+                    .filter(r => selectedValues.some(bId => String(bId) === String(r.batch_id)))
+                    .map(r => r.bin_id)
+                );
+                updatedBinIds = updatedBinIds.filter(bId => validBinIds.has(bId));
+              } else if (record.has_batch) {
+                updatedBinIds = [];
+              }
+
               updateIssueItemFields(record.key, {
                 batch_ids: selectedValues,
                 batch_id: firstBatchId,
+                bin_ids: updatedBinIds,
+                bin_id: updatedBinIds[0] || null,
                 serial_numbers: [],
                 ...rateUpdate
               });
@@ -1030,7 +1043,7 @@ const MaterialIssueForm = () => {
       width: 160,
       render: (val, record) => {
         const warehouseId = form.getFieldValue('warehouse_id');
-        const details = itemStockDetails[record.item_id] || { batches: [], bins: [] };
+        const details = itemStockDetails[record.item_id] || { batches: [], bins: [], rawRows: [] };
         if (!record.item_id || !warehouseId) {
           return (
             <Select
@@ -1042,7 +1055,44 @@ const MaterialIssueForm = () => {
             />
           );
         }
-        if (details.bins.length === 0) {
+        
+        const selectedBatches = record.batch_ids || (record.batch_id ? [record.batch_id] : []);
+        if (record.has_batch && selectedBatches.length === 0) {
+          return (
+            <Select
+              value={val}
+              disabled
+              placeholder="Select batch first"
+              size="small"
+              style={{ width: '100%' }}
+            />
+          );
+        }
+
+        let binOptions = details.bins;
+        if (selectedBatches.length > 0) {
+          const filteredRows = (details.rawRows || []).filter(r =>
+            selectedBatches.some(bId => String(bId) === String(r.batch_id))
+          );
+          const filteredBinMap = new Map();
+          filteredRows.forEach((r) => {
+            const bnid = r.bin_id;
+            const bCode = r.bin_code || r.bin_name || (bnid ? `Bin ${bnid}` : 'General Area');
+            const bnidKey = bnid === null ? 'null_bin' : bnid;
+            if (!filteredBinMap.has(bnidKey)) {
+              filteredBinMap.set(bnidKey, {
+                id: bnid,
+                code: bCode,
+                qty: Number(r.available_qty) || 0,
+              });
+            } else {
+              filteredBinMap.get(bnidKey).qty += Number(r.available_qty) || 0;
+            }
+          });
+          binOptions = Array.from(filteredBinMap.values());
+        }
+
+        if (binOptions.length === 0) {
           return (
             <Select
               value={val}
@@ -1064,7 +1114,7 @@ const MaterialIssueForm = () => {
                 serial_numbers: [],
               });
             }}
-            options={details.bins.map((b) => ({
+            options={binOptions.map((b) => ({
               label: `${b.code} - Qty: ${formatNumber(b.qty)}`,
               value: b.id,
             }))}

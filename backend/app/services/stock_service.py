@@ -203,7 +203,18 @@ async def post_stock_ledger(
     # attributes can lag a flushed update done elsewhere).
     await db.refresh(balance, attribute_names=["reserved_qty", "transit_qty"])
     balance.total_qty = new_qty
-    balance.available_qty = new_qty - (balance.reserved_qty or Decimal("0"))
+    # CRITICAL: available_qty = total - reserved - transit
+    # transit_qty represents stock physically on the way to another warehouse.
+    # It must be excluded from available so we never double-count in-transit
+    # stock as pickable inventory. Without this, every ledger post after a
+    # handover would restore available_qty to total-reserved, wiping out
+    # the transit tracking entirely.
+    balance.available_qty = max(
+        Decimal("0"),
+        new_qty
+        - (balance.reserved_qty or Decimal("0"))
+        - (balance.transit_qty or Decimal("0"))
+    )
     balance.stock_value = new_value
 
     # Auto-update has_batch flag in item master when stock is received under a batch
@@ -382,19 +393,30 @@ async def reserve_stock(
     bin_id: Optional[int] = None,
     batch_id: Optional[int] = None,
 ) -> bool:
-    """Reserve stock for an order. Returns True if sufficient stock available."""
+    """Reserve stock for an order. Returns True if sufficient stock available.
+
+    Available-to-reserve = total_qty - reserved_qty - transit_qty.
+    Stock in transit must NOT be reservable for a new order — it is already
+    committed to a delivery in flight.
+    """
     if qty < 0:
         raise ValueError(f"reserve_stock qty must be >= 0 (got {qty})")
     if qty == 0:
         return True
     balance = await _get_or_create_balance(db, item_id, warehouse_id, bin_id, batch_id, lock=True)
-    available = balance.available_qty or Decimal("0")
+    # True pickable available = total - already reserved - already in transit
+    available = max(
+        Decimal("0"),
+        (balance.total_qty or Decimal("0"))
+        - (balance.reserved_qty or Decimal("0"))
+        - (balance.transit_qty or Decimal("0"))
+    )
 
     if available < qty:
         return False
 
     balance.reserved_qty = (balance.reserved_qty or Decimal("0")) + qty
-    balance.available_qty = available - qty
+    balance.available_qty = max(Decimal("0"), available - qty)
     await db.flush()
     return True
 

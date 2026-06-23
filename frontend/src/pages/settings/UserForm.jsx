@@ -135,7 +135,11 @@ const UserForm = () => {
           role_id: parseInt(roleId, 10),
         }));
 
-      const payload = { ...values, warehouse_assignments };
+      const payload = {
+        ...values,
+        phone: values.phone ? values.phone.replace(/[\s\-()]/g, '') : values.phone,
+        warehouse_assignments
+      };
       // Remove form fields that aren't part of the API payload
       // role_ids is handled by the API via role_ids key — keep it
 
@@ -238,7 +242,7 @@ const UserForm = () => {
                   { pattern: /^[a-zA-Z0-9_]{3,100}$/, message: 'Only letters, numbers, underscore (3-100 chars)' },
                 ]}
               >
-                <Input placeholder="Enter username" disabled={!isNew} maxLength={100} />
+                <Input placeholder="Enter username" maxLength={100} />
               </Form.Item>
             </Col>
           </Row>
@@ -285,7 +289,18 @@ const UserForm = () => {
               <Form.Item
                 name="phone"
                 label="Phone"
-                rules={[{ pattern: /^[0-9+\-\s()]{6,20}$/, message: 'Enter a valid phone number (6-20 digits)' }]}
+                rules={[
+                  {
+                    validator: (_, value) => {
+                      if (!value) return Promise.resolve();
+                      const cleaned = value.replace(/[\s\-()]/g, '');
+                      if (/^(?:\+?91|0)?[6-9]\d{9}$/.test(cleaned) || /^\+?[1-9]\d{9,14}$/.test(cleaned)) {
+                        return Promise.resolve();
+                      }
+                      return Promise.reject(new Error('Enter a valid 10-digit mobile number, optionally with country code'));
+                    }
+                  }
+                ]}
               >
                 <Input placeholder="Enter phone number" maxLength={20} />
               </Form.Item>
@@ -309,7 +324,12 @@ const UserForm = () => {
                     },
                   ]}
                 >
-                  <Input.Password placeholder="Enter password" />
+                  <Input.Password
+                    placeholder="Enter password"
+                    onCopy={(e) => e.preventDefault()}
+                    onPaste={(e) => e.preventDefault()}
+                    onCut={(e) => e.preventDefault()}
+                  />
                 </Form.Item>
               )}
               {!isNew && (
@@ -329,7 +349,12 @@ const UserForm = () => {
                     },
                   ]}
                 >
-                  <Input.Password placeholder="Leave blank to keep current" />
+                  <Input.Password
+                    placeholder="Leave blank to keep current"
+                    onCopy={(e) => e.preventDefault()}
+                    onPaste={(e) => e.preventDefault()}
+                    onCut={(e) => e.preventDefault()}
+                  />
                 </Form.Item>
               )}
             </Col>

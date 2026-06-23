@@ -86,13 +86,17 @@ export default function LogisticsMaster() {
   const handleSaveCarrier = async (values) => {
     try {
       setCarriersLoading(true);
+      const payload = {
+        ...values,
+        phone: values.phone ? values.phone.replace(/[\s\-()]/g, '') : values.phone,
+      };
       if (editingCarrier) {
         // Update existing carrier
-        await api.put(`/logistics/carriers/${editingCarrier.vendor_id}`, values);
+        await api.put(`/logistics/carriers/${editingCarrier.vendor_id}`, payload);
         message.success("Transport carrier updated successfully!");
       } else {
         // Create new carrier
-        await api.post('/logistics/carriers', values);
+        await api.post('/logistics/carriers', payload);
         message.success("New transport carrier registered!");
       }
       setCarrierModalVisible(false);
@@ -359,7 +363,19 @@ export default function LogisticsMaster() {
             <Form.Item
               name="phone"
               label="Mobile Line"
-              rules={[{ required: true, message: 'Please enter mobile line' }]}
+              rules={[
+                { required: true, message: 'Please enter mobile line' },
+                {
+                  validator: (_, value) => {
+                    if (!value) return Promise.resolve();
+                    const cleaned = value.replace(/[\s\-()]/g, '');
+                    if (/^(?:\+?91|0)?[6-9]\d{9}$/.test(cleaned) || /^\+?[1-9]\d{9,14}$/.test(cleaned)) {
+                      return Promise.resolve();
+                    }
+                    return Promise.reject(new Error('Enter a valid 10-digit mobile number, optionally with country code'));
+                  }
+                }
+              ]}
             >
               <Input prefix={<PhoneOutlined />} placeholder="E.g. +91 9876543210" />
             </Form.Item>
@@ -430,7 +446,13 @@ export default function LogisticsMaster() {
             label={loginCarrier?.login ? 'New Password' : 'Password'}
             rules={[{ required: true, message: 'Password is required' }]}
           >
-            <Input.Password prefix={<LockOutlined />} placeholder="Define secure passcode" />
+            <Input.Password
+              prefix={<LockOutlined />}
+              placeholder="Define secure passcode"
+              onCopy={(e) => e.preventDefault()}
+              onPaste={(e) => e.preventDefault()}
+              onCut={(e) => e.preventDefault()}
+            />
           </Form.Item>
 
           {!loginCarrier?.login && (

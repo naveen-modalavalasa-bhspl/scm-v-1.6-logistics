@@ -38,6 +38,7 @@ _ALL_KEYS: Set[str] = {
     # 2. Inventory
     'inventory', 'inventory-dashboard', 'inventory-reports', 'inventory-notifications',
     'inventory-masters', 'inventory-masters-items', 'inventory-masters-packaging', 'inventory-masters-categories',
+    'inventory-masters-features',
     'inventory-masters-user-material-mapping', 'inventory-masters-uom', 'inventory-masters-brands', 'inventory-masters-item-types',
     'inventory-masters-item-attributes', 'inventory-masters-category-attribute-mapping', 'inventory-masters-specs',
     'inventory-masters-boms', 'inventory-masters-price-lists',
@@ -109,6 +110,7 @@ _ROLE_KEYS = {
         'warehouse-dispatch',
         'inventory', 'inventory-dashboard', 'inventory-reports', 'inventory-notifications',
         'inventory-masters', 'inventory-masters-items', 'inventory-masters-packaging', 'inventory-masters-categories',
+        'inventory-masters-features',
         'inventory-masters-user-material-mapping', 'inventory-masters-uom', 'inventory-masters-brands', 'inventory-masters-item-types',
         'inventory-masters-item-attributes', 'inventory-masters-category-attribute-mapping', 'inventory-masters-specs',
         'inventory-masters-boms', 'inventory-masters-price-lists',

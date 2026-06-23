@@ -855,7 +855,13 @@ const Vendors = () => {
               ])
             ]}
           >
-            <Input.Password prefix={<LockOutlined />} placeholder={supplierLoginMode === 'create' ? 'At least 8 characters' : 'Leave blank to keep current password'} />
+            <Input.Password
+              prefix={<LockOutlined />}
+              placeholder={supplierLoginMode === 'create' ? 'At least 8 characters' : 'Leave blank to keep current password'}
+              onCopy={(e) => e.preventDefault()}
+              onPaste={(e) => e.preventDefault()}
+              onCut={(e) => e.preventDefault()}
+            />
           </Form.Item>
           {supplierLoginMode !== 'create' && (
             <Form.Item name="is_active" label="Active" valuePropName="checked">

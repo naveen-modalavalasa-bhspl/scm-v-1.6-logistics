@@ -2,25 +2,22 @@ import React, { useState, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Button, Select, Space, Card, Row, Col, message, Descriptions, Divider,
-  Form, Input, InputNumber, Table, Typography, Tag, Spin, Empty, Modal,
-  Drawer,
+  Form, Input, InputNumber, Table, Typography, Tag, Spin, Empty, Badge,
 } from 'antd';
 import {
   CheckCircleOutlined, EyeOutlined, ScanOutlined,
-  ArrowLeftOutlined, InboxOutlined,
+  ArrowLeftOutlined, InboxOutlined, IdcardOutlined, UserOutlined,
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import PageHeader from '../../components/PageHeader';
 import DataTable from '../../components/DataTable';
 import StatusTag from '../../components/StatusTag';
-import BarcodeScanner from '../../components/BarcodeScanner';
 import api from '../../config/api';
 import {
   formatDate, formatDateTime, formatNumber, getErrorMessage,
 } from '../../utils/helpers';
 
 const { Text, Title } = Typography;
-const { TextArea } = Input;
 
 const Acknowledgement = () => {
   const navigate = useNavigate();
@@ -67,6 +64,15 @@ const Acknowledgement = () => {
       render: (v, r) => <a onClick={() => handleViewDetail(r)}>{v || r.indent?.indent_number || '-'}</a>,
     },
     { title: 'Warehouse', dataIndex: 'warehouse_name', key: 'warehouse', width: 160, render: (v, r) => v || r.warehouse || '-' },
+    {
+      title: 'Employee Code',
+      dataIndex: 'employee_code',
+      key: 'emp_code',
+      width: 140,
+      render: (v) => v ? (
+        <Tag icon={<IdcardOutlined />} color="blue" style={{ fontFamily: 'monospace' }}>{v}</Tag>
+      ) : '-',
+    },
     { title: 'Acknowledged By', dataIndex: 'acknowledged_by_name', key: 'ack_by', width: 160, render: (v, r) => v || r.acknowledged_by || '-' },
     { title: 'Acknowledged At', dataIndex: 'acknowledged_at', key: 'ack_at', width: 170, sorter: true, render: (v) => formatDateTime(v) },
     {
@@ -75,7 +81,10 @@ const Acknowledgement = () => {
       key: 'count',
       width: 130,
       align: 'right',
-      render: (v) => v || '-',
+      render: (v, r) => {
+        const count = v || (r.items ? r.items.length : 0);
+        return count ? <Badge count={count} showZero color="#6366f1" /> : '-';
+      },
     },
     {
       title: 'Total Received Qty',
@@ -124,23 +133,51 @@ const Acknowledgement = () => {
 
   if (detailRecord) {
     const ackDetailItems = detailRecord.items || [];
+    const employeeCode = detailRecord.employee_code;
+
     return (
       <div>
-        <PageHeader title={`Acknowledgement - ${detailRecord.indent_number || detailRecord.indent?.indent_number || ''}`} subtitle="Acknowledgement Detail">
+        <PageHeader
+          title={`Acknowledgement — ${detailRecord.indent_number || detailRecord.indent?.indent_number || ''}`}
+          subtitle="Acknowledgement Detail"
+        >
           <Button icon={<ArrowLeftOutlined />} onClick={() => setDetailRecord(null)}>Back to List</Button>
         </PageHeader>
         <Card>
           <Descriptions bordered size="small" column={{ xs: 1, sm: 2, md: 3 }}>
-            <Descriptions.Item label="Indent #">{detailRecord.indent_number || detailRecord.indent?.indent_number || '-'}</Descriptions.Item>
-            <Descriptions.Item label="Warehouse">{detailRecord.warehouse_name || '-'}</Descriptions.Item>
-            <Descriptions.Item label="Status"><StatusTag status={detailRecord.status || 'received'} /></Descriptions.Item>
-            <Descriptions.Item label="Acknowledged By">{detailRecord.acknowledged_by_name || detailRecord.acknowledged_by || '-'}</Descriptions.Item>
-            <Descriptions.Item label="Acknowledged At">{formatDateTime(detailRecord.acknowledged_at)}</Descriptions.Item>
-            <Descriptions.Item label="Scan Timestamp">{formatDateTime(detailRecord.scan_timestamp)}</Descriptions.Item>
-            <Descriptions.Item label="Remarks" span={3}>{detailRecord.remarks || '-'}</Descriptions.Item>
+            <Descriptions.Item label="Indent #">
+              {detailRecord.indent_number || detailRecord.indent?.indent_number || '-'}
+            </Descriptions.Item>
+            <Descriptions.Item label="Warehouse">
+              {detailRecord.warehouse_name || '-'}
+            </Descriptions.Item>
+            <Descriptions.Item label="Status">
+              <StatusTag status={detailRecord.status || 'received'} />
+            </Descriptions.Item>
+            <Descriptions.Item label={<span><IdcardOutlined style={{ marginRight: 4, color: '#6366f1' }} />Employee Code</span>}>
+              {employeeCode ? (
+                <Tag color="blue" style={{ fontFamily: 'monospace', fontWeight: 600 }}>{employeeCode}</Tag>
+              ) : '-'}
+            </Descriptions.Item>
+            <Descriptions.Item label={<span><UserOutlined style={{ marginRight: 4 }} />Acknowledged By</span>}>
+              {detailRecord.acknowledged_by_name || detailRecord.acknowledged_by || '-'}
+            </Descriptions.Item>
+            <Descriptions.Item label="Acknowledged At">
+              {formatDateTime(detailRecord.acknowledged_at)}
+            </Descriptions.Item>
+            <Descriptions.Item label="Scan Timestamp">
+              {formatDateTime(detailRecord.scan_timestamp)}
+            </Descriptions.Item>
+            <Descriptions.Item label="Remarks" span={3}>
+              {detailRecord.remarks || '-'}
+            </Descriptions.Item>
           </Descriptions>
 
-          <Divider orientation="left">Received Items</Divider>
+          <Divider orientation="left">
+            <span style={{ color: '#6366f1', fontWeight: 600 }}>
+              Received Items ({ackDetailItems.length})
+            </span>
+          </Divider>
           <Table
             dataSource={ackDetailItems}
             rowKey={(r) => r.id || r.item_id}
@@ -153,7 +190,14 @@ const Acknowledgement = () => {
               { title: 'Item Name', dataIndex: 'item_name', key: 'name', width: 200, render: (v, r) => v || r.item?.item_name || '-' },
               { title: 'UOM', dataIndex: 'uom', key: 'uom', width: 80, render: (v) => v || '-' },
               { title: 'Approved Qty', dataIndex: 'approved_qty', key: 'aq', width: 120, align: 'right', render: (v) => formatNumber(v) },
-              { title: 'Received Qty', dataIndex: 'received_qty', key: 'rq', width: 120, align: 'right', render: (v) => <Text strong>{formatNumber(v)}</Text> },
+              {
+                title: 'Received Qty',
+                dataIndex: 'received_qty',
+                key: 'rq',
+                width: 120,
+                align: 'right',
+                render: (v) => <Text strong style={{ color: '#16a34a' }}>{formatNumber(v)}</Text>,
+              },
               { title: 'Remarks', dataIndex: 'remarks', key: 'rem', width: 200, ellipsis: true, render: (v) => v || '-' },
             ]}
           />
@@ -195,13 +239,10 @@ const Acknowledgement = () => {
         searchPlaceholder="Search by indent number..."
         exportFileName="acknowledgements"
         toolbar={toolbar}
-        scroll={{ x: 1200 }}
+        scroll={{ x: 1300 }}
       />
-
-
     </div>
   );
 };
 
 export default Acknowledgement;
-

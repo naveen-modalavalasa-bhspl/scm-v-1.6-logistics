@@ -26,6 +26,18 @@ class DispatchItemResponse(DispatchItemBase):
     serial_numbers: Optional[List[str]] = None
     acknowledged_qty: Optional[Decimal] = None
     remarks: Optional[str] = None
+    special_storage_condition: bool = False
+    storage_min_temp: Optional[Decimal] = None
+    storage_max_temp: Optional[Decimal] = None
+    storage_min_moisture: Optional[Decimal] = None
+    storage_max_moisture: Optional[Decimal] = None
+    storage_breakable: bool = False
+    special_transport_condition: bool = False
+    transport_min_temp: Optional[Decimal] = None
+    transport_max_temp: Optional[Decimal] = None
+    transport_min_moisture: Optional[Decimal] = None
+    transport_max_moisture: Optional[Decimal] = None
+    transport_breakable: bool = False
 
     class Config:
         from_attributes = True

@@ -2,6 +2,8 @@ from datetime import datetime
 from typing import Optional, List
 from pydantic import BaseModel, EmailStr, field_validator
 import re
+from app.schemas.master import validate_phone_number
+
 
 
 class CarrierLoginRequest(BaseModel):
@@ -89,6 +91,13 @@ class CarrierCreate(BaseModel):
             raise ValueError("Carrier name is required")
         return v.strip()[:255]
 
+    @field_validator("phone")
+    @classmethod
+    def _phone_format(cls, v):
+        if v and v.strip():
+            return validate_phone_number(v)
+        return v
+
 
 class CarrierUpdate(BaseModel):
     name: Optional[str] = None
@@ -100,6 +109,13 @@ class CarrierUpdate(BaseModel):
     payment_terms_days: Optional[int] = None
     is_active: Optional[bool] = None
 
+    @field_validator("phone")
+    @classmethod
+    def _phone_format(cls, v):
+        if v and v.strip():
+            return validate_phone_number(v)
+        return v
+
 
 class CarrierLoginCreate(BaseModel):
     username: str
@@ -107,6 +123,13 @@ class CarrierLoginCreate(BaseModel):
     password: str
     full_name: Optional[str] = None
     phone: Optional[str] = None
+
+    @field_validator("phone")
+    @classmethod
+    def _phone_format(cls, v):
+        if v and v.strip():
+            return validate_phone_number(v)
+        return v
 
     @field_validator("username")
     @classmethod
@@ -140,6 +163,13 @@ class CarrierLoginUpdate(BaseModel):
     email: Optional[EmailStr] = None
     full_name: Optional[str] = None
     phone: Optional[str] = None
+
+    @field_validator("phone")
+    @classmethod
+    def _phone_format(cls, v):
+        if v and v.strip():
+            return validate_phone_number(v)
+        return v
 
     @field_validator("new_password")
     @classmethod

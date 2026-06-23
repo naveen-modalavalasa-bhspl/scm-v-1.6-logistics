@@ -17,7 +17,7 @@ import ItemSelector from '../../components/ItemSelector';
 import api from '../../config/api';
 import {
   formatDate, formatCurrency, formatNumber, getErrorMessage, formatDateForAPI,
-  handleFormValidationFailed
+  handleFormValidationFailed, calcTaxAmount
 } from '../../utils/helpers';
 import { DATE_FORMAT } from '../../utils/constants';
 
@@ -49,6 +49,7 @@ const InvoiceForm = () => {
   const [poOptions, setPoOptions] = useState([]);
   const [projects, setProjects] = useState([]);
   const [paymentHistory, setPaymentHistory] = useState([]);
+  const [uoms, setUoms] = useState([]);
 
   // Attachment
   const [attachmentUrl, setAttachmentUrl] = useState('');
@@ -139,9 +140,10 @@ const InvoiceForm = () => {
   // --- Lookups ---
   const loadLookups = useCallback(async () => {
     try {
-      const [vendorRes, projRes] = await Promise.allSettled([
+      const [vendorRes, projRes, uomRes] = await Promise.allSettled([
         api.get('/masters/vendors', { params: { page_size: 200, status: 'active' } }),
         api.get('/masters/projects', { params: { page_size: 200 } }),
+        api.get('/masters/uom', { params: { page_size: 200 } }),
       ]);
       if (vendorRes.status === 'fulfilled') {
         const d = vendorRes.value.data;
@@ -152,6 +154,11 @@ const InvoiceForm = () => {
         const d = projRes.value.data;
         const items = d.items || d.data || d || [];
         setProjects(items.map((p) => ({ label: p.name || p.project_name, value: p.id })));
+      }
+      if (uomRes.status === 'fulfilled') {
+        const u = uomRes.value.data;
+        const items = u.items || u.data || u || [];
+        setUoms(items.map((i) => ({ label: `${i.name} (${i.abbreviation || ''})`, value: i.id })));
       }
     } catch {
       // silent

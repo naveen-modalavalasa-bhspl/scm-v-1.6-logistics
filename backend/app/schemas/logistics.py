@@ -1,6 +1,8 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional, Dict, Any
 from datetime import datetime, date
+from app.schemas.master import validate_phone_number
+
 
 # --- MASTER DATA SCHEMAS ---
 
@@ -23,6 +25,13 @@ class LocationSchema(BaseModel):
     access_hours_from: Optional[str] = None
     access_hours_to: Optional[str] = None
     is_active: bool
+
+    @field_validator("mobile")
+    @classmethod
+    def val_mobile(cls, v):
+        if v and v.strip():
+            return validate_phone_number(v)
+        return v
 
     class Config:
         from_attributes = True
@@ -84,6 +93,13 @@ class DestinationCreate(BaseModel):
     contactPerson: str
     contactMobile: str
 
+    @field_validator("contactMobile")
+    @classmethod
+    def val_contact_mobile(cls, v):
+        if v and v.strip():
+            return validate_phone_number(v)
+        return v
+
 class SdoCreate(BaseModel):
     routeId: Optional[int] = None
     pickupDate: str
@@ -119,6 +135,13 @@ class MdoCreate(BaseModel):
     received_by_phone: Optional[str] = None
     handover_remarks: Optional[str] = None
 
+    @field_validator("driver_phone", "received_by_phone")
+    @classmethod
+    def val_phones(cls, v):
+        if v and v.strip():
+            return validate_phone_number(v)
+        return v
+
 # --- TRANSACTION RESPONSE SCHEMAS ---
 
 class DispatchMaterialResponse(BaseModel):
@@ -139,6 +162,18 @@ class DispatchMaterialResponse(BaseModel):
     number_of_packages: int
     package_type: Optional[str]
     handling_instructions: Optional[str]
+    special_storage_condition: bool = False
+    storage_min_temp: Optional[float] = None
+    storage_max_temp: Optional[float] = None
+    storage_min_moisture: Optional[float] = None
+    storage_max_moisture: Optional[float] = None
+    storage_breakable: bool = False
+    special_transport_condition: bool = False
+    transport_min_temp: Optional[float] = None
+    transport_max_temp: Optional[float] = None
+    transport_min_moisture: Optional[float] = None
+    transport_max_moisture: Optional[float] = None
+    transport_breakable: bool = False
 
     class Config:
         from_attributes = True
@@ -258,7 +293,9 @@ class MdoResponse(BaseModel):
     materials: List[DispatchMaterialResponse] = []
     # SCM Single/Multi-Level Dispatch fields
     material_issue_id: Optional[int] = None
+    material_issue_number: Optional[str] = None
     indent_id: Optional[int] = None
+    indent_number: Optional[str] = None
     destination_warehouse_id: Optional[int] = None
     destination_user_id: Optional[int] = None
     destination_user_name: Optional[str] = None
@@ -296,6 +333,13 @@ class DispatchHandoverCreate(BaseModel):
     remarks: Optional[str] = None
     handover_document: Optional[str] = None
 
+    @field_validator("received_by_phone", "driver_phone")
+    @classmethod
+    def val_phones(cls, v):
+        if v and v.strip():
+            return validate_phone_number(v)
+        return v
+
 
 class DispatchHandoverVerifyOtp(BaseModel):
     otp: str
@@ -316,6 +360,33 @@ class RfqCreateSchema(BaseModel):
     criteriaPrice: float = 40.0
     criteriaRating: float = 30.0
     criteriaTimeline: float = 30.0
+    vehicle_type_required: Optional[str] = None
+
+
+    @field_validator("deadline")
+    @classmethod
+    def validate_deadline(cls, v):
+        if v:
+            try:
+                dt = datetime.fromisoformat(v.replace("Z", "+00:00"))
+            except ValueError:
+                raise ValueError("deadline must be a valid ISO format string")
+            now = datetime.now(dt.tzinfo) if dt.tzinfo else datetime.now()
+            if dt < now:
+                raise ValueError("Deadline cannot be in the past")
+        return v
+
+    @field_validator("expected_delivery_date")
+    @classmethod
+    def validate_expected_delivery_date(cls, v):
+        if v:
+            try:
+                dt = datetime.fromisoformat(v.replace("Z", "+00:00"))
+            except ValueError:
+                raise ValueError("expected_delivery_date must be a valid ISO format string")
+            if dt.date() < date.today():
+                raise ValueError("Expected delivery date cannot be in the past")
+        return v
 
 class RfqVendorResponse(BaseModel):
     id: int
@@ -410,6 +481,7 @@ class RfqResponse(BaseModel):
     created_at: datetime
     invited_vendors: List[RfqVendorResponse] = []
     responses: List[RfqResponseQuoteResponse] = []
+    materials: List[DispatchMaterialResponse] = []
 
     class Config:
         from_attributes = True
@@ -437,6 +509,13 @@ class VehicleQuoteCreate(BaseModel):
     otherCharges: float
     gpsEnabled: bool
     sdoAssignments: List[SdoAssignmentCreate]
+
+    @field_validator("driverMobile")
+    @classmethod
+    def val_driver_mobile(cls, v):
+        if v and v.strip():
+            return validate_phone_number(v)
+        return v
 
 class QuoteSubmit(BaseModel):
     rfqId: int
@@ -549,6 +628,18 @@ class SoAcknowledge(BaseModel):
     remarks: Optional[str] = None
     arrival_date: Optional[str] = None
 
+    @field_validator("arrival_date")
+    @classmethod
+    def validate_arrival_date(cls, v):
+        if v is not None and v.strip():
+            try:
+                parsed_date = date.fromisoformat(v)
+            except ValueError:
+                raise ValueError("arrival_date must be in YYYY-MM-DD format")
+            if parsed_date < date.today():
+                raise ValueError("Expected arrival date cannot be in the past")
+        return v
+
 class VehicleStatusUpdate(BaseModel):
     nextStatus: str
     gatePassNumber: Optional[str] = None
@@ -578,6 +669,13 @@ class SdoHandoverSchema(BaseModel):
     otp: Optional[str] = None
     handover_photos: Optional[List[str]] = None  # Material photo URLs
     handover_signature: Optional[str] = None  # Signature image URL
+
+    @field_validator("driver_phone")
+    @classmethod
+    def val_driver_phone(cls, v):
+        if v and v.strip():
+            return validate_phone_number(v)
+        return v
 
 
 class SdoReceiveSchema(BaseModel):

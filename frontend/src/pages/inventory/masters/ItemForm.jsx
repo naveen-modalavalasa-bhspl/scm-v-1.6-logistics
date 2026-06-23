@@ -78,6 +78,8 @@ const ItemForm = () => {
   const [selectedIsKit, setSelectedIsKit] = useState(false);
   const [selectedAddInitialQty, setSelectedAddInitialQty] = useState(false);
   const [selectedUomCategoryId, setSelectedUomCategoryId] = useState(undefined);
+  const [specialStorage, setSpecialStorage] = useState(false);
+  const [specialTransport, setSpecialTransport] = useState(false);
 
   const fetchLookups = useCallback(async () => {
     setLoading(true);
@@ -138,6 +140,8 @@ const ItemForm = () => {
           is_kit: false,
           add_initial_qty: false,
           initial_quantity: undefined,
+          special_storage_condition: false,
+          special_transport_condition: false,
         });
       }
     } catch (err) {
@@ -157,6 +161,8 @@ const ItemForm = () => {
       const item = res.data;
       setSelectedIsKit(Boolean(item.is_kit));
       setSelectedUomCategoryId(item.uom_category_id);
+      setSpecialStorage(Boolean(item.special_storage_condition));
+      setSpecialTransport(Boolean(item.special_transport_condition));
 
       // Resolve category path (Level 1 > Level 2 > Level 3)
       const resolveLevels = () => {
@@ -300,6 +306,12 @@ const ItemForm = () => {
     }
     if ('uom_category_id' in changed) {
       setSelectedUomCategoryId(changed.uom_category_id);
+    }
+    if ('special_storage_condition' in changed) {
+      setSpecialStorage(changed.special_storage_condition);
+    }
+    if ('special_transport_condition' in changed) {
+      setSpecialTransport(changed.special_transport_condition);
     }
   };
 
@@ -1366,6 +1378,82 @@ const ItemForm = () => {
                         </Form.Item>
                       </Col>
                     </Row>
+
+                    <Divider orientation="left">Special Storage Conditions</Divider>
+                    <Row gutter={16}>
+                      <Col span={24} style={{ marginBottom: 16 }}>
+                        <Form.Item name="special_storage_condition" label="Requires Special Storage Conditions" valuePropName="checked">
+                          <Switch onChange={(checked) => setSpecialStorage(checked)} />
+                        </Form.Item>
+                      </Col>
+                    </Row>
+                    {specialStorage && (
+                      <Row gutter={16}>
+                        <Col span={6}>
+                          <Form.Item name="storage_min_temp" label="Min Temp (°C)">
+                            <InputNumber style={{ width: '100%' }} placeholder="-20" />
+                          </Form.Item>
+                        </Col>
+                        <Col span={6}>
+                          <Form.Item name="storage_max_temp" label="Max Temp (°C)">
+                            <InputNumber style={{ width: '100%' }} placeholder="50" />
+                          </Form.Item>
+                        </Col>
+                        <Col span={6}>
+                          <Form.Item name="storage_min_moisture" label="Min Moisture (%)">
+                            <InputNumber min={0} max={100} style={{ width: '100%' }} placeholder="0" />
+                          </Form.Item>
+                        </Col>
+                        <Col span={6}>
+                          <Form.Item name="storage_max_moisture" label="Max Moisture (%)">
+                            <InputNumber min={0} max={100} style={{ width: '100%' }} placeholder="100" />
+                          </Form.Item>
+                        </Col>
+                        <Col span={24}>
+                          <Form.Item name="storage_breakable" label="Is Breakable / Fragile" valuePropName="checked">
+                            <Checkbox>Fragile Material (Requires special handling/safety cushioning)</Checkbox>
+                          </Form.Item>
+                        </Col>
+                      </Row>
+                    )}
+
+                    <Divider orientation="left">Special Transport Conditions</Divider>
+                    <Row gutter={16}>
+                      <Col span={24} style={{ marginBottom: 16 }}>
+                        <Form.Item name="special_transport_condition" label="Requires Special Transport Conditions" valuePropName="checked">
+                          <Switch onChange={(checked) => setSpecialTransport(checked)} />
+                        </Form.Item>
+                      </Col>
+                    </Row>
+                    {specialTransport && (
+                      <Row gutter={16}>
+                        <Col span={6}>
+                          <Form.Item name="transport_min_temp" label="Min Temp (°C)">
+                            <InputNumber style={{ width: '100%' }} placeholder="-20" />
+                          </Form.Item>
+                        </Col>
+                        <Col span={6}>
+                          <Form.Item name="transport_max_temp" label="Max Temp (°C)">
+                            <InputNumber style={{ width: '100%' }} placeholder="50" />
+                          </Form.Item>
+                        </Col>
+                        <Col span={6}>
+                          <Form.Item name="transport_min_moisture" label="Min Moisture (%)">
+                            <InputNumber min={0} max={100} style={{ width: '100%' }} placeholder="0" />
+                          </Form.Item>
+                        </Col>
+                        <Col span={6}>
+                          <Form.Item name="transport_max_moisture" label="Max Moisture (%)">
+                            <InputNumber min={0} max={100} style={{ width: '100%' }} placeholder="100" />
+                          </Form.Item>
+                        </Col>
+                        <Col span={24}>
+                          <Form.Item name="transport_breakable" label="Is Breakable / Fragile" valuePropName="checked">
+                            <Checkbox>Fragile Material (Requires shock-resistant transportation)</Checkbox>
+                          </Form.Item>
+                        </Col>
+                      </Row>
+                    )}
                   </>
                 ),
               },

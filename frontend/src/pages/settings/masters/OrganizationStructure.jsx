@@ -257,6 +257,9 @@ const OrganizationStructure = () => {
         ...values,
         dob: values.dob ? values.dob.format('YYYY-MM-DD') : undefined,
       };
+      if (activeTab === 'employees' && payload.phone) {
+        payload.phone = payload.phone.replace(/[\s\-()]/g, '');
+      }
       setSubmitting(true);
       const endpoint = ENDPOINTS[activeTab];
       if (editingRow) {
@@ -621,16 +624,39 @@ const OrganizationStructure = () => {
           <DatePicker style={{ width: '100%' }} />
         </Form.Item>
         <Space.Compact block>
-          <Form.Item name="phone" label="Phone" style={{ width: '50%' }}>
-            <Input maxLength={15} />
+          <Form.Item
+            name="phone"
+            label="Phone"
+            style={{ width: '50%' }}
+            rules={[
+              {
+                validator: (_, value) => {
+                  if (!value) return Promise.resolve();
+                  const cleaned = value.replace(/[\s\-()]/g, '');
+                  if (/^(?:\+?91|0)?[6-9]\d{9}$/.test(cleaned) || /^\+?[1-9]\d{9,14}$/.test(cleaned)) {
+                    return Promise.resolve();
+                  }
+                  return Promise.reject(new Error('Enter a valid 10-digit mobile number, optionally with country code'));
+                }
+              }
+            ]}
+          >
+            <Input maxLength={20} />
           </Form.Item>
-          <Form.Item name="email" label="Email" style={{ width: '50%' }}>
+          <Form.Item name="email" label="Email" style={{ width: '50%' }} rules={[{ type: 'email', message: 'Enter a valid email' }]}>
             <Input maxLength={100} />
           </Form.Item>
         </Space.Compact>
         <Space.Compact block>
-          <Form.Item name="pan_number" label="PAN" style={{ width: '50%' }}>
-            <Input maxLength={10} />
+          <Form.Item
+            name="pan_number"
+            label="PAN"
+            style={{ width: '50%' }}
+            rules={[
+              { pattern: /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/, message: 'Enter a valid 10-character PAN number (e.g., ABCDE1234F)' }
+            ]}
+          >
+            <Input maxLength={10} style={{ textTransform: 'uppercase' }} onChange={(e) => form.setFieldsValue({ pan_number: e.target.value.toUpperCase() })} />
           </Form.Item>
           <Form.Item name="aadhaar_number" label="Aadhaar" style={{ width: '50%' }}>
             <Input maxLength={12} />
@@ -831,7 +857,12 @@ const OrganizationStructure = () => {
           </Space.Compact>
           <Space.Compact block>
             <Form.Item name="password" label="Temporary Password" style={{ width: '50%' }} rules={[{ required: true, message: 'Password is required' }, { min: 8, message: 'Minimum 8 characters' }]}>
-              <Input.Password maxLength={128} />
+              <Input.Password
+                maxLength={128}
+                onCopy={(e) => e.preventDefault()}
+                onPaste={(e) => e.preventDefault()}
+                onCut={(e) => e.preventDefault()}
+              />
             </Form.Item>
             <Form.Item name="user_type" label="User Type" style={{ width: '50%' }}>
               <Select options={[{ label: 'Staff', value: 'staff' }, { label: 'Field Staff', value: 'field_staff' }, { label: 'Viewer', value: 'viewer' }, { label: 'Manager', value: 'manager' }]} />

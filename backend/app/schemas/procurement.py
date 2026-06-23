@@ -101,6 +101,13 @@ class QuotationItemCreate(BaseModel):
     expected_delivery: Optional[date] = None
     remarks: Optional[str] = None
 
+    @field_validator("expected_delivery")
+    @classmethod
+    def validate_expected_delivery(cls, v):
+        if v is not None and v < date.today():
+            raise ValueError("Expected delivery date cannot be in the past")
+        return v
+
     @field_validator("qty")
     @classmethod
     def validate_qty(cls, v):
@@ -168,10 +175,24 @@ class QuotationItemUpdate(BaseModel):
     expected_delivery: Optional[date] = None
     remarks: Optional[str] = None
 
+    @field_validator("expected_delivery")
+    @classmethod
+    def validate_expected_delivery(cls, v):
+        if v is not None and v < date.today():
+            raise ValueError("Expected delivery date cannot be in the past")
+        return v
+
 class QuotationUpdate(BaseModel):
     valid_until: Optional[date] = None
     status: Optional[str] = None
     remarks: Optional[str] = None
+
+    @field_validator("valid_until")
+    @classmethod
+    def validate_valid_until(cls, v):
+        if v is not None and v < date.today():
+            raise ValueError("Valid until date cannot be in the past")
+        return v
     # Allow financial header fields (sent by frontend on edit)
     total_amount: Optional[Decimal] = None
     subtotal: Optional[Decimal] = None
@@ -266,6 +287,8 @@ class RFQCreate(BaseModel):
     def validate_valid_until(self):
         if self.valid_until and self.rfq_date and self.valid_until < self.rfq_date:
             raise ValueError("RFQ valid until date must be >= RFQ date")
+        if self.valid_until and self.valid_until < date.today():
+            raise ValueError("RFQ valid until date cannot be in the past")
         return self
 
 
@@ -373,6 +396,13 @@ class POUpdate(BaseModel):
     expected_delivery_date: Optional[date] = None
     status: Optional[str] = None
     remarks: Optional[str] = None
+
+    @field_validator("expected_delivery_date")
+    @classmethod
+    def validate_expected_delivery_date(cls, v):
+        if v is not None and v < date.today():
+            raise ValueError("Expected delivery date cannot be in the past")
+        return v
     attachment_url: Optional[str] = None
     billing_address: Optional[str] = None
     shipping_address: Optional[str] = None

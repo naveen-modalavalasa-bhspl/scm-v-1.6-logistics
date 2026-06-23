@@ -340,6 +340,26 @@ const ItemDetail = () => {
               <Descriptions.Item label="Schedule Type">{item.schedule_type || '-'}</Descriptions.Item>
             </Descriptions>
 
+            {item.special_storage_condition && (
+              <Descriptions title="Special Storage Conditions" column={{ xs: 1, sm: 2, md: 3 }} size="small" bordered style={{ marginTop: 24 }}>
+                <Descriptions.Item label="Min Temp">{item.storage_min_temp != null ? `${item.storage_min_temp} °C` : '-'}</Descriptions.Item>
+                <Descriptions.Item label="Max Temp">{item.storage_max_temp != null ? `${item.storage_max_temp} °C` : '-'}</Descriptions.Item>
+                <Descriptions.Item label="Min Moisture">{item.storage_min_moisture != null ? `${item.storage_min_moisture}%` : '-'}</Descriptions.Item>
+                <Descriptions.Item label="Max Moisture">{item.storage_max_moisture != null ? `${item.storage_max_moisture}%` : '-'}</Descriptions.Item>
+                <Descriptions.Item label="Is Breakable">{item.storage_breakable ? <Tag color="red">Breakable / Fragile</Tag> : 'No'}</Descriptions.Item>
+              </Descriptions>
+            )}
+
+            {item.special_transport_condition && (
+              <Descriptions title="Special Transport Conditions" column={{ xs: 1, sm: 2, md: 3 }} size="small" bordered style={{ marginTop: 24 }}>
+                <Descriptions.Item label="Min Temp">{item.transport_min_temp != null ? `${item.transport_min_temp} °C` : '-'}</Descriptions.Item>
+                <Descriptions.Item label="Max Temp">{item.transport_max_temp != null ? `${item.transport_max_temp} °C` : '-'}</Descriptions.Item>
+                <Descriptions.Item label="Min Moisture">{item.transport_min_moisture != null ? `${item.transport_min_moisture}%` : '-'}</Descriptions.Item>
+                <Descriptions.Item label="Max Moisture">{item.transport_max_moisture != null ? `${item.transport_max_moisture}%` : '-'}</Descriptions.Item>
+                <Descriptions.Item label="Is Breakable">{item.transport_breakable ? <Tag color="red">Breakable / Fragile</Tag> : 'No'}</Descriptions.Item>
+              </Descriptions>
+            )}
+
             {item.description && (
               <div style={{ marginTop: 24 }}>
                 <strong>Description:</strong>

@@ -365,26 +365,70 @@ export default function CarrierPortal() {
                           const details = parseCampaignDescription(r.description);
                           const isOldDesc = !details.pickup && !details.dropoff;
                           return (
-                            <Descriptions size="small" column={2} bordered>
-                              {isOldDesc ? (
-                                <Descriptions.Item label="Description" span={2}>{r.description || '—'}</Descriptions.Item>
-                              ) : (
-                                <>
-                                  <Descriptions.Item label="Pick Up Location">{details.pickup || '—'}</Descriptions.Item>
-                                  <Descriptions.Item label="Drop Off Location">{details.dropoff || '—'}</Descriptions.Item>
-                                  <Descriptions.Item label="Logistics Weight">{details.weight || '—'}</Descriptions.Item>
-                                  <Descriptions.Item label="Logistics Volume">{details.volume || '—'}</Descriptions.Item>
-                                  <Descriptions.Item label="Items Description" span={2}>{details.items || '—'}</Descriptions.Item>
-                                  {details.extra && <Descriptions.Item label="Special Scope & Penalties" span={2}>{details.extra}</Descriptions.Item>}
-                                </>
+                            <div style={{ padding: '8px' }}>
+                              <Descriptions size="small" column={2} bordered style={{ background: '#fff' }}>
+                                {isOldDesc ? (
+                                  <Descriptions.Item label="Description" span={2}>{r.description || '—'}</Descriptions.Item>
+                                ) : (
+                                  <>
+                                    <Descriptions.Item label="Pick Up Location">{details.pickup || '—'}</Descriptions.Item>
+                                    <Descriptions.Item label="Drop Off Location">{details.dropoff || '—'}</Descriptions.Item>
+                                    <Descriptions.Item label="Logistics Weight">{details.weight || '—'}</Descriptions.Item>
+                                    <Descriptions.Item label="Logistics Volume">{details.volume || '—'}</Descriptions.Item>
+                                    <Descriptions.Item label="Items Description" span={2}>{details.items || '—'}</Descriptions.Item>
+                                    {details.extra && <Descriptions.Item label="Special Scope & Penalties" span={2}>{details.extra}</Descriptions.Item>}
+                                  </>
+                                )}
+                                <Descriptions.Item label="Payment Terms">{r.payment_terms || '—'}</Descriptions.Item>
+                                <Descriptions.Item label="Advance %">{r.advance_payment_percentage || 0}%</Descriptions.Item>
+                                <Descriptions.Item label="Insurance Required">{r.insurance_required ? 'Yes' : 'No'}</Descriptions.Item>
+                                <Descriptions.Item label="Volume (CFT)">{r.total_estimated_volume_cft?.toFixed?.(1) || 0}</Descriptions.Item>
+                                <Descriptions.Item label="SDOs in Scope">{r.sdo_count}</Descriptions.Item>
+                                <Descriptions.Item label="Issued On">{r.issue_date ? dayjs(r.issue_date).format('DD/MM/YYYY') : '—'}</Descriptions.Item>
+                              </Descriptions>
+
+                              {r.materials && r.materials.length > 0 && (
+                                <div style={{ marginTop: '16px', background: '#fff', border: '1px solid #cbd5e1', borderRadius: '8px', padding: '12px' }}>
+                                  <span style={{ fontSize: '11px', fontWeight: 'bold', textTransform: 'uppercase', color: '#475569', display: 'block', marginBottom: '8px', fontFamily: 'monospace' }}>
+                                    Consignment Materials & Transit Requirements
+                                  </span>
+                                  <Table
+                                    dataSource={r.materials}
+                                    pagination={false}
+                                    size="small"
+                                    rowKey="id"
+                                    columns={[
+                                      { title: 'Code', dataIndex: 'material_code', key: 'code', render: t => <span style={{ fontFamily: 'monospace' }}>{t}</span> },
+                                      { title: 'Material Name', dataIndex: 'material_name', key: 'name' },
+                                      { title: 'Qty', dataIndex: 'quantity', key: 'qty', render: (q, row) => `${q} ${row.unit_of_measure}` },
+                                      {
+                                        title: 'Special Transport Conditions',
+                                        key: 'conditions',
+                                        render: (_, row) => (
+                                          <Space size={[4, 4]} wrap>
+                                            {row.special_transport_condition ? (
+                                              <>
+                                                <Tag color="cyan" style={{ fontSize: '10px', borderRadius: '4px', margin: 0 }}>
+                                                  Temp: {row.transport_min_temp ?? '*'} to {row.transport_max_temp ?? '*'}°C
+                                                </Tag>
+                                                <Tag color="blue" style={{ fontSize: '10px', borderRadius: '4px', margin: 0 }}>
+                                                  Moisture: {row.transport_min_moisture ?? 0}% to {row.transport_max_moisture ?? 100}%
+                                                </Tag>
+                                                {row.transport_breakable && (
+                                                  <Tag color="volcano" style={{ fontSize: '10px', borderRadius: '4px', margin: 0 }}>Fragile</Tag>
+                                                )}
+                                              </>
+                                            ) : (
+                                              <span style={{ color: '#94a3b8', fontSize: '11px' }}>Standard Transit</span>
+                                            )}
+                                          </Space>
+                                        )
+                                      }
+                                    ]}
+                                  />
+                                </div>
                               )}
-                              <Descriptions.Item label="Payment Terms">{r.payment_terms || '—'}</Descriptions.Item>
-                              <Descriptions.Item label="Advance %">{r.advance_payment_percentage || 0}%</Descriptions.Item>
-                              <Descriptions.Item label="Insurance Required">{r.insurance_required ? 'Yes' : 'No'}</Descriptions.Item>
-                              <Descriptions.Item label="Volume (CFT)">{r.total_estimated_volume_cft?.toFixed?.(1) || 0}</Descriptions.Item>
-                              <Descriptions.Item label="SDOs in Scope">{r.sdo_count}</Descriptions.Item>
-                              <Descriptions.Item label="Issued On">{r.issue_date ? dayjs(r.issue_date).format('DD/MM/YYYY') : '—'}</Descriptions.Item>
-                            </Descriptions>
+                            </div>
                           );
                         },
                       }}
@@ -878,14 +922,7 @@ export default function CarrierPortal() {
             </Col>
             <Col xs={24} md={12}>
               <Form.Item name="vehicleType" label="Vehicle Type">
-                <Select
-                  options={[
-                    { value: 'Truck', label: 'Truck' },
-                    { value: 'Container', label: 'Container' },
-                    { value: 'Tempo', label: 'Tempo' },
-                    { value: 'Flatbed Container', label: 'Flatbed Container' },
-                  ]}
-                />
+                <Input disabled style={{ color: '#1e293b', fontWeight: 600, background: '#f1f5f9' }} />
               </Form.Item>
             </Col>
           </Row>
@@ -968,6 +1005,9 @@ export default function CarrierPortal() {
                   () => ({
                     validator(_, value) {
                       if (!value) return Promise.resolve();
+                      if (value.isBefore(dayjs(), 'day')) {
+                        return Promise.reject(new Error('Expected arrival date cannot be in the past'));
+                      }
                       const deliveryDate = acknowledgingSo?.expected_delivery_date;
                       if (deliveryDate) {
                         const deadline = dayjs(deliveryDate).endOf('day');
@@ -987,11 +1027,12 @@ export default function CarrierPortal() {
                 <DatePicker
                   style={{ width: '100%' }}
                   disabledDate={(d) => {
+                    const isPast = d && d.isBefore(dayjs(), 'day');
                     const deliveryDate = acknowledgingSo?.expected_delivery_date;
                     if (deliveryDate) {
-                      return d && !d.isBefore(dayjs(deliveryDate), 'day');
+                      return isPast || (d && !d.isBefore(dayjs(deliveryDate), 'day'));
                     }
-                    return false;
+                    return isPast;
                   }}
                   placeholder="Select your expected arrival date"
                   format="DD/MM/YYYY"
@@ -1042,7 +1083,11 @@ export default function CarrierPortal() {
       >
         <Form form={pwForm} layout="vertical" onFinish={submitChangePassword}>
           <Form.Item name="current_password" label="Current Password" rules={[{ required: true, message: 'Current password is required' }]}>
-            <Input.Password />
+            <Input.Password
+              onCopy={(e) => e.preventDefault()}
+              onPaste={(e) => e.preventDefault()}
+              onCut={(e) => e.preventDefault()}
+            />
           </Form.Item>
           <Form.Item
             name="new_password"
@@ -1056,7 +1101,11 @@ export default function CarrierPortal() {
               },
             ]}
           >
-            <Input.Password />
+            <Input.Password
+              onCopy={(e) => e.preventDefault()}
+              onPaste={(e) => e.preventDefault()}
+              onCut={(e) => e.preventDefault()}
+            />
           </Form.Item>
           <Form.Item
             name="confirm_password"
@@ -1074,7 +1123,11 @@ export default function CarrierPortal() {
               }),
             ]}
           >
-            <Input.Password />
+            <Input.Password
+              onCopy={(e) => e.preventDefault()}
+              onPaste={(e) => e.preventDefault()}
+              onCut={(e) => e.preventDefault()}
+            />
           </Form.Item>
         </Form>
       </Modal>

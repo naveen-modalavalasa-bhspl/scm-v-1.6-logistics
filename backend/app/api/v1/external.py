@@ -2,10 +2,11 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, or_
 import json
+from typing import Optional
 
 from app.database import get_db
 from app.models.user import User
-from app.utils.dependencies import require_api_key_scope, require_stock_balance_scope
+from app.utils.dependencies import require_api_key_scope, require_stock_balance_scope, require_items_scope
 
 router = APIRouter()
 
@@ -14,13 +15,35 @@ async def get_items(
     limit: int = 100,
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_api_key_scope("masters:items:read")),
+    user: User = Depends(require_items_scope()),
 ):
-    """Get all items (Master Data). Requires 'masters:read' scope."""
+    """Get all items (Master Data). Requires 'masters:items:read' or granular scope."""
     from app.models.master import Item, RoleItemPermission
     from app.models.user import UserRole
     
+    scopes = []
+    if getattr(user, "used_api_key", None) and user.used_api_key.scopes:
+        try:
+            scopes = json.loads(user.used_api_key.scopes)
+        except Exception:
+            scopes = []
+
     stmt = select(Item)
+    
+    # Granular Scopes Filtering (based on Item Types)
+    # Only filter if "masters:items:read" is NOT in scopes
+    if "masters:items:read" not in scopes:
+        allowed_types = []
+        for s in scopes:
+            if s.startswith("masters:items:") and s.endswith(":read"):
+                item_type = s[len("masters:items:"):-len(":read")]
+                allowed_types.append(item_type)
+        if allowed_types:
+            stmt = stmt.filter(Item.item_type.in_(allowed_types))
+        else:
+            # If they have no matching granular scopes, return empty results
+            stmt = stmt.filter(False)
+
     if getattr(user, "used_api_key", None) and user.used_api_key.linked_user_ids:
         linked_ids = user.used_api_key.linked_user_ids
         stmt = stmt.join(
@@ -116,32 +139,20 @@ async def get_stock(
         )
         is_item_joined = True
 
-    # 2. Granular Scopes Filtering (based on Item Types & Serial tracking)
+    # 2. Granular Scopes Filtering (based on Item Types only)
     # Only filter if "inventory:stock-balance:read" is NOT in scopes
     if "inventory:stock-balance:read" not in scopes:
-        conditions = []
+        allowed_types = []
         for s in scopes:
             if s.startswith("inventory:stock-balance:") and s.endswith(":read"):
-                # Format: inventory:stock-balance:<item_type>:<serial_status>:read
-                inner = s[len("inventory:stock-balance:"):-len(":read")]
-                if inner.endswith(":serial"):
-                    item_type = inner[:-7]
-                    conditions.append((item_type, True))
-                elif inner.endswith(":non-serial"):
-                    item_type = inner[:-11]
-                    conditions.append((item_type, False))
+                item_type = s[len("inventory:stock-balance:"):-len(":read")]
+                allowed_types.append(item_type)
         
-        if conditions:
+        if allowed_types:
             if not is_item_joined:
                 stmt = stmt.join(Item, Item.id == StockBalance.item_id)
                 is_item_joined = True
-            
-            clause_list = []
-            for it_type, has_ser in conditions:
-                clause_list.append(
-                    (Item.item_type == it_type) & (Item.has_serial == has_ser)
-                )
-            stmt = stmt.filter(or_(*clause_list))
+            stmt = stmt.filter(Item.item_type.in_(allowed_types))
         else:
             # If they have no matching granular scopes, return empty results
             if not is_item_joined:
@@ -160,4 +171,66 @@ async def get_stock(
             "available_qty": stock.available_qty,
         }
         for stock in stock_balances
+    ]
+
+@router.get("/indent/acknowledgements")
+async def get_indent_acknowledgements(
+    indent_id: Optional[int] = None,
+    limit: int = 100,
+    offset: int = 0,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_api_key_scope("indent:acknowledgement:read")),
+):
+    """Get all indent acknowledgements. Requires 'indent:acknowledgement:read' scope."""
+    from app.models.indent import IndentAcknowledgement, IndentAcknowledgementItem, IndentItem
+    from sqlalchemy.orm import selectinload
+    
+    stmt = (
+        select(IndentAcknowledgement)
+        .options(
+            selectinload(IndentAcknowledgement.acknowledger),
+            selectinload(IndentAcknowledgement.items).selectinload(IndentAcknowledgementItem.item),
+            selectinload(IndentAcknowledgement.items).selectinload(IndentAcknowledgementItem.indent_item).selectinload(IndentItem.uom),
+        )
+    )
+    
+    if indent_id is not None:
+        stmt = stmt.where(IndentAcknowledgement.indent_id == indent_id)
+        
+    result = await db.execute(stmt.limit(limit).offset(offset))
+    acks = result.scalars().all()
+    
+    return [
+        {
+            "id": ack.id,
+            "indent_id": ack.indent_id,
+            "warehouse_id": ack.warehouse_id,
+            "acknowledged_by": ack.acknowledged_by,
+            "empcode": ack.employee_code or (ack.acknowledger.employee_code if ack.acknowledger else None),
+            "employee_code": ack.employee_code or (ack.acknowledger.employee_code if ack.acknowledger else None),
+            "acknowledged_at": ack.acknowledged_at.isoformat() if ack.acknowledged_at else None,
+            "received_qty": float(ack.received_qty) if ack.received_qty is not None else 0.0,
+            "status": ack.status,
+            "remarks": ack.remarks,
+            "items": [
+                {
+                    "id": ai.id,
+                    "item_id": ai.item_id,
+                    "indent_item_id": ai.indent_item_id,
+                    "item_code": ai.item.item_code if ai.item else None,
+                    "item_name": ai.item.name if ai.item else None,
+                    "uom": (
+                        ai.indent_item.uom.name
+                        if ai.indent_item and ai.indent_item.uom
+                        else None
+                    ),
+                    "approved_qty": float(ai.indent_item.approved_qty) if ai.indent_item and ai.indent_item.approved_qty is not None else None,
+                    "requested_qty": float(ai.indent_item.requested_qty) if ai.indent_item and ai.indent_item.requested_qty is not None else None,
+                    "received_qty": float(ai.received_qty) if ai.received_qty is not None else 0.0,
+                    "remarks": ai.remarks,
+                }
+                for ai in (ack.items or [])
+            ]
+        }
+        for ack in acks
     ]

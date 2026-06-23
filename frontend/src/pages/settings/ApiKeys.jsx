@@ -34,7 +34,7 @@ const SCOPE_OPTIONS = [
   {
     label: 'Masters',
     options: [
-      { label: 'Items (Read)', value: 'masters:items:read' },
+      { label: 'Items (All - Read)', value: 'masters:items:read' },
       { label: 'Packaging (Read)', value: 'masters:packaging:read' },
       { label: 'Categories (Read)', value: 'masters:categories:read' },
       { label: 'Vendors (Read)', value: 'masters:vendors:read' },
@@ -57,11 +57,17 @@ const SCOPE_OPTIONS = [
   {
     label: 'Inventory',
     options: [
-      { label: 'Stock Balance (Read)', value: 'inventory:stock-balance:read' },
+      { label: 'Stock Balance (All - Read)', value: 'inventory:stock-balance:read' },
       { label: 'Stock Ledger (Read)', value: 'inventory:stock-ledger:read' },
       { label: 'Stock Transfer (Read)', value: 'inventory:stock-transfer:read' },
       { label: 'Stock Audit (Read)', value: 'inventory:stock-audit:read' },
       { label: 'Replenishment (Read)', value: 'inventory:replenishment:read' },
+    ]
+  },
+  {
+    label: 'Indent',
+    options: [
+      { label: 'Indent Acknowledgement (Read)', value: 'indent:acknowledgement:read' },
     ]
   }
 ];
@@ -101,23 +107,35 @@ const ApiKeys = () => {
       const types = res.data?.items || [];
       const activeTypes = types.filter(t => t.is_active);
       
+      const itemOptions = [
+        { label: 'Items (All - Read)', value: 'masters:items:read' }
+      ];
       const stockBalanceOptions = [
         { label: 'Stock Balance (All - Read)', value: 'inventory:stock-balance:read' }
       ];
       
       activeTypes.forEach(t => {
         const formatted = formatItemTypeName(t.name);
-        stockBalanceOptions.push({
-          label: `Stock Balance - ${formatted} (Serial - Read)`,
-          value: `inventory:stock-balance:${t.name}:serial:read`
+        itemOptions.push({
+          label: `Items - ${formatted} (Read)`,
+          value: `masters:items:${t.name}:read`
         });
         stockBalanceOptions.push({
-          label: `Stock Balance - ${formatted} (Non-Serial - Read)`,
-          value: `inventory:stock-balance:${t.name}:non-serial:read`
+          label: `Stock Balance - ${formatted} (Read)`,
+          value: `inventory:stock-balance:${t.name}:read`
         });
       });
       
       const updatedOptions = SCOPE_OPTIONS.map(group => {
+        if (group.label === 'Masters') {
+          return {
+            ...group,
+            options: [
+              ...itemOptions,
+              ...group.options.filter(opt => opt.value !== 'masters:items:read')
+            ]
+          };
+        }
         if (group.label === 'Inventory') {
           return {
             ...group,
@@ -260,7 +278,8 @@ const ApiKeys = () => {
   };
 
   const columns = [
-    { title: 'Name', dataIndex: 'name', key: 'name', width: 200 },
+    { title: 'Name', dataIndex: 'name', key: 'name', width: 180 },
+    { title: 'URL Endpoint', dataIndex: 'endpoint', key: 'endpoint', width: 220, render: (val) => val || '—' },
     { 
       title: 'Scopes', 
       dataIndex: 'scopes', 

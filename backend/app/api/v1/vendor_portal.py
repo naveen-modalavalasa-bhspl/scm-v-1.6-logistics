@@ -513,11 +513,20 @@ class SupplierAcknowledgeItem(BaseModel):
     igst_rate: Optional[Decimal] = None
 
 
+from pydantic import field_validator
+
 class SupplierAcknowledgePO(BaseModel):
     action: str  # "accept" or "reject"
     remarks: Optional[str] = None
     delivery_date: Optional[date] = None
     items: Optional[List[SupplierAcknowledgeItem]] = None
+
+    @field_validator("delivery_date")
+    @classmethod
+    def validate_delivery_date(cls, v):
+        if v is not None and v < date.today():
+            raise ValueError("Delivery date cannot be in the past")
+        return v
 
 
 @router.post("/purchase-orders/{po_id}/acknowledge", response_model=dict)

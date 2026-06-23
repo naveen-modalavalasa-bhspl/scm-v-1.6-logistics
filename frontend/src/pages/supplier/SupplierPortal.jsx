@@ -770,7 +770,7 @@ export default function SupplierPortal() {
       },
     },
     {
-      title: 'Supplier Delivery Date',
+      title: 'Committed Delivery Date',
       dataIndex: 'supplier_delivery_date',
       key: 'supplier_delivery_date',
       width: 140,
@@ -1018,7 +1018,13 @@ export default function SupplierPortal() {
           </div>
           <Form layout="vertical" onFinish={handleChangePassword} form={passForm}>
             <Form.Item name="currentPassword" label="Current Password" rules={[{ required: true }]}>
-              <Input.Password prefix={<LockOutlined />} placeholder="Your current / temporary password" />
+              <Input.Password
+                prefix={<LockOutlined />}
+                placeholder="Your current / temporary password"
+                onCopy={(e) => e.preventDefault()}
+                onPaste={(e) => e.preventDefault()}
+                onCut={(e) => e.preventDefault()}
+              />
             </Form.Item>
             <Form.Item
               name="newPassword"
@@ -1030,7 +1036,13 @@ export default function SupplierPortal() {
                 { pattern: /\d/, message: 'Must include a number' },
               ]}
             >
-              <Input.Password prefix={<LockOutlined />} placeholder="Strong new password" />
+              <Input.Password
+                prefix={<LockOutlined />}
+                placeholder="Strong new password"
+                onCopy={(e) => e.preventDefault()}
+                onPaste={(e) => e.preventDefault()}
+                onCut={(e) => e.preventDefault()}
+              />
             </Form.Item>
             <Form.Item
               name="confirmPassword"
@@ -1045,7 +1057,13 @@ export default function SupplierPortal() {
                 }),
               ]}
             >
-              <Input.Password prefix={<LockOutlined />} placeholder="Confirm password" />
+              <Input.Password
+                prefix={<LockOutlined />}
+                placeholder="Confirm password"
+                onCopy={(e) => e.preventDefault()}
+                onPaste={(e) => e.preventDefault()}
+                onCut={(e) => e.preventDefault()}
+              />
             </Form.Item>
             <Button type="primary" htmlType="submit" block loading={changePassLoading}>
               Set Password & Continue
@@ -1316,8 +1334,21 @@ export default function SupplierPortal() {
               </Form.Item>
             </Col>
             <Col span={8}>
-              <Form.Item name="valid_until" label="Quote Valid Until">
-                <Input type="date" style={{ width: '100%' }} disabled={isQuoteViewOnly} />
+              <Form.Item
+                name="valid_until"
+                label="Quote Valid Until"
+                rules={[
+                  () => ({
+                    validator(_, value) {
+                      if (value && dayjs(value).isBefore(dayjs().startOf('day'))) {
+                        return Promise.reject(new Error('Validity date cannot be in the past'));
+                      }
+                      return Promise.resolve();
+                    },
+                  }),
+                ]}
+              >
+                <Input type="date" style={{ width: '100%' }} disabled={isQuoteViewOnly} min={dayjs().format('YYYY-MM-DD')} />
               </Form.Item>
             </Col>
           </Row>
@@ -1339,6 +1370,9 @@ export default function SupplierPortal() {
                   () => ({
                     validator(_, value) {
                       if (!value) return Promise.resolve();
+                      if (value.isBefore(dayjs(), 'day')) {
+                        return Promise.reject(new Error('Expected arrival date cannot be in the past'));
+                      }
                       const reqDate = selectedRfq?.required_date;
                       if (reqDate) {
                         const requiredDay = dayjs(reqDate).endOf('day');
@@ -1359,11 +1393,12 @@ export default function SupplierPortal() {
                   style={{ width: '100%' }}
                   disabled={isQuoteViewOnly}
                   disabledDate={(d) => {
+                    const isPast = d && d.isBefore(dayjs(), 'day');
                     const reqDate = selectedRfq?.required_date;
                     if (reqDate) {
-                      return d && d.isAfter(dayjs(reqDate), 'day');
+                      return isPast || (d && d.isAfter(dayjs(reqDate), 'day'));
                     }
-                    return false;
+                    return isPast;
                   }}
                   placeholder="Select your commitment delivery date"
                   format="DD/MM/YYYY"
@@ -1474,7 +1509,12 @@ export default function SupplierPortal() {
       >
         <Form layout="vertical" form={passForm} onFinish={handleChangePassword}>
           <Form.Item name="currentPassword" label="Current Password" rules={[{ required: true }]}>
-            <Input.Password prefix={<LockOutlined />} />
+            <Input.Password
+              prefix={<LockOutlined />}
+              onCopy={(e) => e.preventDefault()}
+              onPaste={(e) => e.preventDefault()}
+              onCut={(e) => e.preventDefault()}
+            />
           </Form.Item>
           <Form.Item
             name="newPassword"
@@ -1486,7 +1526,12 @@ export default function SupplierPortal() {
               { pattern: /\d/, message: 'Must include a number' },
             ]}
           >
-            <Input.Password prefix={<LockOutlined />} />
+            <Input.Password
+              prefix={<LockOutlined />}
+              onCopy={(e) => e.preventDefault()}
+              onPaste={(e) => e.preventDefault()}
+              onCut={(e) => e.preventDefault()}
+            />
           </Form.Item>
           <Form.Item
             name="confirmPassword"
@@ -1501,7 +1546,12 @@ export default function SupplierPortal() {
               }),
             ]}
           >
-            <Input.Password prefix={<LockOutlined />} />
+            <Input.Password
+              prefix={<LockOutlined />}
+              onCopy={(e) => e.preventDefault()}
+              onPaste={(e) => e.preventDefault()}
+              onCut={(e) => e.preventDefault()}
+            />
           </Form.Item>
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
             <Button onClick={() => setChangePassVisible(false)}>Cancel</Button>
@@ -1540,12 +1590,12 @@ export default function SupplierPortal() {
                   </Descriptions.Item>
                   <Descriptions.Item label="PO Date">{fmtDate(selectedPoDetails.po_date)}</Descriptions.Item>
                   <Descriptions.Item label="Expected Delivery">{fmtDate(selectedPoDetails.expected_delivery_date)}</Descriptions.Item>
-                  <Descriptions.Item label="Supplier Delivery Date">{fmtDate(selectedPoDetails.supplier_delivery_date)}</Descriptions.Item>
+                  <Descriptions.Item label="Committed Delivery Date">{fmtDate(selectedPoDetails.supplier_delivery_date)}</Descriptions.Item>
                   <Descriptions.Item label="Warehouse">{selectedPoDetails.warehouse_name || '—'}</Descriptions.Item>
                   <Descriptions.Item label="Grand Total">
                     {(() => {
                       let itemsTotal = 0;
-                      const itemsToUse = selectedPoDetails.supplier_acknowledgement === 'pending' ? currentPoItems : (selectedPoDetails.items || []);
+                      const itemsToUse = selectedPoDetails.items || [];
                       itemsToUse.forEach(({ amount }) => {
                         itemsTotal += parseFloat(amount || 0);
                       });
@@ -1554,9 +1604,7 @@ export default function SupplierPortal() {
                         const match = selectedPoDetails.remarks.match(/Includes vehicle cost:\s*(\d+(\.\d+)?)/);
                         if (match) vCost = parseFloat(match[1]);
                       }
-                      const calcGrand = selectedPoDetails.supplier_acknowledgement === 'pending'
-                        ? (itemsTotal + vCost)
-                        : Math.max(parseFloat(selectedPoDetails.grand_total || 0), itemsTotal + vCost);
+                      const calcGrand = Math.max(parseFloat(selectedPoDetails.grand_total || 0), itemsTotal + vCost);
                       return <Text strong style={{ color: '#15803d', fontFamily: 'monospace' }}>{fmt(calcGrand)}</Text>;
                     })()}
                   </Descriptions.Item>
@@ -1610,8 +1658,8 @@ export default function SupplierPortal() {
               </Text>
               
               <Table
-                dataSource={selectedPoDetails.supplier_acknowledgement === 'pending' ? currentPoItems : (selectedPoDetails.items || [])}
-                columns={selectedPoDetails.supplier_acknowledgement === 'pending' ? poReviewItemColumns : poItemColumns}
+                dataSource={selectedPoDetails.items || []}
+                columns={poItemColumns}
                 rowKey="id"
                 pagination={false}
                 size="small"
@@ -1630,9 +1678,7 @@ export default function SupplierPortal() {
                     }
                   }
                   
-                  const calculatedGrandTotal = selectedPoDetails.supplier_acknowledgement === 'pending'
-                    ? (itemsTotal + vehicleCost)
-                    : Math.max(parseFloat(selectedPoDetails.grand_total || 0), itemsTotal + vehicleCost);
+                  const calculatedGrandTotal = Math.max(parseFloat(selectedPoDetails.grand_total || 0), itemsTotal + vehicleCost);
 
                   return (
                     <>
@@ -1758,29 +1804,24 @@ export default function SupplierPortal() {
                           style={{ background: '#16a34a', borderColor: '#16a34a' }}
                           loading={poActionLoading}
                           disabled={!committedDeliveryDate}
-                          onClick={async () => {
+                          onClick={() => {
                             if (!committedDeliveryDate) {
                               message.warning('Please select a committed delivery date first');
                               return;
                             }
-                            try {
-                              const formVals = await poReviewForm.validateFields();
-                              Modal.confirm({
-                                title: 'Accept this Purchase Order?',
-                                content: `By accepting, you commit to fulfilling this order under the specified quantities, pricing, and your committed delivery date of ${committedDeliveryDate.format('DD/MM/YYYY')}.`,
-                                okText: 'Accept PO',
-                                okButtonProps: { style: { background: '#16a34a', borderColor: '#16a34a' } },
-                                onOk: () => handleAcknowledgePO(
-                                  selectedPoDetails.id,
-                                  'accept',
-                                  '',
-                                  committedDeliveryDate.format('YYYY-MM-DD'),
-                                  currentPoItems
-                                ),
-                              });
-                            } catch (err) {
-                              message.error('Please fill in rates for all items before accepting.');
-                            }
+                            Modal.confirm({
+                              title: 'Accept this Purchase Order?',
+                              content: `By accepting, you commit to fulfilling this order under the specified quantities, pricing, and your committed delivery date of ${committedDeliveryDate.format('DD/MM/YYYY')}.`,
+                              okText: 'Accept PO',
+                              okButtonProps: { style: { background: '#16a34a', borderColor: '#16a34a' } },
+                              onOk: () => handleAcknowledgePO(
+                                selectedPoDetails.id,
+                                'accept',
+                                '',
+                                committedDeliveryDate.format('YYYY-MM-DD'),
+                                selectedPoDetails.items
+                              ),
+                            });
                           }}
                         >
                           Accept PO

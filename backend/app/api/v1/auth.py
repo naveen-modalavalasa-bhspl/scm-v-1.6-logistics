@@ -650,7 +650,7 @@ async def refresh_token(request: Request, payload: RefreshTokenRequest, db: Asyn
     # current row's username — mismatches mean the token belongs to a
     # different user-row and must be rejected.
     token_username = token_payload.get("username")
-    if token_username and user.username != token_username:
+    if token_username and user.username.lower() != token_username.lower():
         raise HTTPException(
             status_code=401,
             detail="Refresh token does not match current user",

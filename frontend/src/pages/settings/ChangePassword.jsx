@@ -10,6 +10,17 @@ const ChangePassword = () => {
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
 
+  const generateCode = () => {
+    return Math.floor(100000 + Math.random() * 900000).toString();
+  };
+
+  const [verificationCode, setVerificationCode] = useState(generateCode);
+
+  const regenerateCode = () => {
+    setVerificationCode(generateCode());
+    form.setFieldsValue({ verification_input: '' });
+  };
+
   const handleSubmit = async (values) => {
     setLoading(true);
     setSuccess(false);
@@ -21,11 +32,17 @@ const ChangePassword = () => {
       message.success('Password changed successfully');
       setSuccess(true);
       form.resetFields();
+      setVerificationCode(generateCode());
     } catch (err) {
       message.error(getErrorMessage(err));
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleReset = () => {
+    form.resetFields();
+    setVerificationCode(generateCode());
   };
 
   return (
@@ -59,6 +76,9 @@ const ChangePassword = () => {
               prefix={<LockOutlined />}
               placeholder="Current password"
               size="large"
+              onCopy={(e) => e.preventDefault()}
+              onPaste={(e) => e.preventDefault()}
+              onCut={(e) => e.preventDefault()}
             />
           </Form.Item>
 
@@ -90,6 +110,9 @@ const ChangePassword = () => {
               prefix={<LockOutlined />}
               placeholder="New password"
               size="large"
+              onCopy={(e) => e.preventDefault()}
+              onPaste={(e) => e.preventDefault()}
+              onCut={(e) => e.preventDefault()}
             />
           </Form.Item>
 
@@ -114,15 +137,68 @@ const ChangePassword = () => {
               prefix={<LockOutlined />}
               placeholder="Re-enter new password"
               size="large"
+              onCopy={(e) => e.preventDefault()}
+              onPaste={(e) => e.preventDefault()}
+              onCut={(e) => e.preventDefault()}
             />
           </Form.Item>
 
-          <Form.Item>
+          <Form.Item
+            label="Security Verification"
+            required
+            extra="Type the 6-digit code shown above to verify you are a human."
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
+              <div style={{
+                background: 'linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%)',
+                padding: '6px 16px',
+                borderRadius: '6px',
+                fontFamily: 'monospace',
+                fontSize: '20px',
+                fontWeight: 'bold',
+                letterSpacing: '4px',
+                color: '#333',
+                border: '1px solid #d9d9d9',
+                userSelect: 'none',
+                boxShadow: 'inset 0 1px 3px rgba(0,0,0,0.1)'
+              }}>
+                {verificationCode}
+              </div>
+              <Button type="link" onClick={regenerateCode} style={{ padding: 0 }}>
+                Refresh Code
+              </Button>
+            </div>
+            <Form.Item
+              name="verification_input"
+              noStyle
+              rules={[
+                { required: true, message: 'Please enter the verification code' },
+                {
+                  validator: (_, value) => {
+                    if (!value) return Promise.resolve();
+                    if (value !== verificationCode) {
+                      return Promise.reject(new Error('Verification code does not match'));
+                    }
+                    return Promise.resolve();
+                  }
+                }
+              ]}
+            >
+              <Input
+                placeholder="Enter 6-digit verification code"
+                size="large"
+                maxLength={6}
+                style={{ maxWidth: 240 }}
+              />
+            </Form.Item>
+          </Form.Item>
+
+          <Form.Item style={{ marginBottom: 0 }}>
             <Space>
               <Button type="primary" htmlType="submit" loading={loading} size="large">
                 Update Password
               </Button>
-              <Button onClick={() => form.resetFields()} size="large">
+              <Button onClick={handleReset} size="large">
                 Reset
               </Button>
             </Space>

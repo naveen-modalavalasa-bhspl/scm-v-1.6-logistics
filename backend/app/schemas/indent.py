@@ -145,6 +145,7 @@ class ScannedBarcode(BaseModel):
 
 class IndentAcknowledgementCreate(BaseModel):
     indent_id: int
+    employee_code: Optional[str] = None  # HR employee code of the person acknowledging
     remarks: Optional[str] = None
     scan_timestamp: Optional[str] = None
     items: List[AckItemCreate] = []
@@ -172,6 +173,7 @@ class IndentAcknowledgementResponse(BaseModel):
     warehouse_name: Optional[str] = None
     acknowledged_by: int
     acknowledged_by_name: Optional[str] = None
+    employee_code: Optional[str] = None  # HR employee code of the acknowledger
     acknowledged_at: datetime
     received_items_count: Optional[int] = None
     total_received_qty: Optional[Decimal] = None

@@ -140,6 +140,13 @@ class SupplierQuoteItem(BaseModel):
     expected_delivery: Optional[date] = None
     remarks: Optional[str] = None
 
+    @field_validator("expected_delivery")
+    @classmethod
+    def validate_expected_delivery(cls, v):
+        if v is not None and v < date.today():
+            raise ValueError("Expected delivery date cannot be in the past")
+        return v
+
 
 class SupplierQuoteSubmit(BaseModel):
     """Full quotation payload submitted by supplier from the portal."""
@@ -150,6 +157,13 @@ class SupplierQuoteSubmit(BaseModel):
     remarks: Optional[str] = None
     with_vehicle: Optional[bool] = False
     vehicle_cost: Optional[Decimal] = Decimal("0")
+
+    @field_validator("valid_until")
+    @classmethod
+    def validate_valid_until(cls, v):
+        if v is not None and v < date.today():
+            raise ValueError("Valid until date cannot be in the past")
+        return v
 
 
 class SupplierDeclineRfq(BaseModel):

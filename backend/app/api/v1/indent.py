@@ -160,47 +160,77 @@ async def list_indents(
     # • purchase_manager: org-wide view for procurement coordination.
     # • Field-only roles (field_staff/field_user/etc.): ONLY their own indents.
     # • Other operator roles (warehouse_operator, etc.): own + assigned warehouse.
-    _FIELD_ONLY_CODES = frozenset({
-        "field_staff", "field_user", "field_operator",
-        "nurse", "pharmacy_assistant", "site_user",
-        "lab_technician",
-    })
-    # Roles that need org-wide visibility to do their job properly.
-    _ORG_WIDE_CODES = frozenset({
-        "super_admin", "admin",
-        "purchase_manager",
-    })
     from app.utils.dependencies import get_user_role_codes
     role_codes = set(await get_user_role_codes(db, current_user.id))
-    is_admin = bool(_ORG_WIDE_CODES & role_codes)
+    is_super_or_admin = bool({"super_admin", "admin"} & role_codes)
+
+    wh_ids = await user_warehouse_ids(db, current_user.id)
+    is_mapped_to_central = False
+    if wh_ids:
+        from app.models.warehouse import Warehouse as WhModel
+        central_wh_res = await db.execute(
+            select(WhModel.id).where(
+                WhModel.id.in_(wh_ids),
+                (func.lower(WhModel.name) == "central") | (WhModel.name == "Central - Vijayawada") | (WhModel.code == "20070") | (WhModel.id == 18)
+            )
+        )
+        if central_wh_res.scalars().all():
+            is_mapped_to_central = True
+
+    has_all_visibility = is_super_or_admin or is_mapped_to_central
 
     from app.models.settings_master import Employee, Position
     from app.models.approval import ProjectWorkflowConfig
     from app.models.user import User as UserModel
     from app.services.approval_service import get_position_descendants
 
-    user_pos_id = None
+    user_pos_ids = []
     user_role_id = current_user.active_role_id
     desc_user_ids = []
-    allowed_proj_ids = []
 
     if current_user.employee_id:
-        emp_res = await db.execute(select(Employee).where(Employee.id == current_user.employee_id))
-        emp = emp_res.scalar_one_or_none()
-        if emp and emp.position_id:
-            user_pos_id = emp.position_id
-            if user_role_id is None:
-                pos_res = await db.execute(select(Position).where(Position.id == emp.position_id))
-                pos = pos_res.scalar_one_or_none()
-                if pos:
-                    user_role_id = pos.role_id
+        if user_role_id:
+            pos_q = await db.execute(
+                select(Position.id).where(
+                    Position.employee_id == current_user.employee_id,
+                    Position.role_id == user_role_id
+                )
+            )
+            user_pos_ids = list(pos_q.scalars().all())
 
-    if user_pos_id:
-        descendants = await get_position_descendants(db, user_pos_id)
-        desc_pos_ids = [d.id for d in descendants]
+        if not user_pos_ids:
+            emp_res = await db.execute(select(Employee).where(Employee.id == current_user.employee_id))
+            emp = emp_res.scalar_one_or_none()
+            if emp:
+                if emp.position_id:
+                    user_pos_ids = [emp.position_id]
+                    if user_role_id is None:
+                        pos_res = await db.execute(select(Position).where(Position.id == emp.position_id))
+                        pos = pos_res.scalar_one_or_none()
+                        if pos:
+                            user_role_id = pos.role_id
+                else:
+                    pos_q = await db.execute(
+                        select(Position.id).where(Position.employee_id == current_user.employee_id)
+                    )
+                    user_pos_ids = list(pos_q.scalars().all())
+
+    desc_pos_ids = []
+    if user_pos_ids:
+        for pos_id in user_pos_ids:
+            descendants = await get_position_descendants(db, pos_id)
+            desc_pos_ids.extend([d.id for d in descendants])
+
         if desc_pos_ids:
+            emp_q2 = select(Position.employee_id).where(
+                Position.id.in_(desc_pos_ids),
+                Position.employee_id.is_not(None)
+            )
             desc_emps_res = await db.execute(
-                select(Employee.id).where(Employee.position_id.in_(desc_pos_ids))
+                select(Employee.id).where(
+                    (Employee.position_id.in_(desc_pos_ids)) |
+                    (Employee.id.in_(emp_q2))
+                )
             )
             desc_emp_ids = [r[0] for r in desc_emps_res.all()]
             if desc_emp_ids:
@@ -209,59 +239,12 @@ async def list_indents(
                 )
                 desc_user_ids = [r[0] for r in desc_users_res.all()]
 
-    if user_role_id:
-        proj_cfg_res = await db.execute(
-            select(ProjectWorkflowConfig.project_id).where(
-                ProjectWorkflowConfig.role_id == user_role_id,
-                ProjectWorkflowConfig.indent_view == True
-            )
-        )
-        allowed_proj_ids = [r[0] for r in proj_cfg_res.all()]
-
-    if not is_admin:
-        is_field_only = (
-            bool(role_codes)
-            and role_codes.issubset(_FIELD_ONLY_CODES)
-        )
-        _FULFILLMENT_ROLES = frozenset({"store_keeper", "storekeeper", "warehouse_manager"})
-        is_fulfillment = bool(_FULFILLMENT_ROLES & role_codes)
-        
-        from app.models.user import UserWarehouse
-        has_any_wh_assignment = (await db.execute(
-            select(func.count(UserWarehouse.id)).where(UserWarehouse.user_id == current_user.id)
-        )).scalar() > 0
-
-        wh_ids = await user_warehouse_ids(db, current_user.id)
-        from app.utils.dependencies import get_warehouse_and_descendants
-        all_wh_ids = await get_warehouse_and_descendants(db, wh_ids)
+    if not has_all_visibility:
         from sqlalchemy import or_
         scope = Indent.raised_by == current_user.id
-        
-        if is_fulfillment:
-            if all_wh_ids:
-                scope = or_(
-                    scope,
-                    and_(Indent.status.in_(["approved", "partially_fulfilled"]), Indent.warehouse_id.in_(all_wh_ids))
-                )
-            elif not has_any_wh_assignment:
-                scope = or_(scope, Indent.status.in_(["approved", "partially_fulfilled"]))
-        if allowed_proj_ids:
-            scope = or_(scope, Indent.project_id.in_(allowed_proj_ids))
         if desc_user_ids:
             scope = or_(scope, Indent.raised_by.in_(desc_user_ids))
-        if all_wh_ids and not is_field_only:
-            scope = or_(scope, Indent.warehouse_id.in_(all_wh_ids))
-            
-        try:
-            from app.models.user import UserProject
-            up_rows = await db.execute(
-                select(UserProject.project_id).where(UserProject.user_id == current_user.id)
-            )
-            user_proj_ids = [r[0] for r in up_rows.all()]
-            if user_proj_ids:
-                scope = or_(scope, Indent.project_id.in_(user_proj_ids))
-        except Exception:
-            pass
+
         query = query.where(scope)
         count_query = count_query.where(scope)
 
@@ -403,27 +386,53 @@ async def get_indent(
     from app.models.user import User as UserModel
     from app.services.approval_service import get_position_descendants
 
-    user_pos_id = None
+    user_pos_ids = []
     user_role_id = current_user.active_role_id
     desc_user_ids = []
 
     if current_user.employee_id:
-        emp_res = await db.execute(select(Employee).where(Employee.id == current_user.employee_id))
-        emp = emp_res.scalar_one_or_none()
-        if emp and emp.position_id:
-            user_pos_id = emp.position_id
-            if user_role_id is None:
-                pos_res = await db.execute(select(Position).where(Position.id == emp.position_id))
-                pos = pos_res.scalar_one_or_none()
-                if pos:
-                    user_role_id = pos.role_id
+        if user_role_id:
+            pos_q = await db.execute(
+                select(Position.id).where(
+                    Position.employee_id == current_user.employee_id,
+                    Position.role_id == user_role_id
+                )
+            )
+            user_pos_ids = list(pos_q.scalars().all())
 
-    if user_pos_id:
-        descendants = await get_position_descendants(db, user_pos_id)
-        desc_pos_ids = [d.id for d in descendants]
+        if not user_pos_ids:
+            emp_res = await db.execute(select(Employee).where(Employee.id == current_user.employee_id))
+            emp = emp_res.scalar_one_or_none()
+            if emp:
+                if emp.position_id:
+                    user_pos_ids = [emp.position_id]
+                    if user_role_id is None:
+                        pos_res = await db.execute(select(Position).where(Position.id == emp.position_id))
+                        pos = pos_res.scalar_one_or_none()
+                        if pos:
+                            user_role_id = pos.role_id
+                else:
+                    pos_q = await db.execute(
+                        select(Position.id).where(Position.employee_id == current_user.employee_id)
+                    )
+                    user_pos_ids = list(pos_q.scalars().all())
+
+    desc_pos_ids = []
+    if user_pos_ids:
+        for pos_id in user_pos_ids:
+            descendants = await get_position_descendants(db, pos_id)
+            desc_pos_ids.extend([d.id for d in descendants])
+
         if desc_pos_ids:
+            emp_q2 = select(Position.employee_id).where(
+                Position.id.in_(desc_pos_ids),
+                Position.employee_id.is_not(None)
+            )
             desc_emps_res = await db.execute(
-                select(Employee.id).where(Employee.position_id.in_(desc_pos_ids))
+                select(Employee.id).where(
+                    (Employee.position_id.in_(desc_pos_ids)) |
+                    (Employee.id.in_(emp_q2))
+                )
             )
             desc_emp_ids = [r[0] for r in desc_emps_res.all()]
             if desc_emp_ids:
@@ -432,64 +441,30 @@ async def get_indent(
                 )
                 desc_user_ids = [r[0] for r in desc_users_res.all()]
 
-    # Bug fix R-004 — originator must ALWAYS be able to see their own indent,
-    # regardless of role/warehouse. Check that first before any other gates.
     is_originator = (indent.raised_by is not None and indent.raised_by == current_user.id)
 
     if not is_originator:
         from app.utils.dependencies import get_user_role_codes
         role_codes = set(await get_user_role_codes(db, current_user.id))
-        is_admin = bool({"super_admin", "admin"} & role_codes)
-        if not is_admin:
-            allowed = False
-            if user_role_id and indent.project_id:
-                cfg_check = await db.execute(
-                    select(ProjectWorkflowConfig).where(
-                        ProjectWorkflowConfig.project_id == indent.project_id,
-                        ProjectWorkflowConfig.role_id == user_role_id,
-                        ProjectWorkflowConfig.indent_view == True
-                    )
-                )
-                if cfg_check.scalar_one_or_none():
-                    allowed = True
-            
-            if not allowed and desc_user_ids and indent.raised_by in desc_user_ids:
-                allowed = True
-                
-            if not allowed:
-                wh_ids = await user_warehouse_ids(db, current_user.id)
-                from app.utils.dependencies import get_warehouse_and_descendants
-                all_wh_ids = await get_warehouse_and_descendants(db, wh_ids)
-                if indent.warehouse_id in all_wh_ids:
-                    allowed = True
-            
-            if not allowed:
-                _FULFILLMENT_ROLES = frozenset({"store_keeper", "storekeeper", "warehouse_manager"})
-                is_fulfillment = bool(_FULFILLMENT_ROLES & role_codes)
-                if is_fulfillment and indent.status in ("approved", "partially_fulfilled"):
-                    wh_ids = await user_warehouse_ids(db, current_user.id)
-                    from app.utils.dependencies import get_warehouse_and_descendants
-                    all_wh_ids = await get_warehouse_and_descendants(db, wh_ids)
-                    from app.models.user import UserWarehouse
-                    has_any_wh_assignment = (await db.execute(
-                        select(func.count(UserWarehouse.id)).where(UserWarehouse.user_id == current_user.id)
-                    )).scalar() > 0
-                    if (all_wh_ids and indent.warehouse_id in all_wh_ids) or (not all_wh_ids and not has_any_wh_assignment):
-                        allowed = True
+        is_super_or_admin = bool({"super_admin", "admin"} & role_codes)
 
-            if not allowed:
-                try:
-                    from app.models.user import UserProject
-                    up_rows = await db.execute(
-                        select(UserProject.project_id).where(
-                            UserProject.user_id == current_user.id,
-                            UserProject.project_id == indent.project_id
-                        )
-                    )
-                    if up_rows.all():
-                        allowed = True
-                except Exception:
-                    pass
+        wh_ids = await user_warehouse_ids(db, current_user.id)
+        is_mapped_to_central = False
+        if wh_ids:
+            from app.models.warehouse import Warehouse as WhModel
+            central_wh_res = await db.execute(
+                select(WhModel.id).where(
+                    WhModel.id.in_(wh_ids),
+                    (func.lower(WhModel.name) == "central") | (WhModel.name == "Central - Vijayawada") | (WhModel.code == "20070") | (WhModel.id == 18)
+                )
+            )
+            if central_wh_res.scalars().all():
+                is_mapped_to_central = True
+
+        has_all_visibility = is_super_or_admin or is_mapped_to_central
+
+        if not has_all_visibility:
+            allowed = (desc_user_ids and indent.raised_by in desc_user_ids)
             if not allowed:
                 raise HTTPException(status_code=403, detail="Not authorized to view this indent")
 
@@ -1347,7 +1322,8 @@ async def list_indent_acknowledgements(
         select(IndentAcknowledgement)
         .options(
             selectinload(IndentAcknowledgement.acknowledger),
-            selectinload(IndentAcknowledgement.items),
+            selectinload(IndentAcknowledgement.items).selectinload(IndentAcknowledgementItem.item),
+            selectinload(IndentAcknowledgement.items).selectinload(IndentAcknowledgementItem.indent_item).selectinload(IndentItem.uom),
         )
         .where(IndentAcknowledgement.indent_id == indent_id)
     )
@@ -1358,15 +1334,36 @@ async def list_indent_acknowledgements(
         response.append({
             "id": ack.id,
             "indent_id": ack.indent_id,
+            "warehouse_id": ack.warehouse_id,
             "acknowledged_by": ack.acknowledged_by,
             "acknowledged_by_name": (
                 f"{ack.acknowledger.first_name or ''} {ack.acknowledger.last_name or ''}".strip()
                 or ack.acknowledger.username
             ) if ack.acknowledger else None,
+            "employee_code": ack.employee_code or (ack.acknowledger.employee_code if ack.acknowledger else None),
             "acknowledged_at": ack.acknowledged_at,
             "received_qty": total_recv,
             "status": ack.status or "received",
             "remarks": ack.remarks,
+            "items": [
+                {
+                    "id": ai.id,
+                    "item_id": ai.item_id,
+                    "indent_item_id": ai.indent_item_id,
+                    "item_code": ai.item.item_code if ai.item else None,
+                    "item_name": ai.item.name if ai.item else None,
+                    "uom": (
+                        ai.indent_item.uom.name
+                        if ai.indent_item and ai.indent_item.uom
+                        else None
+                    ),
+                    "approved_qty": float(ai.indent_item.approved_qty) if ai.indent_item and ai.indent_item.approved_qty is not None else None,
+                    "requested_qty": float(ai.indent_item.requested_qty) if ai.indent_item and ai.indent_item.requested_qty is not None else None,
+                    "received_qty": float(ai.received_qty) if ai.received_qty is not None else 0,
+                    "remarks": ai.remarks,
+                }
+                for ai in (ack.items or [])
+            ],
         })
     return response
 
@@ -1574,6 +1571,7 @@ async def list_all_acknowledgements(
             selectinload(IndentAcknowledgement.indent).selectinload(Indent.warehouse),
             selectinload(IndentAcknowledgement.acknowledger),
             selectinload(IndentAcknowledgement.items).selectinload(IndentAcknowledgementItem.item),
+            selectinload(IndentAcknowledgement.items).selectinload(IndentAcknowledgementItem.indent_item).selectinload(IndentItem.uom),
         )
     )
     count_query = select(func.count(IndentAcknowledgement.id))
@@ -1614,6 +1612,7 @@ async def list_all_acknowledgements(
         data = {
             "id": ack.id,
             "indent_id": ack.indent_id,
+            "warehouse_id": ack.warehouse_id,
             "indent_number": ack.indent.indent_number if ack.indent else None,
             "warehouse_name": ack.indent.warehouse.name if ack.indent and ack.indent.warehouse else None,
             "acknowledged_by": ack.acknowledged_by,
@@ -1621,11 +1620,31 @@ async def list_all_acknowledgements(
                 f"{ack.acknowledger.first_name or ''} {ack.acknowledger.last_name or ''}".strip()
                 or ack.acknowledger.username
             ) if ack.acknowledger else None,
+            "employee_code": ack.employee_code or (ack.acknowledger.employee_code if ack.acknowledger else None),
             "acknowledged_at": ack.acknowledged_at,
             "received_items_count": len(ack.items) if ack.items else (1 if ack.received_qty else 0),
             "total_received_qty": total_recv,
             "status": ack.status or "received",
             "remarks": ack.remarks,
+            "items": [
+                {
+                    "id": ai.id,
+                    "item_id": ai.item_id,
+                    "indent_item_id": ai.indent_item_id,
+                    "item_code": ai.item.item_code if ai.item else None,
+                    "item_name": ai.item.name if ai.item else None,
+                    "uom": (
+                        ai.indent_item.uom.name
+                        if ai.indent_item and ai.indent_item.uom
+                        else None
+                    ),
+                    "approved_qty": float(ai.indent_item.approved_qty) if ai.indent_item and ai.indent_item.approved_qty is not None else None,
+                    "requested_qty": float(ai.indent_item.requested_qty) if ai.indent_item and ai.indent_item.requested_qty is not None else None,
+                    "received_qty": float(ai.received_qty) if ai.received_qty is not None else 0,
+                    "remarks": ai.remarks,
+                }
+                for ai in (ack.items or [])
+            ],
         }
         response_items.append(data)
     return build_paginated_response(response_items, total, page, page_size)
@@ -1697,6 +1716,7 @@ async def get_acknowledgement(
     return {
         "id": ack.id,
         "indent_id": ack.indent_id,
+        "warehouse_id": ack.warehouse_id,
         "indent_number": ack.indent.indent_number if ack.indent else None,
         "warehouse_name": ack.indent.warehouse.name if ack.indent and ack.indent.warehouse else None,
         "acknowledged_by": ack.acknowledged_by,
@@ -1704,6 +1724,7 @@ async def get_acknowledgement(
             f"{ack.acknowledger.first_name or ''} {ack.acknowledger.last_name or ''}".strip()
             or ack.acknowledger.username
         ) if ack.acknowledger else None,
+        "employee_code": ack.employee_code or (ack.acknowledger.employee_code if ack.acknowledger else None),
         "acknowledged_at": ack.acknowledged_at,
         "status": ack.status or "received",
         "remarks": ack.remarks,
@@ -1830,9 +1851,14 @@ async def _create_acknowledgement(
                     break
         ack_status = "completed" if all_received else "partial"
 
+    # Resolve employee_code: use explicitly provided value, else fetch from user record
+    resolved_employee_code = payload.employee_code or current_user.employee_code or None
+
     ack = IndentAcknowledgement(
         indent_id=payload.indent_id,
+        warehouse_id=indent.warehouse_id,
         acknowledged_by=current_user.id,
+        employee_code=resolved_employee_code,
         acknowledged_at=datetime.now(timezone.utc),
         received_qty=total_received,
         status=ack_status,

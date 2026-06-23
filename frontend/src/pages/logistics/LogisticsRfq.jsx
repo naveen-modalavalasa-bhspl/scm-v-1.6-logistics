@@ -96,6 +96,7 @@ export default function LogisticsRfq() {
             const addr = parseAddress(latestMdo.delivery_address);
             const inst = parseInstructions(latestMdo.special_instructions);
             const briefDesc = inst.desc ? (inst.desc.length > 30 ? inst.desc.substring(0, 30) + '...' : inst.desc) : 'Outbound Logistics';
+            const defaultVehType = latestMdo.sdos?.[0]?.vehicle_type_required || 'Truck';
 
             form.setFieldsValue({
               title: `Consolidated Bidding: ${briefDesc}`,
@@ -105,7 +106,8 @@ export default function LogisticsRfq() {
               logistics_volume: inst.volume ? parseFloat(inst.volume) : (latestMdo.total_volume_cft || 0),
               items_description: inst.desc || 'SCM Materials',
               expected_delivery_date: latestMdo.required_delivery_date ? dayjs(latestMdo.required_delivery_date) : null,
-              scope_penalties: 'Standard penalty rate of 2% per day applies for delivery delays.'
+              scope_penalties: 'Standard penalty rate of 2% per day applies for delivery delays.',
+              vehicle_type_required: defaultVehType
             });
           }, 100);
         }
@@ -131,6 +133,7 @@ export default function LogisticsRfq() {
       const addr = parseAddress(selectedMdo.delivery_address);
       const inst = parseInstructions(selectedMdo.special_instructions);
       const briefDesc = inst.desc ? (inst.desc.length > 30 ? inst.desc.substring(0, 30) + '...' : inst.desc) : 'Outbound Logistics';
+      const defaultVehType = selectedMdo.sdos?.[0]?.vehicle_type_required || 'Truck';
 
       form.setFieldsValue({
         title: `Consolidated Bidding: ${briefDesc}`,
@@ -140,7 +143,8 @@ export default function LogisticsRfq() {
         logistics_volume: inst.volume ? parseFloat(inst.volume) : (selectedMdo.total_volume_cft || 0),
         items_description: inst.desc || 'SCM Materials',
         expected_delivery_date: selectedMdo.required_delivery_date ? dayjs(selectedMdo.required_delivery_date) : null,
-        scope_penalties: 'Standard penalty rate of 2% per day applies for delivery delays.'
+        scope_penalties: 'Standard penalty rate of 2% per day applies for delivery delays.',
+        vehicle_type_required: defaultVehType
       });
     }
   };
@@ -164,7 +168,8 @@ export default function LogisticsRfq() {
         insuranceRequired: !!values.insuranceRequired,
         criteriaPrice: values.criteriaPrice !== undefined ? values.criteriaPrice : 40,
         criteriaRating: values.criteriaRating !== undefined ? values.criteriaRating : 30,
-        criteriaTimeline: values.criteriaTimeline !== undefined ? values.criteriaTimeline : 30
+        criteriaTimeline: values.criteriaTimeline !== undefined ? values.criteriaTimeline : 30,
+        vehicle_type_required: values.vehicle_type_required
       };
 
       await api.post('/logistics/rfq', payload);
@@ -419,6 +424,16 @@ export default function LogisticsRfq() {
                 <Input.TextArea placeholder="Standard penalty rate of 2% per day applies for delivery delays." rows={2} />
               </Form.Item>
             </Col>
+            <Col xs={24} md={12}>
+              <Form.Item name="vehicle_type_required" label="Vehicle Type Required" rules={[{ required: true, message: 'Please select vehicle type' }]}>
+                <Select placeholder="Select vehicle type">
+                  <Option value="Truck">Truck</Option>
+                  <Option value="Container">Container</Option>
+                  <Option value="Tempo">Tempo</Option>
+                  <Option value="Flatbed Container">Flatbed Container</Option>
+                </Select>
+              </Form.Item>
+            </Col>
           </Row>
 
           <Divider style={{ margin: '12px 0' }} />
@@ -532,6 +547,49 @@ export default function LogisticsRfq() {
                     <Col xs={12} md={6}>Advance Required: <strong>{rfq.advance_payment_percentage}%</strong></Col>
                     <Col xs={12} md={6}>Vehicle Required: <strong style={{ color: '#0284c7' }}>{rfq.vehicle_type_required}</strong></Col>
                   </Row>
+
+                  {/* Scope Materials List */}
+                  {rfq.materials && rfq.materials.length > 0 && (
+                    <div style={{ marginBottom: '16px', padding: '10px', borderRadius: '6px', border: '1px solid #e2e8f0', background: '#ffffff' }}>
+                      <span style={{ fontSize: '10px', textTransform: 'uppercase', color: '#64748b', display: 'block', marginBottom: '8px', fontFamily: 'monospace', fontWeight: 'bold' }}>
+                        Materials & Transit Requirements
+                      </span>
+                      <Table
+                        dataSource={rfq.materials}
+                        pagination={false}
+                        size="small"
+                        rowKey="id"
+                        columns={[
+                          { title: 'Code', dataIndex: 'material_code', key: 'code', render: t => <span style={{ fontFamily: 'monospace' }}>{t}</span> },
+                          { title: 'Name', dataIndex: 'material_name', key: 'name' },
+                          { title: 'Qty', dataIndex: 'quantity', key: 'qty', render: (q, r) => `${q} ${r.unit_of_measure}` },
+                          {
+                            title: 'Special Transport Conditions',
+                            key: 'conditions',
+                            render: (_, r) => (
+                              <Space size={[4, 4]} wrap>
+                                {r.special_transport_condition ? (
+                                  <>
+                                    <Tag color="cyan" style={{ fontSize: '10px', borderRadius: '4px', margin: 0 }}>
+                                      Temp: {r.transport_min_temp ?? '*'} to {r.transport_max_temp ?? '*'}°C
+                                    </Tag>
+                                    <Tag color="blue" style={{ fontSize: '10px', borderRadius: '4px', margin: 0 }}>
+                                      Moisture: {r.transport_min_moisture ?? 0}% to {r.transport_max_moisture ?? 100}%
+                                    </Tag>
+                                    {r.transport_breakable && (
+                                      <Tag color="volcano" style={{ fontSize: '10px', borderRadius: '4px', margin: 0 }}>Fragile Cargo</Tag>
+                                    )}
+                                  </>
+                                ) : (
+                                  <span style={{ color: '#94a3b8', fontSize: '11px' }}>Standard Transit</span>
+                                )}
+                              </Space>
+                            )
+                          }
+                        ]}
+                      />
+                    </div>
+                  )}
 
                   {/* Quotes received list table */}
                   <div style={{ padding: '10px', borderRadius: '6px', border: '1px solid #e2e8f0', background: '#f8fafc' }}>

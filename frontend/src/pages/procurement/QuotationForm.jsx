@@ -570,8 +570,26 @@ const QuotationForm = () => {
               </Form.Item>
             </Col>
             <Col span={8}>
-              <Form.Item name="valid_until" label="Valid Until" rules={[{ required: true, message: 'Required' }]}>
-                <DatePicker style={{ width: '100%' }} format={DATE_FORMAT} />
+              <Form.Item
+                name="valid_until"
+                label="Valid Until"
+                rules={[
+                  { required: true, message: 'Required' },
+                  () => ({
+                    validator(_, value) {
+                      if (value && value.isBefore(dayjs(), 'day')) {
+                        return Promise.reject(new Error('Validity date cannot be in the past'));
+                      }
+                      return Promise.resolve();
+                    },
+                  }),
+                ]}
+              >
+                <DatePicker
+                  style={{ width: '100%' }}
+                  format={DATE_FORMAT}
+                  disabledDate={(current) => current && current.isBefore(dayjs().startOf('day'))}
+                />
               </Form.Item>
             </Col>
             <Col span={8}>

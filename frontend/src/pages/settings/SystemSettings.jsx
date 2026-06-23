@@ -376,7 +376,13 @@ const SystemSettings = () => {
               </Col>
               <Col xs={24} sm={12} md={8}>
                 <Form.Item name="smtp_password" label="Password" extra="Leave blank to keep existing">
-                  <Input.Password placeholder="Enter only to change" autoComplete="new-password" />
+                  <Input.Password
+                    placeholder="Enter only to change"
+                    autoComplete="new-password"
+                    onCopy={(e) => e.preventDefault()}
+                    onPaste={(e) => e.preventDefault()}
+                    onCut={(e) => e.preventDefault()}
+                  />
                 </Form.Item>
               </Col>
             </Row>

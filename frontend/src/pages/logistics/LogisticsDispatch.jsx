@@ -59,7 +59,12 @@ export const toImgSrc = (val) => {
   if (!val || typeof val !== 'string') return null;
   const v = val.trim();
   if (v.startsWith('/uploads/') || v.startsWith('http://') || v.startsWith('https://')) return v;
-  if (v.startsWith('data:image/') && v.includes(';base64,')) return v;
+  if (v.startsWith('data:image/') && v.includes(';base64,')) {
+    const parts = v.split(',');
+    if (parts.length > 1 && !parts[1].includes('.')) {
+      return v;
+    }
+  }
   // Anything else (truncated base64, raw binary, unknown format) — discard.
   return null;
 };
@@ -149,6 +154,59 @@ export const groupIssueItems = (items) => {
     key: item.item_id || idx,
     batch_number: Array.from(item.batches).join(', ') || item.batch_number
   }));
+};
+
+export const getMultiLevelStatusText = (mdo) => {
+  if (mdo.dispatch_mode !== 'multi-level') {
+    return mdo.status === 'ACKNOWLEDGED' ? 'ACKNOWLEDGED' : mdo.status === 'COMPLETED' ? 'DELIVERED' : mdo.status.replace('_', ' ');
+  }
+  if (mdo.status === 'ACKNOWLEDGED') return 'ACKNOWLEDGED';
+  if (mdo.status === 'COMPLETED') return 'DELIVERED';
+
+  const sdos = mdo.sdos || [];
+  if (sdos.length === 0) return 'INITIALIZED';
+
+  // Sort SDOs by sequence number
+  const sortedSdos = [...sdos].sort((a, b) => (a.sequence_number || 1) - (b.sequence_number || 1));
+  
+  // Find the current active SDO leg (the one that is pending)
+  const pendingSdo = sortedSdos.find(s => s.status === 'PENDING');
+  if (pendingSdo) {
+    const seq = pendingSdo.sequence_number || 1;
+    const destName = pendingSdo.custodian_position_name || 'Custodian';
+    if (seq === 1) {
+      return `IN TRANSIT (Central to ${destName})`;
+    } else {
+      const prevSdo = sortedSdos.find(s => s.sequence_number === seq - 1);
+      const prevName = prevSdo?.custodian_position_name || 'Previous Leg';
+      return `IN TRANSIT (${prevName} to ${destName})`;
+    }
+  }
+
+  const acknowledgedSdo = [...sortedSdos].reverse().find(s => s.status === 'ACKNOWLEDGED');
+  if (acknowledgedSdo) {
+    return `AT ${acknowledgedSdo.custodian_position_name || 'Custodian'} (Awaiting Handover)`;
+  }
+
+  return mdo.status.replace('_', ' ');
+};
+
+export const getMultiLevelStatusColor = (mdo) => {
+  if (mdo.dispatch_mode !== 'multi-level') {
+    return mdo.status === 'ACKNOWLEDGED' ? 'success' :
+      mdo.status === 'COMPLETED' ? 'cyan' :
+      mdo.status === 'IN_TRANSIT' ? 'magenta' :
+      mdo.status === 'DISPATCHED' ? 'blue' :
+      mdo.status === 'CONFIRMED' ? 'purple' :
+      mdo.status === 'APPROVED' ? 'indigo' :
+      'warning';
+  }
+  if (mdo.status === 'ACKNOWLEDGED') return 'success';
+  if (mdo.status === 'COMPLETED') return 'cyan';
+  const text = getMultiLevelStatusText(mdo);
+  if (text.startsWith('IN TRANSIT')) return 'magenta';
+  if (text.startsWith('AT ')) return 'orange';
+  return 'warning';
 };
 
 const FormUpload = ({ value, ...props }) => <Upload {...props} />;
@@ -462,6 +520,9 @@ export default function LogisticsDispatch() {
           dispatched_quantity: 0,
           key: item.id || Math.random()
         })));
+        if (!indents.some(i => i.value === indentData.id)) {
+          setIndents(prev => [...prev, { label: indentData.indent_number, value: indentData.id }]);
+        }
       } else {
         setSelectedIndent(null);
         setSelectedIndentItems([]);
@@ -470,12 +531,16 @@ export default function LogisticsDispatch() {
       console.warn("[LogisticsDispatch] Falling back to local MDO materials (permission or network issue):", err?.message || err);
       issueData = {
         id: mdo.material_issue_id,
-        issue_number: `MI-ID: ${mdo.material_issue_id}`,
+        issue_number: mdo.material_issue_number || `MI-ID: ${mdo.material_issue_id}`,
         items: (mdo.materials || []).map(m => ({
           id: m.id,
           item_id: m.material_id,
           qty: m.quantity,
-          uom_name: m.unit_of_measure
+          uom_name: m.unit_of_measure,
+          item_name: m.material_name,
+          item_code: m.material_code,
+          batch_number: m.batch_number,
+          serial_numbers: m.serial_numbers
         }))
       };
       setSelectedIssue(issueData);
@@ -487,8 +552,30 @@ export default function LogisticsDispatch() {
       if (!materialIssues.some(i => i.id === issueData.id)) {
         setMaterialIssues(prev => [...prev, issueData]);
       }
-      setSelectedIndent(null);
-      setSelectedIndentItems([]);
+      
+      if (mdo.indent_id) {
+        const indentData = {
+          id: mdo.indent_id,
+          indent_number: mdo.indent_number || `IND-ID: ${mdo.indent_id}`,
+          warehouse_name: mdo.destination_warehouse_name || mdo.warehouse_name || 'Destination Warehouse',
+          raised_by_name: mdo.destination_user_name || mdo.creator_name || 'Consignee'
+        };
+        setSelectedIndent(indentData);
+        setSelectedIndentItems((mdo.materials || []).map(m => ({
+          id: m.id,
+          item_name: m.material_name,
+          item_code: m.material_code,
+          requested_qty: m.quantity,
+          required_date: mdo.required_delivery_date,
+          key: m.id || Math.random()
+        })));
+        if (!indents.some(i => i.value === indentData.id)) {
+          setIndents(prev => [...prev, { label: indentData.indent_number, value: indentData.id }]);
+        }
+      } else {
+        setSelectedIndent(null);
+        setSelectedIndentItems([]);
+      }
     } finally {
       setLoadingDetails(false);
     }
@@ -582,8 +669,8 @@ export default function LogisticsDispatch() {
         indent_id: selectedIssue.indent_id,
         destination_warehouse_id: selectedIssue.destination_warehouse_id,
         delivery_address: serializedAddress,
-        e_challan: uploadedUrls.e_challan || 'https://bhspl-scm.s3.amazonaws.com/challans/E-CHL2026.pdf',
-        waybill: uploadedUrls.waybill || 'https://bhspl-scm.s3.amazonaws.com/waybills/E-WAY2026.pdf',
+        e_challan: dispatchType === 'THIRD_PARTY' ? null : (uploadedUrls.e_challan || 'https://bhspl-scm.s3.amazonaws.com/challans/E-CHL2026.pdf'),
+        waybill: dispatchType === 'THIRD_PARTY' ? null : (uploadedUrls.waybill || 'https://bhspl-scm.s3.amazonaws.com/waybills/E-WAY2026.pdf'),
         dispatch_type: dispatchType,
 
         // Handover details (if not RFQ)
@@ -591,9 +678,9 @@ export default function LogisticsDispatch() {
         awb_no: values.awb_no,
         vehicle_no: values.vehicle_no,
         driver_name: values.driver_name,
-        driver_phone: values.driver_phone,
+        driver_phone: values.driver_phone ? values.driver_phone.replace(/[\s\-()]/g, '') : undefined,
         received_by_name: values.received_by_name,
-        received_by_phone: values.received_by_phone,
+        received_by_phone: values.received_by_phone ? values.received_by_phone.replace(/[\s\-()]/g, '') : undefined,
         handover_remarks: uploadedUrls.receiver_signature
           ? `RECEIVER_SIGNATURE: ${uploadedUrls.receiver_signature} | REMARKS: ${values.handover_remarks || 'Standard handover clearance completed.'}`
           : (values.handover_remarks || 'Standard handover clearance completed.')
@@ -706,18 +793,10 @@ export default function LogisticsDispatch() {
               {mdo.priority} PRIORITY
             </Tag>
             <Tag
-              color={
-                mdo.status === 'ACKNOWLEDGED' ? 'success' :
-                  mdo.status === 'COMPLETED' ? 'cyan' :
-                    mdo.status === 'IN_TRANSIT' ? 'magenta' :
-                      mdo.status === 'DISPATCHED' ? 'blue' :
-                        mdo.status === 'CONFIRMED' ? 'purple' :
-                          mdo.status === 'APPROVED' ? 'indigo' :
-                            'warning'
-              }
+              color={getMultiLevelStatusColor(mdo)}
               style={{ border: 'none', fontWeight: 700, borderRadius: '4px' }}
             >
-              {mdo.status === 'ACKNOWLEDGED' ? 'ACKNOWLEDGED' : mdo.status === 'COMPLETED' ? 'DELIVERED' : mdo.status.replace('_', ' ')}
+              {getMultiLevelStatusText(mdo)}
             </Tag>
           </Space>
         </div>
@@ -762,10 +841,10 @@ export default function LogisticsDispatch() {
                   View details
                 </Button>
                 {mdo.e_challan && (
-                  <Button type="link" icon={<FilePdfOutlined />} href={mdo.e_challan} target="_blank" style={{ color: '#ef4444', fontWeight: 600, padding: 0 }}>Challan</Button>
+                  <Button type="link" icon={<FilePdfOutlined />} href={mdo.e_challan} target="_blank" style={{ color: '#ef4444', fontWeight: 600, padding: 0 }}>Delivery Challan</Button>
                 )}
                 {mdo.waybill && (
-                  <Button type="link" icon={<FilePdfOutlined />} href={mdo.waybill} target="_blank" style={{ color: '#ef4444', fontWeight: 600, padding: 0 }}>Way Bill</Button>
+                  <Button type="link" icon={<FilePdfOutlined />} href={mdo.waybill} target="_blank" style={{ color: '#ef4444', fontWeight: 600, padding: 0 }}>Deliverable Document</Button>
                 )}
               </Col>
             </Row>
@@ -965,7 +1044,38 @@ export default function LogisticsDispatch() {
                         { title: 'Name', dataIndex: 'material_name', key: 'name', render: text => <span style={{ color: '#0f172a', fontWeight: 500 }}>{text}</span> },
                         { title: 'Quantity', dataIndex: 'quantity', key: 'qty', render: (q, r) => <span style={{ fontFamily: 'monospace', color: '#4f46e5', fontWeight: 600 }}>{q} {r.unit_of_measure}</span> },
                         { title: 'Batch', dataIndex: 'batch_number', key: 'batch', render: t => <span style={{ fontFamily: 'monospace' }}>{t}</span> },
-                        { title: 'Packages', key: 'pkgs', render: (_, r) => <span>{r.number_of_packages}x {r.package_type}</span> }
+                        { title: 'Packages', key: 'pkgs', render: (_, r) => <span>{r.number_of_packages}x {r.package_type}</span> },
+                        {
+                          title: 'Conditions',
+                          key: 'conditions',
+                          render: (_, r) => (
+                            <Space size={[4, 4]} wrap>
+                              {r.special_storage_condition && (
+                                <Tooltip title={`Storage Temp: ${r.storage_min_temp ?? '-∞'} to ${r.storage_max_temp ?? '∞'} °C | Moisture: ${r.storage_min_moisture ?? 0}% to ${r.storage_max_moisture ?? 100}%`}>
+                                  <Tag color="blue" style={{ fontSize: '10px', borderRadius: '4px', margin: 0 }}>
+                                    Storage: {r.storage_min_temp ?? '*'} to {r.storage_max_temp ?? '*'}°C
+                                  </Tag>
+                                </Tooltip>
+                              )}
+                              {r.special_storage_condition && r.storage_breakable && (
+                                <Tag color="red" style={{ fontSize: '10px', borderRadius: '4px', margin: 0 }}>Fragile Store</Tag>
+                              )}
+                              {r.special_transport_condition && (
+                                <Tooltip title={`Transit Temp: ${r.transport_min_temp ?? '-∞'} to ${r.transport_max_temp ?? '∞'} °C | Moisture: ${r.transport_min_moisture ?? 0}% to ${r.transport_max_moisture ?? 100}%`}>
+                                  <Tag color="cyan" style={{ fontSize: '10px', borderRadius: '4px', margin: 0 }}>
+                                    Transit: {r.transport_min_temp ?? '*'} to {r.transport_max_temp ?? '*'}°C
+                                  </Tag>
+                                </Tooltip>
+                              )}
+                              {r.special_transport_condition && r.transport_breakable && (
+                                <Tag color="volcano" style={{ fontSize: '10px', borderRadius: '4px', margin: 0 }}>Fragile Transit</Tag>
+                              )}
+                              {!r.special_storage_condition && !r.special_transport_condition && (
+                                <span style={{ color: '#94a3b8', fontSize: '11px' }}>Standard</span>
+                              )}
+                            </Space>
+                          )
+                        }
                       ]}
                     />
                   </Card>
@@ -1031,7 +1141,7 @@ export default function LogisticsDispatch() {
             // The last SDO is the final delivery leg if there are no remaining
             // approve/destination positions (only view-only observers left).
             const hasRemainingApproveLegs = remainingChainPositions.some(cp => !cp.view_only);
-            const isFinalDeliveryLeg = isLastSdo && !hasRemainingApproveLegs && sortedSdos.length > 1;
+            const isFinalDeliveryLeg = isLastSdo && !hasRemainingApproveLegs;
             
             return (
               <div key={sdo.id} style={{ display: 'flex', gap: '16px', alignItems: 'flex-start' }}>
@@ -1077,7 +1187,7 @@ export default function LogisticsDispatch() {
                     {sdo.status === 'PENDING' && isUserCustodian && (
                       <Button 
                         type="primary" 
-                        size="small"
+                        size="small" 
                         icon={isFinalDeliveryLeg ? <EnvironmentOutlined /> : <CheckCircleOutlined />}
                         style={{ 
                           background: isFinalDeliveryLeg ? '#059669' : '#0284c7', 
@@ -1085,14 +1195,18 @@ export default function LogisticsDispatch() {
                           fontWeight: 600 
                         }}
                         onClick={() => {
-                          setActiveSdo(sdo);
-                          setReceiveLegModalOpen(true);
+                          if (isFinalDeliveryLeg) {
+                            navigate(`/logistics/dispatch-orders/${selectedMdo.mdo_number}/acknowledge`);
+                          } else {
+                            setActiveSdo(sdo);
+                            setReceiveLegModalOpen(true);
+                          }
                         }}
                       >
                         {isFinalDeliveryLeg ? 'Acknowledge Delivery' : 'Acknowledge Dispatch'}
                       </Button>
                     )}
-                    {sdo.status === 'ACKNOWLEDGED' && selectedMdo.status !== 'COMPLETED' && isUserCustodian && (
+                    {sdo.status === 'ACKNOWLEDGED' && selectedMdo.status !== 'COMPLETED' && isUserCustodian && !isFinalDeliveryLeg && (
                       <Button 
                         type="primary" 
                         size="small"
@@ -1105,11 +1219,6 @@ export default function LogisticsDispatch() {
                       >
                         Handover Leg
                       </Button>
-                    )}
-                    {isFinalDeliveryLeg && sdo.status === 'PENDING' && (
-                      <div style={{ fontSize: '11px', color: '#059669', alignSelf: 'center' }}>
-                        Completing this step marks the MDO as delivered.
-                      </div>
                     )}
                   </div>
 
@@ -1350,9 +1459,21 @@ export default function LogisticsDispatch() {
                           {chainPos.employee_name ? `${chainPos.employee_name} (${chainPos.employee_code})` : 'Destination Warehouse User'}
                         </div>
                       </div>
-                      <Tag color="green" style={{ fontWeight: 'bold' }}>
-                        <EnvironmentOutlined /> ACKNOWLEDGE DELIVERY
-                      </Tag>
+                      {selectedMdo.status !== 'COMPLETED' && selectedMdo.status !== 'ACKNOWLEDGED' ? (
+                        <Button 
+                          type="primary" 
+                          size="small" 
+                          icon={<EnvironmentOutlined />}
+                          style={{ background: '#059669', borderColor: '#059669', fontWeight: 'bold' }}
+                          onClick={() => navigate(`/logistics/dispatch-orders/${selectedMdo.mdo_number}/acknowledge`)}
+                        >
+                          Acknowledge Delivery
+                        </Button>
+                      ) : (
+                        <Tag color="green" style={{ fontWeight: 'bold' }}>
+                          <EnvironmentOutlined /> ACKNOWLEDGED
+                        </Tag>
+                      )}
                     </div>
                     <div style={{ fontSize: '11px', color: '#047857', marginTop: '4px' }}>
                       Final delivery acknowledgement at destination warehouse. Completing this step marks the MDO as delivered.
@@ -1392,6 +1513,51 @@ export default function LogisticsDispatch() {
               </div>
             );
           })}
+
+          {!isMultiLevel && (
+            <div style={{ display: 'flex', gap: '16px', alignItems: 'flex-start' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                <div style={{ 
+                  width: '32px', height: '32px', borderRadius: '50%', 
+                  background: '#f1f5f9', color: '#059669', 
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', 
+                  fontWeight: 'bold', border: '2px dashed #059669'
+                }}>
+                  <EnvironmentOutlined />
+                </div>
+              </div>
+              <div style={{ flex: 1, background: '#ecfdf5', border: '1px dashed #059669', borderRadius: '10px', padding: '12px 16px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                  <div>
+                    <strong style={{ color: '#065f46', fontSize: '14px' }}>
+                      Destination: {selectedMdo.destination_warehouse_name || selectedMdo.destination_user_name || 'Client Drop Site'}
+                    </strong>
+                    <div style={{ fontSize: '11px', color: '#047857' }}>
+                      {selectedMdo.delivery_address || 'Final delivery destination'}
+                    </div>
+                  </div>
+                  {selectedMdo.status !== 'COMPLETED' && selectedMdo.status !== 'ACKNOWLEDGED' ? (
+                    <Button 
+                      type="primary" 
+                      size="small" 
+                      icon={<EnvironmentOutlined />}
+                      style={{ background: '#059669', borderColor: '#059669', fontWeight: 'bold' }}
+                      onClick={() => navigate(`/logistics/dispatch-orders/${selectedMdo.mdo_number}/acknowledge`)}
+                    >
+                      Acknowledge Delivery
+                    </Button>
+                  ) : (
+                    <Tag color="green" style={{ fontWeight: 'bold' }}>
+                      <EnvironmentOutlined /> ACKNOWLEDGED
+                    </Tag>
+                  )}
+                </div>
+                <div style={{ fontSize: '11px', color: '#047857', marginTop: '4px' }}>
+                  Final delivery acknowledgement at destination warehouse. Completing this step marks the MDO as delivered.
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </Card>
     );
@@ -1744,7 +1910,7 @@ export default function LogisticsDispatch() {
                   label={<span style={{ color: '#475569', fontWeight: 600 }}>Expected Delivery Date</span>}
                   rules={[{ required: true, message: 'Expected delivery date is required' }]}
                 >
-                  <DatePicker style={{ width: '100%' }} format="YYYY-MM-DD" />
+                  <DatePicker style={{ width: '100%' }} format="YYYY-MM-DD" disabledDate={(current) => current && current.isBefore(dayjs().startOf('day'))} />
                 </Form.Item>
               </Col>
             )}
@@ -1804,7 +1970,23 @@ export default function LogisticsDispatch() {
                         </Form.Item>
                       </Col>
                       <Col xs={24} md={12}>
-                        <Form.Item name="driver_phone" label="Driver Phone Number" rules={[{ required: true }]}>
+                        <Form.Item
+                          name="driver_phone"
+                          label="Driver Phone Number"
+                          rules={[
+                            { required: true, message: 'Driver Phone is required' },
+                            {
+                              validator: (_, value) => {
+                                if (!value) return Promise.resolve();
+                                const cleaned = value.replace(/[\s\-()]/g, '');
+                                if (/^(?:\+?91|0)?[6-9]\d{9}$/.test(cleaned) || /^\+?[1-9]\d{9,14}$/.test(cleaned)) {
+                                  return Promise.resolve();
+                                }
+                                return Promise.reject(new Error('Enter a valid 10-digit mobile number, optionally with country code'));
+                              }
+                            }
+                          ]}
+                        >
                           <Input placeholder="E.g., 9988776655" />
                         </Form.Item>
                       </Col>
@@ -1816,7 +1998,23 @@ export default function LogisticsDispatch() {
                         </Form.Item>
                       </Col>
                       <Col xs={24} md={12}>
-                        <Form.Item name="received_by_phone" label="Received By (Phone Number)" rules={[{ required: true }]}>
+                        <Form.Item
+                          name="received_by_phone"
+                          label="Received By (Phone Number)"
+                          rules={[
+                            { required: true, message: 'Receiver Phone is required' },
+                            {
+                              validator: (_, value) => {
+                                if (!value) return Promise.resolve();
+                                const cleaned = value.replace(/[\s\-()]/g, '');
+                                if (/^(?:\+?91|0)?[6-9]\d{9}$/.test(cleaned) || /^\+?[1-9]\d{9,14}$/.test(cleaned)) {
+                                  return Promise.resolve();
+                                }
+                                return Promise.reject(new Error('Enter a valid 10-digit mobile number, optionally with country code'));
+                              }
+                            }
+                          ]}
+                        >
                           <Input placeholder="E.g., 9898001122" />
                         </Form.Item>
                       </Col>
@@ -1906,7 +2104,23 @@ export default function LogisticsDispatch() {
                         </Form.Item>
                       </Col>
                       <Col xs={24} md={12}>
-                        <Form.Item name="received_by_phone" label="Pickup Person Phone Number" rules={[{ required: true }]}>
+                        <Form.Item
+                          name="received_by_phone"
+                          label="Pickup Person Phone Number"
+                          rules={[
+                            { required: true, message: 'Pickup Person Phone is required' },
+                            {
+                              validator: (_, value) => {
+                                if (!value) return Promise.resolve();
+                                const cleaned = value.replace(/[\s\-()]/g, '');
+                                if (/^(?:\+?91|0)?[6-9]\d{9}$/.test(cleaned) || /^\+?[1-9]\d{9,14}$/.test(cleaned)) {
+                                  return Promise.resolve();
+                                }
+                                return Promise.reject(new Error('Enter a valid 10-digit mobile number, optionally with country code'));
+                              }
+                            }
+                          ]}
+                        >
                           <Input placeholder="E.g., 9765432100" />
                         </Form.Item>
                       </Col>
@@ -2080,51 +2294,53 @@ export default function LogisticsDispatch() {
             </Card>
           )}
 
-          <Card
-            title={<span style={{ color: '#475569', fontWeight: 700 }}>SCM Compliance Attachments</span>}
-            style={{ marginBottom: '20px', borderRadius: '12px' }}
-          >
-            <Row gutter={16}>
-              <Col xs={24} md={12}>
-                <Form.Item name="e_challan" label="e-Challan document">
-                  <FormUpload
-                    maxCount={1}
-                    disabled={isReadOnly}
-                    customRequest={async ({ file, onSuccess, onError }) => {
-                      try {
-                        await handleUploadFile(file, 'e_challan');
-                        onSuccess(null, file);
-                      } catch (err) {
-                        onError(err);
-                      }
-                    }}
-                    showUploadList={true}
-                  >
-                    <Button icon={<UploadOutlined />} disabled={isReadOnly}>Upload e-Challan</Button>
-                  </FormUpload>
-                </Form.Item>
-              </Col>
-              <Col xs={24} md={12}>
-                <Form.Item name="waybill" label="Way Bill document">
-                  <FormUpload
-                    maxCount={1}
-                    disabled={isReadOnly}
-                    customRequest={async ({ file, onSuccess, onError }) => {
-                      try {
-                        await handleUploadFile(file, 'waybill');
-                        onSuccess(null, file);
-                      } catch (err) {
-                        onError(err);
-                      }
-                    }}
-                    showUploadList={true}
-                  >
-                    <Button icon={<UploadOutlined />} disabled={isReadOnly}>Upload Way Bill</Button>
-                  </FormUpload>
-                </Form.Item>
-              </Col>
-            </Row>
-          </Card>
+          {dispatchType !== 'THIRD_PARTY' && (
+            <Card
+              title={<span style={{ color: '#475569', fontWeight: 700 }}>SCM Compliance Attachments</span>}
+              style={{ marginBottom: '20px', borderRadius: '12px' }}
+            >
+              <Row gutter={16}>
+                <Col xs={24} md={12}>
+                  <Form.Item name="e_challan" label="Delivery Challan">
+                    <FormUpload
+                      maxCount={1}
+                      disabled={isReadOnly}
+                      customRequest={async ({ file, onSuccess, onError }) => {
+                        try {
+                          await handleUploadFile(file, 'e_challan');
+                          onSuccess(null, file);
+                        } catch (err) {
+                          onError(err);
+                        }
+                      }}
+                      showUploadList={true}
+                    >
+                      <Button icon={<UploadOutlined />} disabled={isReadOnly}>Upload Delivery Challan</Button>
+                    </FormUpload>
+                  </Form.Item>
+                </Col>
+                <Col xs={24} md={12}>
+                  <Form.Item name="waybill" label="Deliverable Document">
+                    <FormUpload
+                      maxCount={1}
+                      disabled={isReadOnly}
+                      customRequest={async ({ file, onSuccess, onError }) => {
+                        try {
+                          await handleUploadFile(file, 'waybill');
+                          onSuccess(null, file);
+                        } catch (err) {
+                          onError(err);
+                        }
+                      }}
+                      showUploadList={true}
+                    >
+                      <Button icon={<UploadOutlined />} disabled={isReadOnly}>Upload Deliverable Document</Button>
+                    </FormUpload>
+                  </Form.Item>
+                </Col>
+              </Row>
+            </Card>
+          )}
 
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '28px' }}>
             {isReadOnly ? (
@@ -2203,7 +2419,7 @@ export default function LogisticsDispatch() {
             const _preview = (chainPreview?.chain) ? chainPreview.chain : [];
             const _remaining = _preview.filter(cp => !_sdoPosIds.has(cp.position_id));
             const _hasApproveRemaining = _remaining.some(cp => !cp.view_only);
-            const _isFinal = _sdos.length > 1 && (activeSdo?.sequence_number || 0) >= _sdos.length && !_hasApproveRemaining;
+            const _isFinal = (activeSdo?.sequence_number || 0) >= _sdos.length && !_hasApproveRemaining;
             return _isFinal
               ? <><EnvironmentOutlined style={{ color: '#059669' }} /> ACKNOWLEDGE DELIVERY</>
               : <><CheckCircleOutlined style={{ color: '#0ea5e9' }} /> ACKNOWLEDGE DISPATCH RECEIPT</>;
@@ -2344,11 +2560,14 @@ export default function LogisticsDispatch() {
               return;
             }
             try {
+              const cleanedDriverPhone = values.driver_phone ? values.driver_phone.replace(/[\s\-()]/g, '') : undefined;
+              const cleanedReceivedPhone = values.received_by_phone ? values.received_by_phone.replace(/[\s\-()]/g, '') : undefined;
+
               const payload = {
                 handover_type: values.handover_type,
                 vehicle_no: values.vehicle_no,
-                driver_name: values.driver_name,
-                driver_phone: values.driver_phone,
+                driver_name: values.driver_name || values.received_by_name,
+                driver_phone: cleanedDriverPhone || cleanedReceivedPhone,
                 courier_name: values.courier_name,
                 awb_no: values.awb_no,
                 remarks: values.remarks,
@@ -2392,7 +2611,23 @@ export default function LogisticsDispatch() {
                     <Form.Item name="driver_name" label="Driver Full Name" rules={[{ required: true }]}>
                       <Input placeholder="Driver Name" />
                     </Form.Item>
-                    <Form.Item name="driver_phone" label="Driver Phone Number" rules={[{ required: true }]}>
+                    <Form.Item
+                      name="driver_phone"
+                      label="Driver Phone Number"
+                      rules={[
+                        { required: true, message: 'Driver Phone is required' },
+                        {
+                          validator: (_, value) => {
+                            if (!value) return Promise.resolve();
+                            const cleaned = value.replace(/[\s\-()]/g, '');
+                            if (/^(?:\+?91|0)?[6-9]\d{9}$/.test(cleaned) || /^\+?[1-9]\d{9,14}$/.test(cleaned)) {
+                              return Promise.resolve();
+                            }
+                            return Promise.reject(new Error('Enter a valid 10-digit mobile number, optionally with country code'));
+                          }
+                        }
+                      ]}
+                    >
                       <Input placeholder="Driver Phone" />
                     </Form.Item>
                   </>
@@ -2416,7 +2651,23 @@ export default function LogisticsDispatch() {
                     <Form.Item name="received_by_name" label="Receiver Employee Name" rules={[{ required: true }]}>
                       <Input placeholder="Name of person receiving custody" />
                     </Form.Item>
-                    <Form.Item name="received_by_phone" label="Receiver Phone Number" rules={[{ required: true }]}>
+                    <Form.Item
+                      name="received_by_phone"
+                      label="Receiver Phone Number"
+                      rules={[
+                        { required: true, message: 'Receiver Phone is required' },
+                        {
+                          validator: (_, value) => {
+                            if (!value) return Promise.resolve();
+                            const cleaned = value.replace(/[\s\-()]/g, '');
+                            if (/^(?:\+?91|0)?[6-9]\d{9}$/.test(cleaned) || /^\+?[1-9]\d{9,14}$/.test(cleaned)) {
+                              return Promise.resolve();
+                            }
+                            return Promise.reject(new Error('Enter a valid 10-digit mobile number, optionally with country code'));
+                          }
+                        }
+                      ]}
+                    >
                       <Input placeholder="Phone number" />
                     </Form.Item>
                   </>
