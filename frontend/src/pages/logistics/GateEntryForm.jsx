@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   Card, Form, Input, Select, Button, Space, Spin, message,
-  Descriptions, Row, Col, Popconfirm, Tag, Alert, Typography,
+  Descriptions, Row, Col, Popconfirm, Tag, Alert, Typography, Divider,
 } from 'antd';
 import {
   ArrowLeftOutlined, SaveOutlined, CheckOutlined,
@@ -24,6 +24,7 @@ const GateEntryForm = () => {
   const location = useLocation();
   const [form] = Form.useForm();
   const isNew = !id || id === 'new';
+  const modulePrefix = location.pathname.startsWith('/warehouse') ? '/warehouse' : '/logistics';
 
   // State
   const [loading, setLoading] = useState(false);
@@ -33,6 +34,7 @@ const GateEntryForm = () => {
   const [warehouses, setWarehouses] = useState([]);
   const [serviceOrderOptions, setServiceOrderOptions] = useState([]);
   const [gateType, setGateType] = useState('inward');
+  const [visitorType, setVisitorType] = useState('employee');
 
   // Determine default gate type from URL query or referrer
   const getDefaultGateType = () => {
@@ -82,14 +84,17 @@ const GateEntryForm = () => {
     setLoading(true);
     try {
       const res = await api.get(`/warehouse/gate-entries/${id}`);
-      setEntry(res.data);
+      const data = res.data;
+      setEntry(data);
+      if (data.visitor_type) setVisitorType(data.visitor_type);
+      if (data.gate_type) setGateType(data.gate_type);
     } catch (err) {
       message.error(getErrorMessage(err));
-      navigate('/logistics/gate-entry');
+      navigate(`${modulePrefix}/gate-entry`);
     } finally {
       setLoading(false);
     }
-  }, [id, isNew, navigate]);
+  }, [id, isNew, navigate, modulePrefix]);
 
   useEffect(() => {
     if (isNew) {
@@ -135,6 +140,27 @@ const GateEntryForm = () => {
       const values = await form.validateFields();
       setSubmitting(true);
 
+      const visitor_details = {};
+      if (values.visitor_type === 'employee') {
+        visitor_details.employee_code = values.employee_code || null;
+        if (values.gate_type === 'outward') {
+          visitor_details.reference_no = values.reference_no || null;
+        }
+      } else if (values.visitor_type === 'courier') {
+        visitor_details.courier_company = values.courier_company || null;
+        if (values.gate_type === 'outward') {
+          visitor_details.reference_no = values.reference_no || null;
+        }
+      } else if (values.visitor_type === 'third_party') {
+        visitor_details.reference_no = values.reference_no || null;
+        visitor_details.provider_name = values.provider_name || null;
+      } else if (values.visitor_type === 'company_vehicle') {
+        visitor_details.driver_code = values.driver_code || null;
+        if (values.gate_type === 'outward') {
+          visitor_details.reference_no = values.reference_no || null;
+        }
+      }
+
       const payload = {
         gate_type: values.gate_type,
         warehouse_id: values.warehouse_id || null,
@@ -144,15 +170,17 @@ const GateEntryForm = () => {
         person_contact: values.person_contact || null,
         material_description: values.material_description || null,
         remarks: values.remarks || null,
+        visitor_type: values.visitor_type || null,
+        visitor_details: visitor_details,
       };
 
       const res = await api.post('/warehouse/gate-entries', payload);
       message.success('Gate entry created successfully');
       const newId = res.data?.id;
       if (newId) {
-        navigate(`/logistics/gate-entry/${newId}`);
+        navigate(`${modulePrefix}/gate-entry/${newId}`);
       } else {
-        navigate('/logistics/gate-entry');
+        navigate(`${modulePrefix}/gate-entry`);
       }
     } catch (err) {
       if (err.errorFields) return; // form validation
@@ -232,7 +260,7 @@ const GateEntryForm = () => {
             )}
             <Button
               icon={<ArrowLeftOutlined />}
-              onClick={() => navigate('/logistics/gate-entry')}
+              onClick={() => navigate(`${modulePrefix}/gate-entry`)}
             >
               Back
             </Button>
@@ -255,6 +283,15 @@ const GateEntryForm = () => {
                 {entry.gate_type === 'inward' ? 'Inward' : 'Outward'}
               </Tag>
             </Descriptions.Item>
+            <Descriptions.Item label="Visitor Category">
+              <Tag color="purple">
+                {entry.visitor_type === 'employee' && 'Employee'}
+                {entry.visitor_type === 'courier' && 'Courier'}
+                {entry.visitor_type === 'third_party' && 'Third Party'}
+                {entry.visitor_type === 'company_vehicle' && 'Company Vehicle'}
+                {!entry.visitor_type && '-'}
+              </Tag>
+            </Descriptions.Item>
             <Descriptions.Item label="Warehouse">
               {entry.warehouse_name || '-'}
             </Descriptions.Item>
@@ -268,12 +305,55 @@ const GateEntryForm = () => {
                 <Tag icon={<CarOutlined />}>{entry.vehicle_number}</Tag>
               ) : '-'}
             </Descriptions.Item>
-            <Descriptions.Item label="Person Name">
-              {entry.person_name || '-'}
-            </Descriptions.Item>
-            <Descriptions.Item label="Person Contact">
-              {entry.person_contact || '-'}
-            </Descriptions.Item>
+
+            {entry.visitor_type === 'employee' && (
+              <>
+                <Descriptions.Item label="Employee Code (CID)">{entry.visitor_details?.employee_code || '-'}</Descriptions.Item>
+                <Descriptions.Item label="Employee Name">{entry.person_name || '-'}</Descriptions.Item>
+                {entry.gate_type === 'outward' && (
+                  <Descriptions.Item label="Dispatch Reference">{entry.visitor_details?.reference_no || '-'}</Descriptions.Item>
+                )}
+              </>
+            )}
+
+            {entry.visitor_type === 'courier' && (
+              <>
+                <Descriptions.Item label="Courier Company">{entry.visitor_details?.courier_company || '-'}</Descriptions.Item>
+                <Descriptions.Item label="Agent Name">{entry.person_name || '-'}</Descriptions.Item>
+                <Descriptions.Item label="Agent Contact">{entry.person_contact || '-'}</Descriptions.Item>
+                {entry.gate_type === 'outward' && (
+                  <Descriptions.Item label="Dispatch Reference">{entry.visitor_details?.reference_no || '-'}</Descriptions.Item>
+                )}
+              </>
+            )}
+
+            {entry.visitor_type === 'third_party' && (
+              <>
+                <Descriptions.Item label="PO / SO Ref">{entry.visitor_details?.reference_no || '-'}</Descriptions.Item>
+                <Descriptions.Item label="Provider Name">{entry.visitor_details?.provider_name || '-'}</Descriptions.Item>
+                <Descriptions.Item label="Contact Person">{entry.person_name || '-'}</Descriptions.Item>
+                <Descriptions.Item label="Contact Phone">{entry.person_contact || '-'}</Descriptions.Item>
+              </>
+            )}
+
+            {entry.visitor_type === 'company_vehicle' && (
+              <>
+                <Descriptions.Item label="Driver Code">{entry.visitor_details?.driver_code || '-'}</Descriptions.Item>
+                <Descriptions.Item label="Driver Name">{entry.person_name || '-'}</Descriptions.Item>
+                <Descriptions.Item label="Driver Contact">{entry.person_contact || '-'}</Descriptions.Item>
+                {entry.gate_type === 'outward' && (
+                  <Descriptions.Item label="Dispatch Reference">{entry.visitor_details?.reference_no || '-'}</Descriptions.Item>
+                )}
+              </>
+            )}
+
+            {!entry.visitor_type && (
+              <>
+                <Descriptions.Item label="Person Name">{entry.person_name || '-'}</Descriptions.Item>
+                <Descriptions.Item label="Person Contact">{entry.person_contact || '-'}</Descriptions.Item>
+              </>
+            )}
+
             <Descriptions.Item label="Material Description">
               {entry.material_description || '-'}
             </Descriptions.Item>
@@ -376,7 +456,7 @@ const GateEntryForm = () => {
         <Space>
           <Button
             icon={<ArrowLeftOutlined />}
-            onClick={() => navigate('/logistics/gate-entry')}
+            onClick={() => navigate(`${modulePrefix}/gate-entry`)}
           >
             Back
           </Button>
@@ -387,8 +467,7 @@ const GateEntryForm = () => {
         <Form
           form={form}
           layout="vertical"
-         
-          initialValues={{ gate_type: getDefaultGateType() }}
+          initialValues={{ gate_type: getDefaultGateType(), visitor_type: 'employee' }}
           onFinish={handleSubmit}
         >
           <Row gutter={24}>
@@ -410,7 +489,40 @@ const GateEntryForm = () => {
                 />
               </Form.Item>
             </Col>
-            {gateType === 'inward' && (
+            <Col xs={24} sm={12} md={8}>
+              <Form.Item
+                name="visitor_type"
+                label="Visitor Category"
+                rules={[{ required: true, message: 'Please select visitor category' }]}
+              >
+                <Select
+                  options={[
+                    { label: 'Employee', value: 'employee' },
+                    { label: 'Courier', value: 'courier' },
+                    { label: 'Third Party', value: 'third_party' },
+                    { label: 'Company Vehicle', value: 'company_vehicle' },
+                  ]}
+                  onChange={(v) => {
+                    setVisitorType(v);
+                  }}
+                />
+              </Form.Item>
+            </Col>
+            <Col xs={24} sm={12} md={8}>
+              <Form.Item name="warehouse_id" label="Warehouse" rules={[{ required: true, message: 'Required' }]}>
+                <Select
+                  options={warehouses}
+                  placeholder="Select warehouse"
+                  showSearch
+                  optionFilterProp="label"
+                  allowClear
+                />
+              </Form.Item>
+            </Col>
+          </Row>
+
+          {gateType === 'inward' && visitorType === 'third_party' && (
+            <Row gutter={24}>
               <Col xs={24} sm={12} md={8}>
                 <Form.Item name="so_id" label="Link to Service Order">
                   <Select
@@ -439,53 +551,147 @@ const GateEntryForm = () => {
                   />
                 </Form.Item>
               </Col>
-            )}
-            <Col xs={24} sm={12} md={8}>
-              <Form.Item name="warehouse_id" label="Warehouse" rules={[{ required: true, message: 'Required' }]}>
-                <Select
-                  options={warehouses}
-                  placeholder="Select warehouse"
-                  showSearch
-                  optionFilterProp="label"
-                  allowClear
-                />
-              </Form.Item>
-            </Col>
-          </Row>
+            </Row>
+          )}
+
+          {/* DYNAMIC VISITOR FIELDS */}
+          <Divider orientation="left" style={{ margin: '12px 0' }}>Visitor / Vehicle Details</Divider>
+
+          {visitorType === 'employee' && (
+            <Row gutter={24}>
+              <Col xs={24} sm={12} md={8}>
+                <Form.Item name="employee_code" label="Employee Code (CID)" rules={[{ required: true, message: 'Required' }]}>
+                  <Input placeholder="Enter employee CID" />
+                </Form.Item>
+              </Col>
+              <Col xs={24} sm={12} md={8}>
+                <Form.Item name="person_name" label="Employee Name" rules={[{ required: true, message: 'Required' }]}>
+                  <Input placeholder="Enter name" prefix={<UserOutlined />} />
+                </Form.Item>
+              </Col>
+              <Col xs={24} sm={12} md={8}>
+                <Form.Item name="vehicle_number" label="Vehicle Number (optional)">
+                  <Input placeholder="e.g. MH12AB1234" prefix={<CarOutlined />} />
+                </Form.Item>
+              </Col>
+              {gateType === 'outward' && (
+                <Col xs={24} sm={12} md={8}>
+                  <Form.Item name="reference_no" label="Reference No (Dispatch)" rules={[{ required: true, message: 'Required' }]}>
+                    <Input placeholder="Enter dispatch reference" />
+                  </Form.Item>
+                </Col>
+              )}
+            </Row>
+          )}
+
+          {visitorType === 'courier' && (
+            <Row gutter={24}>
+              <Col xs={24} sm={12} md={8}>
+                <Form.Item name="courier_company" label="Courier Company Name" rules={[{ required: true, message: 'Required' }]}>
+                  <Input placeholder="e.g. DHL, BlueDart" />
+                </Form.Item>
+              </Col>
+              <Col xs={24} sm={12} md={8}>
+                <Form.Item name="person_name" label="Agent / User Name" rules={[{ required: true, message: 'Required' }]}>
+                  <Input placeholder="Agent name" prefix={<UserOutlined />} />
+                </Form.Item>
+              </Col>
+              <Col xs={24} sm={12} md={8}>
+                <Form.Item name="person_contact" label="Agent Contact Number" rules={[{ required: true, message: 'Required' }]}>
+                  <Input placeholder="Contact number" />
+                </Form.Item>
+              </Col>
+              <Col xs={24} sm={12} md={8}>
+                <Form.Item name="vehicle_number" label="Vehicle Number (optional)">
+                  <Input placeholder="e.g. MH12AB1234" prefix={<CarOutlined />} />
+                </Form.Item>
+              </Col>
+              {gateType === 'outward' && (
+                <Col xs={24} sm={12} md={8}>
+                  <Form.Item name="reference_no" label="Reference No (Dispatch)" rules={[{ required: true, message: 'Required' }]}>
+                    <Input placeholder="Enter dispatch reference" />
+                  </Form.Item>
+                </Col>
+              )}
+            </Row>
+          )}
+
+          {visitorType === 'third_party' && (
+            <Row gutter={24}>
+              <Col xs={24} sm={12} md={8}>
+                <Form.Item name="reference_no" label="Reference No (Service Order / PO No)" rules={[{ required: true, message: 'Required' }]}>
+                  <Input placeholder="Enter PO/SO number" />
+                </Form.Item>
+              </Col>
+              <Col xs={24} sm={12} md={8}>
+                <Form.Item name="provider_name" label="Provider Company Details" rules={[{ required: true, message: 'Required' }]}>
+                  <Input placeholder="Provider company name" />
+                </Form.Item>
+              </Col>
+              <Col xs={24} sm={12} md={8}>
+                <Form.Item name="person_name" label="Contact Person Name" rules={[{ required: true, message: 'Required' }]}>
+                  <Input placeholder="Contact person" prefix={<UserOutlined />} />
+                </Form.Item>
+              </Col>
+              <Col xs={24} sm={12} md={8}>
+                <Form.Item name="person_contact" label="Contact Phone">
+                  <Input placeholder="Contact phone number" />
+                </Form.Item>
+              </Col>
+              <Col xs={24} sm={12} md={8}>
+                <Form.Item name="vehicle_number" label="Vehicle Details (optional)">
+                  <Input placeholder="Vehicle details" prefix={<CarOutlined />} />
+                </Form.Item>
+              </Col>
+            </Row>
+          )}
+
+          {visitorType === 'company_vehicle' && (
+            <Row gutter={24}>
+              <Col xs={24} sm={12} md={8}>
+                <Form.Item name="vehicle_number" label="Company Vehicle Number / Details" rules={[{ required: true, message: 'Required' }]}>
+                  <Input placeholder="Vehicle details" prefix={<CarOutlined />} />
+                </Form.Item>
+              </Col>
+              <Col xs={24} sm={12} md={8}>
+                <Form.Item name="driver_code" label="Driver Employee Code / ID" rules={[{ required: true, message: 'Required' }]}>
+                  <Input placeholder="Driver code" />
+                </Form.Item>
+              </Col>
+              <Col xs={24} sm={12} md={8}>
+                <Form.Item name="person_name" label="Driver Name" rules={[{ required: true, message: 'Required' }]}>
+                  <Input placeholder="Driver name" prefix={<UserOutlined />} />
+                </Form.Item>
+              </Col>
+              <Col xs={24} sm={12} md={8}>
+                <Form.Item name="person_contact" label="Driver Contact Phone">
+                  <Input placeholder="Driver contact phone number" />
+                </Form.Item>
+              </Col>
+              {gateType === 'outward' && (
+                <Col xs={24} sm={12} md={8}>
+                  <Form.Item name="reference_no" label="Reference No (Dispatch)" rules={[{ required: true, message: 'Required' }]}>
+                    <Input placeholder="Enter dispatch reference" />
+                  </Form.Item>
+                </Col>
+              )}
+            </Row>
+          )}
+
+          <Divider style={{ margin: '12px 0' }} />
 
           <Row gutter={24}>
-            <Col xs={24} sm={12} md={8}>
-              <Form.Item name="vehicle_number" label="Vehicle Number">
-                <Input placeholder="e.g., MH12AB1234" prefix={<CarOutlined />} />
-              </Form.Item>
-            </Col>
-            <Col xs={24} sm={12} md={8}>
-              <Form.Item name="person_name" label="Person Name" rules={[{ required: true, message: 'Required' }]}>
-                <Input placeholder="Driver / visitor / contact person" prefix={<UserOutlined />} />
-              </Form.Item>
-            </Col>
-          </Row>
-
-          <Row gutter={24}>
-            <Col xs={24} sm={12} md={8}>
-              <Form.Item name="person_contact" label="Person Contact">
-                <Input placeholder="Phone number" />
+            <Col xs={24} md={16}>
+              <Form.Item name="material_description" label="Materials Description">
+                <TextArea rows={3} placeholder="Describe the materials being transported..." />
               </Form.Item>
             </Col>
           </Row>
 
           <Row gutter={24}>
             <Col xs={24} md={16}>
-              <Form.Item name="material_description" label="Material Description" rules={[{ required: true, message: 'Destination / material description is required' }]}>
-                <TextArea rows={3} placeholder="Description of materials..." />
-              </Form.Item>
-            </Col>
-          </Row>
-
-          <Row gutter={24}>
-            <Col xs={24} md={16}>
-              <Form.Item name="remarks" label="Remarks">
-                <TextArea rows={2} placeholder="Any additional remarks..." />
+              <Form.Item name="remarks" label={gateType === 'inward' ? "Reason for Inward / Remarks" : "Remarks"}>
+                <TextArea rows={2} placeholder="Any additional comments..." />
               </Form.Item>
             </Col>
           </Row>
@@ -501,7 +707,7 @@ const GateEntryForm = () => {
               >
                 Create Gate Entry
               </Button>
-              <Button onClick={() => navigate('/logistics/gate-entry')}>
+              <Button onClick={() => navigate(`${modulePrefix}/gate-entry`)}>
                 Cancel
               </Button>
             </Space>

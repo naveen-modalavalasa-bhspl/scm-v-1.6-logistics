@@ -4341,7 +4341,8 @@ async def create_gate_entry(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    gp_number = await generate_number(db, "warehouse", "gate_pass")
+    doc_type = "gate_pass_inward" if payload.gate_type == "inward" else "gate_pass_outward"
+    gp_number = await generate_number(db, "warehouse", doc_type, pad_length=8)
     gp = GatePass(
         gate_pass_number=gp_number,
         gate_type=payload.gate_type,
@@ -4353,6 +4354,8 @@ async def create_gate_entry(
         person_contact=payload.person_contact,
         material_description=payload.material_description,
         remarks=payload.remarks,
+        visitor_type=payload.visitor_type,
+        visitor_details=payload.visitor_details,
         status="pending",
         created_at=datetime.now(timezone.utc),
     )

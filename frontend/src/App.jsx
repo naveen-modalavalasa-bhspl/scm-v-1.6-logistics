@@ -505,6 +505,9 @@ const App = () => {
             <Route path="/warehouse/material-inward" element={<KeyRoute requiredKey="warehouse-material-inward"><MaterialInward /></KeyRoute>} />
             <Route path="/warehouse/material-inward/new" element={<PermissionRoute module="warehouse"><MaterialInwardForm /></PermissionRoute>} />
             <Route path="/warehouse/material-inward/:id" element={<PermissionRoute module="warehouse"><MaterialInwardForm /></PermissionRoute>} />
+            <Route path="/warehouse/gate-entry" element={<KeyRoute requiredKey="warehouse-gate-entry"><GateEntry /></KeyRoute>} />
+            <Route path="/warehouse/gate-entry/new" element={<PermissionRoute module="warehouse"><GateEntryForm /></PermissionRoute>} />
+            <Route path="/warehouse/gate-entry/:id" element={<PermissionRoute module="warehouse"><GateEntryForm /></PermissionRoute>} />
             <Route path="/warehouse/reports" element={<PermissionRoute module="warehouse"><WarehouseReports /></PermissionRoute>} />
             <Route path="/warehouse/notifications" element={<PermissionRoute module="warehouse"><WarehouseNotifications /></PermissionRoute>} />
 

@@ -31,7 +31,7 @@ _ALL_KEYS: Set[str] = {
     'warehouse', 'warehouse-dashboard', 'warehouse-reports', 'warehouse-notifications',
     'warehouse-masters', 'warehouse-masters-warehouses', 'warehouse-masters-floor-plan', 'warehouse-masters-floor-plan-3d',
     'warehouse-floor-plan',
-    'logistics-gate-entry', 'warehouse-grn', 'warehouse-quality-inspection',
+    'warehouse-gate-entry', 'logistics-gate-entry', 'warehouse-grn', 'warehouse-quality-inspection',
     'warehouse-putaway', 'warehouse-purchase-returns',
     'warehouse-material-issues', 'warehouse-material-inward',
     'warehouse-dispatch',
@@ -104,7 +104,7 @@ _ROLE_KEYS = {
         'warehouse', 'warehouse-dashboard', 'warehouse-reports', 'warehouse-notifications',
         'warehouse-masters', 'warehouse-masters-warehouses', 'warehouse-masters-floor-plan', 'warehouse-masters-floor-plan-3d',
         'warehouse-floor-plan',
-        'warehouse-grn',
+        'warehouse-gate-entry', 'warehouse-grn',
         'warehouse-quality-inspection', 'warehouse-putaway',
         'warehouse-material-issues', 'warehouse-material-inward',
         'warehouse-dispatch',
@@ -121,7 +121,7 @@ _ROLE_KEYS = {
     },
     'warehouse_operator': {
         'lms',
-        'warehouse', 'warehouse-dashboard', 'warehouse-purchase-returns',
+        'warehouse', 'warehouse-dashboard', 'warehouse-gate-entry', 'warehouse-purchase-returns',
         'warehouse-material-inward', 'warehouse-dispatch', 'warehouse-notifications',
         'inventory', 'inventory-dashboard', 'inventory-stock-balance', 'inventory-stock-ledger', 'inventory-notifications',
         'logistics', 'logistics-gate-entry',
@@ -129,7 +129,7 @@ _ROLE_KEYS = {
     'store_keeper': {
         'lms',
         'indent', 'indent-dashboard', 'indent-indents',
-        'warehouse', 'warehouse-dashboard', 'warehouse-grn', 'warehouse-putaway',
+        'warehouse', 'warehouse-dashboard', 'warehouse-gate-entry', 'warehouse-grn', 'warehouse-putaway',
         'warehouse-material-issues', 'warehouse-material-inward',
         'warehouse-dispatch', 'warehouse-notifications',
         'inventory', 'inventory-dashboard', 'inventory-stock-balance', 'inventory-stock-ledger', 'inventory-stock-transfer', 'inventory-notifications',
@@ -137,7 +137,7 @@ _ROLE_KEYS = {
     'storekeeper': {
         'lms',
         'indent', 'indent-dashboard', 'indent-indents',
-        'warehouse', 'warehouse-dashboard', 'warehouse-grn', 'warehouse-putaway',
+        'warehouse', 'warehouse-dashboard', 'warehouse-gate-entry', 'warehouse-grn', 'warehouse-putaway',
         'warehouse-material-issues', 'warehouse-material-inward',
         'warehouse-dispatch', 'warehouse-notifications',
         'inventory', 'inventory-dashboard', 'inventory-stock-balance', 'inventory-stock-ledger', 'inventory-stock-transfer', 'inventory-notifications',
@@ -239,6 +239,17 @@ async def allowed_keys_for_role(db: AsyncSession, role: Role) -> List[str]:
                 "inventory-stock-transfer",
                 "inventory-stock-audit",
                 "inventory-replenishment",
+            ])
+        elif key == "warehouse-transactions":
+            mapped_keys.extend([
+                "warehouse-material-inward",
+                "warehouse-gate-entry",
+                "warehouse-grn",
+                "warehouse-quality-inspection",
+                "warehouse-putaway",
+                "warehouse-purchase-returns",
+                "warehouse-material-issues",
+                "warehouse-dispatch",
             ])
             
         for k in mapped_keys:

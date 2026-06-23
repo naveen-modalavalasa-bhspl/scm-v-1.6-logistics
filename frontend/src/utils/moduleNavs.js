@@ -19,6 +19,7 @@ export const MODULE_NAVS = {
         label: 'Transactions',
         children: [
           { label: 'Material Inward', path: '/warehouse/material-inward' },
+          { label: 'Gate Entry', path: '/warehouse/gate-entry' },
           { label: 'GRN', path: '/warehouse/grn' },
           { label: 'Quality Inspection', path: '/warehouse/quality-inspection' },
           { label: 'Putaway', path: '/warehouse/putaway' },

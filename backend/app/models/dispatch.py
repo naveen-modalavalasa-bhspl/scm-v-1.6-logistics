@@ -94,6 +94,8 @@ class GatePass(Base):
     approved_by = Column(BigInteger)
     security_guard = Column(String(255))
     remarks = Column(Text)
+    visitor_type = Column(String(50), nullable=True)
+    visitor_details = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     dispatch_order = relationship("DispatchOrder")
