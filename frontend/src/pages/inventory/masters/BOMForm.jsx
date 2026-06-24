@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  Card, Form, Input, Space, Button, Switch, message, Select, InputNumber, Row, Col, Spin, Tooltip
+  Card, Form, Input, Space, Button, Switch, App, Select, InputNumber, Row, Col, Spin, Tooltip
 } from 'antd';
 import { ArrowLeftOutlined, PlusOutlined, DeleteOutlined } from '@ant-design/icons';
 import { useParams, useNavigate } from 'react-router-dom';
 import PageHeader from '../../../components/PageHeader';
 import ItemSelector from '../../../components/ItemSelector';
+import PositionSelector from '../../../components/PositionSelector';
 import api from '../../../config/api';
 import { getErrorMessage } from '../../../utils/helpers';
 
@@ -15,26 +16,26 @@ const documentTypeOptions = [
 ];
 
 const BOMForm = () => {
+  const { message } = App.useApp();
   const { id } = useParams();
   const navigate = useNavigate();
   const isNew = !id || id === 'new';
 
   const [form] = Form.useForm();
+  const projectId = Form.useWatch('project_id', form);
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [projects, setProjects] = useState([]);
-  const [positions, setPositions] = useState([]);
   const [uoms, setUoms] = useState([]);
   const [departments, setDepartments] = useState([]);
 
   // Fetch Lookups
   const loadLookups = useCallback(async () => {
     try {
-      const [projRes, uomRes, deptRes, posRes] = await Promise.allSettled([
+      const [projRes, uomRes, deptRes] = await Promise.allSettled([
         api.get('/masters/org-projects', { params: { page_size: 500 } }),
         api.get('/masters/uom', { params: { page_size: 500 } }),
         api.get('/masters/departments'),
-        api.get('/masters/positions', { params: { page_size: 1000 } }),
       ]);
 
       if (projRes.status === 'fulfilled') {
@@ -50,11 +51,6 @@ const BOMForm = () => {
       if (deptRes.status === 'fulfilled') {
         const data = deptRes.value.data || [];
         setDepartments(data.map((d) => ({ label: d.name, value: d.value })));
-      }
-
-      if (posRes.status === 'fulfilled') {
-        const data = posRes.value.data?.items || posRes.value.data?.data || posRes.value.data || [];
-        setPositions(data.map((p) => ({ label: `[${p.code || p.position_code || ''}] ${p.name || p.position_name || ''}`, value: p.id })));
       }
     } catch (err) {
       console.error('Failed to load lookups', err);
@@ -192,12 +188,9 @@ const BOMForm = () => {
             </Col>
             <Col span={6}>
               <Form.Item name="position_id" label="Target Position">
-                <Select
-                  placeholder="Select position (optional)"
-                  options={positions}
-                  allowClear
-                  showSearch
-                  optionFilterProp="label"
+                <PositionSelector
+                  projectId={projectId}
+                  placeholder="Search position (optional)"
                 />
               </Form.Item>
             </Col>
