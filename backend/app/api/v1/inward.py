@@ -252,6 +252,32 @@ async def create_material_inward(
         .where(MaterialInward.id == inward.id)
     )
     inward = result.scalar_one_or_none()
+
+    try:
+        from app.services.notification_service import create_notification, notify_warehouse_managers
+        # Notify the creator
+        await create_notification(
+            db=db,
+            user_id=current_user.id,
+            title="Inward Gate Entry Registered",
+            message=f"Inward gate entry draft {inward_number} has been registered successfully.",
+            notification_type="info",
+            module="warehouse",
+            reference_type="material_inward",
+            reference_id=inward.id,
+        )
+        # Notify warehouse managers
+        await notify_warehouse_managers(
+            db=db,
+            warehouse_id=inward.warehouse_id,
+            title="New Inward Gate Entry",
+            message=f"A new inward gate entry draft {inward_number} has been registered for your warehouse.",
+            notification_type="info",
+            reference_type="material_inward",
+            reference_id=inward.id,
+        )
+    except Exception as notif_err:
+        logger.warning("Failed to create notification for create_material_inward: %s", notif_err)
     
     return build_inward_response(inward)
 

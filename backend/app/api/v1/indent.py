@@ -540,15 +540,22 @@ async def get_indent(
         if i < len(data.get("items", [])):
             approved_target = item.approved_qty if item.approved_qty is not None else item.requested_qty
             target_qty = float(approved_target or 0)
-            issued_qty = float(item.issued_qty or 0)
             acknowledged_qty = item_ack_map.get(item.id, 0.0)
-            issued_remaining_qty = max(target_qty - issued_qty, 0.0)
-            ack_remaining_qty = max(target_qty - acknowledged_qty, 0.0)
-            effective_issue_qty = (
-                ack_remaining_qty
-                if acknowledged_qty > 0 and ack_remaining_qty > issued_remaining_qty
-                else issued_remaining_qty
+
+            # Get in-transit / reserved quantity for this item in this indent (issues that are in issued/dispatched status)
+            from app.models.issue import MaterialIssue, MaterialIssueItem
+            transit_res = await db.execute(
+                select(func.sum(MaterialIssueItem.qty))
+                .join(MaterialIssue, MaterialIssue.id == MaterialIssueItem.issue_id)
+                .where(
+                    MaterialIssue.indent_id == indent.id,
+                    MaterialIssueItem.item_id == item.item_id,
+                    MaterialIssue.status.in_(["issued", "dispatched"])
+                )
             )
+            in_transit_qty = float(transit_res.scalar() or 0)
+
+            effective_issue_qty = max(target_qty - acknowledged_qty - in_transit_qty, 0.0)
             data["items"][i]["acknowledged_qty"] = acknowledged_qty
             data["items"][i]["issue_remaining_qty"] = effective_issue_qty
             if item.item:
@@ -738,6 +745,23 @@ async def create_indent(
         db.add(ii)
 
     await db.flush()
+
+    try:
+        from app.services.notification_service import create_notification
+        await create_notification(
+            db=db,
+            user_id=current_user.id,
+            title="Indent Draft Created",
+            message=f"Indent draft {indent_number} has been created successfully.",
+            notification_type="info",
+            module="warehouse",
+            reference_type="indent",
+            reference_id=indent.id,
+        )
+    except Exception as notif_err:
+        import logging
+        logging.getLogger(__name__).warning("Failed to create notification for create_indent: %s", notif_err)
+
     return {"id": indent.id, "indent_number": indent_number, "message": "Indent created"}
 
 
@@ -1021,6 +1045,23 @@ async def submit_indent(
         pass
 
     await db.flush()
+
+    try:
+        from app.services.notification_service import create_notification
+        await create_notification(
+            db=db,
+            user_id=indent.raised_by,
+            title="Indent Submitted",
+            message=f"Indent {indent.indent_number} has been submitted for approval.",
+            notification_type="info",
+            module="warehouse",
+            reference_type="indent",
+            reference_id=indent.id,
+        )
+    except Exception as notif_err:
+        import logging
+        logging.getLogger(__name__).warning("Failed to create notification for submit_indent: %s", notif_err)
+
     return {"success": True, "message": "Indent submitted for approval", "approval_id": approval.id}
 
 
@@ -1175,6 +1216,23 @@ async def approve_indent(
         msg_parts.append(f"Material Issue auto-created (id={summary['auto_issue_id']}) for {summary['lines_fulfillable']} line(s) in stock.")
     if summary.get("lines_short", 0) > 0:
         msg_parts.append(f"{summary['lines_short']} short line(s) — Purchase Manager will raise MR manually.")
+
+    try:
+        from app.services.notification_service import create_notification
+        await create_notification(
+            db=db,
+            user_id=indent.raised_by,
+            title="Indent Approved",
+            message=f"Indent {indent.indent_number} has been approved.",
+            notification_type="success",
+            module="warehouse",
+            reference_type="indent",
+            reference_id=indent.id,
+        )
+    except Exception as notif_err:
+        import logging
+        logging.getLogger(__name__).warning("Failed to create notification for approve_indent: %s", notif_err)
+
     return {"success": True, "message": " ".join(msg_parts), **summary}
 
 
@@ -1256,6 +1314,23 @@ async def reject_indent(
         pass
 
     await db.flush()
+
+    try:
+        from app.services.notification_service import create_notification
+        await create_notification(
+            db=db,
+            user_id=indent.raised_by,
+            title="Indent Rejected",
+            message=f"Indent {indent.indent_number} has been rejected.",
+            notification_type="error",
+            module="warehouse",
+            reference_type="indent",
+            reference_id=indent.id,
+        )
+    except Exception as notif_err:
+        import logging
+        logging.getLogger(__name__).warning("Failed to create notification for reject_indent: %s", notif_err)
+
     return {"success": True, "message": "Indent rejected"}
 
 
@@ -1336,6 +1411,23 @@ async def cancel_indent(
         pass
 
     await db.flush()
+
+    try:
+        from app.services.notification_service import create_notification
+        await create_notification(
+            db=db,
+            user_id=indent.raised_by,
+            title="Indent Cancelled",
+            message=f"Indent {indent.indent_number} has been cancelled.",
+            notification_type="warning",
+            module="warehouse",
+            reference_type="indent",
+            reference_id=indent.id,
+        )
+    except Exception as notif_err:
+        import logging
+        logging.getLogger(__name__).warning("Failed to create notification for cancel_indent: %s", notif_err)
+
     return {"success": True, "message": "Indent cancelled"}
 
 
@@ -2036,4 +2128,21 @@ async def _create_acknowledgement(
         pass
 
     await db.flush()
+
+    try:
+        from app.services.notification_service import create_notification
+        await create_notification(
+            db=db,
+            user_id=indent.raised_by,
+            title="Indent Acknowledged",
+            message=f"Indent {indent.indent_number} has been acknowledged (Status: {ack_status}).",
+            notification_type="success",
+            module="warehouse",
+            reference_type="indent",
+            reference_id=indent.id,
+        )
+    except Exception as notif_err:
+        import logging
+        logging.getLogger(__name__).warning("Failed to create notification for _create_acknowledgement: %s", notif_err)
+
     return {"id": ack.id, "status": ack_status, "message": "Acknowledgement recorded successfully"}
