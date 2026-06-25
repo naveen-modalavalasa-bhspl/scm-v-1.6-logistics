@@ -288,6 +288,12 @@ async def auto_acknowledge_scm_dispatch(db: AsyncSession, mdo_id: int, current_u
                         )
                         qty = Decimal(str(mat.quantity))
                         src_balance.transit_qty = max(Decimal("0"), (src_balance.transit_qty or Decimal("0")) - qty)
+                        src_balance.available_qty = max(
+                            Decimal("0"),
+                            (src_balance.total_qty or Decimal("0"))
+                            - (src_balance.reserved_qty or Decimal("0"))
+                            - (src_balance.transit_qty or Decimal("0"))
+                        )
 
                         if mdo.dispatch_mode.lower() == "multi-level" and transit_wh_id != dest_wh_id:
                             await post_stock_ledger(
@@ -312,7 +318,7 @@ async def auto_acknowledge_scm_dispatch(db: AsyncSession, mdo_id: int, current_u
                             transaction_type="material_issue",
                             qty_in=qty,
                             batch_id=batch_id,
-                            bin_id=bin_id,
+                            bin_id=None,
                             reference_type="indent_acknowledgement",
                             reference_id=ack.id,
                             uom_id=1,

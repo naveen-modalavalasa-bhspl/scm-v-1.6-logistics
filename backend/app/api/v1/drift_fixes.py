@@ -550,6 +550,11 @@ async def stock_balance_breakdown(
     
     rows = (await db.execute(q)).scalars().all()
     
+    # Identify central warehouses in scope
+    from app.models.warehouse import Warehouse as _WHModel
+    whs_res = await db.execute(select(_WHModel).where(_WHModel.id.in_(scoped)))
+    central_wh_ids = {w.id for w in whs_res.scalars().all() if w.parent_id is None}
+
     is_serial_tracked = False
     if rows and rows[0].item and rows[0].item.has_serial:
         is_serial_tracked = True
@@ -563,13 +568,15 @@ async def stock_balance_breakdown(
         )
         s_result = await db.execute(s_query)
         for s in s_result.scalars().all():
-            key = (s.warehouse_id, s.bin_id, s.batch_id)
+            is_cen = s.warehouse_id in central_wh_ids
+            key = (s.warehouse_id, s.bin_id if is_cen else None, s.batch_id)
             if key not in serials_map:
                 serials_map[key] = []
             serials_map[key].append(s.serial_number)
 
     items = []
     for r in rows:
+        is_cen = r.warehouse_id in central_wh_ids
         data = {
             "warehouse_id": r.warehouse_id,
             "warehouse_name": r.warehouse.name if r.warehouse else None,
@@ -589,7 +596,7 @@ async def stock_balance_breakdown(
             "last_updated": r.last_updated.isoformat() if r.last_updated else None,
             "uom_name": r.item.primary_uom.name if r.item and r.item.primary_uom else None,
             "has_serial": is_serial_tracked,
-            "serial_numbers": serials_map.get((r.warehouse_id, r.bin_id, r.batch_id), []),
+            "serial_numbers": serials_map.get((r.warehouse_id, r.bin_id if is_cen else None, r.batch_id), []),
         }
         
         if r.bin:

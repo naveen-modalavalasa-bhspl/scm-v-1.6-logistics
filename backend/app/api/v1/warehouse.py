@@ -3944,6 +3944,12 @@ async def acknowledge_material_issue(
                     lock=True,
                 )
                 src_balance.transit_qty = max(Decimal("0"), (src_balance.transit_qty or Decimal("0")) - Decimal(str(item.qty)))
+                src_balance.available_qty = max(
+                    Decimal("0"),
+                    (src_balance.total_qty or Decimal("0"))
+                    - (src_balance.reserved_qty or Decimal("0"))
+                    - (src_balance.transit_qty or Decimal("0"))
+                )
 
             await post_stock_ledger(
                 db,

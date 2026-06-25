@@ -589,6 +589,27 @@ async def release_reservation(
     release_qty = min(reserved, qty)
     balance.reserved_qty = reserved - release_qty
     balance.available_qty = (balance.available_qty or Decimal("0")) + release_qty
+    
+    remaining = qty - release_qty
+    if remaining > 0:
+        # Fallback: distribute remaining release across other balances of this item in this warehouse
+        stmt = select(StockBalance).where(
+            StockBalance.item_id == item_id,
+            StockBalance.warehouse_id == warehouse_id,
+            StockBalance.reserved_qty > 0,
+            StockBalance.id != balance.id
+        ).with_for_update()
+        result = await db.execute(stmt)
+        balances = result.scalars().all()
+        for bal in balances:
+            if remaining <= 0:
+                break
+            r_qty = bal.reserved_qty or Decimal("0")
+            take = min(r_qty, remaining)
+            bal.reserved_qty = r_qty - take
+            bal.available_qty = (bal.available_qty or Decimal("0")) + take
+            remaining -= take
+            
     await db.flush()
 
 

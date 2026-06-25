@@ -1186,6 +1186,7 @@ async def create_mdo(payload: MdoCreate, db: AsyncSession = Depends(get_db), cur
         from app.services.stock_service import _get_or_create_balance
         from app.models.issue import MaterialIssueItem
         from app.models.warehouse import Warehouse as _WHModel
+        from app.models.stock import StockBalance
         from decimal import Decimal
 
         src_wh_id = payload.warehouseId
@@ -1244,6 +1245,32 @@ async def create_mdo(payload: MdoCreate, db: AsyncSession = Depends(get_db), cur
                         - (src_bal.reserved_qty or Decimal("0"))
                         - (src_bal.transit_qty or Decimal("0"))
                     )
+                
+                remaining_convert = qty_r - convert_qty
+                if remaining_convert > Decimal("0"):
+                    # Fallback: find other balances with reserved_qty > 0 and convert them
+                    stmt_other = select(StockBalance).where(
+                        StockBalance.item_id == mat.materialId,
+                        StockBalance.warehouse_id == src_wh_id,
+                        StockBalance.reserved_qty > 0,
+                        StockBalance.id != src_bal.id
+                    ).with_for_update()
+                    res_other = await db.execute(stmt_other)
+                    other_bals = res_other.scalars().all()
+                    for ob in other_bals:
+                        if remaining_convert <= Decimal("0"):
+                            break
+                        take = min(ob.reserved_qty or Decimal("0"), remaining_convert)
+                        if take > Decimal("0"):
+                            ob.reserved_qty = (ob.reserved_qty or Decimal("0")) - take
+                            ob.transit_qty = (ob.transit_qty or Decimal("0")) + take
+                            ob.available_qty = max(
+                                Decimal("0"),
+                                (ob.total_qty or Decimal("0"))
+                                - (ob.reserved_qty or Decimal("0"))
+                                - (ob.transit_qty or Decimal("0"))
+                            )
+                            remaining_convert -= take
             await db.flush()
     except Exception as mdo_transit_err:
         import logging

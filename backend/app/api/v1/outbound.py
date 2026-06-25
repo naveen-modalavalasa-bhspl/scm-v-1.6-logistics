@@ -1332,6 +1332,12 @@ async def acknowledge_delivery(
                 )
                 dispatched_qty = Decimal(str(it.quantity_dispatched or 0))
                 src_balance.transit_qty = max(Decimal("0"), (src_balance.transit_qty or Decimal("0")) - dispatched_qty)
+                src_balance.available_qty = max(
+                    Decimal("0"),
+                    (src_balance.total_qty or Decimal("0"))
+                    - (src_balance.reserved_qty or Decimal("0"))
+                    - (src_balance.transit_qty or Decimal("0"))
+                )
                 if d.dispatch_mode == "multi-level" and transit_wh_id != dest_wh_id:
                     await post_stock_ledger(
                         db,
@@ -1354,7 +1360,7 @@ async def acknowledge_delivery(
                     transaction_type="material_issue",
                     qty_in=it.quantity_accepted,
                     batch_id=batch_id,
-                    bin_id=bin_id,
+                    bin_id=None,
                     reference_type="dispatch_acknowledgement",
                     reference_id=new_ack.id,
                     uom_id=1,  # fallback primary uom id

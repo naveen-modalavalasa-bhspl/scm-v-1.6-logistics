@@ -154,11 +154,22 @@ async def get_stock_balances(
         )
         batch_exp_map = {r.id: r.expiry_date for r in b_rows.all()}
 
+    # Identify central warehouses
+    wh_ids = {b.warehouse_id for b in balances}
+    central_wh_ids = set()
+    if wh_ids:
+        from app.models.warehouse import Warehouse as _WHModel
+        wh_res = await db.execute(select(_WHModel).where(_WHModel.id.in_(wh_ids)))
+        central_wh_ids = {w.id for w in wh_res.scalars().all() if w.parent_id is None}
+
     # Gather balances with has_serial = True
     serial_tracked_keys = []
     for b in balances:
         if b.item and b.item.has_serial:
-            serial_tracked_keys.append((b.item_id, b.warehouse_id, b.bin_id, b.batch_id))
+            is_cen = b.warehouse_id in central_wh_ids
+            # Non-central warehouses ignore bin constraints
+            resolved_bin = b.bin_id if is_cen else None
+            serial_tracked_keys.append((b.item_id, b.warehouse_id, resolved_bin, b.batch_id))
     
     serials_map = {}
     if serial_tracked_keys:
@@ -168,16 +179,23 @@ async def get_stock_balances(
         # Build composite filter
         conditions = []
         for (item_id, wh_id, bin_id, batch_id) in serial_tracked_keys:
+            is_cen = wh_id in central_wh_ids
             cond = and_(
                 SerialNumber.item_id == item_id,
                 SerialNumber.warehouse_id == wh_id,
                 SerialNumber.status == "available"
             )
-            cond = and_(
-                cond,
-                SerialNumber.bin_id == bin_id if bin_id is not None else SerialNumber.bin_id.is_(None),
-                SerialNumber.batch_id == batch_id if batch_id is not None else SerialNumber.batch_id.is_(None)
-            )
+            if is_cen:
+                cond = and_(
+                    cond,
+                    SerialNumber.bin_id == bin_id if bin_id is not None else SerialNumber.bin_id.is_(None),
+                    SerialNumber.batch_id == batch_id if batch_id is not None else SerialNumber.batch_id.is_(None)
+                )
+            else:
+                cond = and_(
+                    cond,
+                    SerialNumber.batch_id == batch_id if batch_id is not None else SerialNumber.batch_id.is_(None)
+                )
             conditions.append(cond)
             
         s_query = select(SerialNumber).where(or_(*conditions))
@@ -185,7 +203,8 @@ async def get_stock_balances(
         serials = s_result.scalars().all()
         
         for s in serials:
-            key = (s.item_id, s.warehouse_id, s.bin_id, s.batch_id)
+            is_cen = s.warehouse_id in central_wh_ids
+            key = (s.item_id, s.warehouse_id, s.bin_id if is_cen else None, s.batch_id)
             if key not in serials_map:
                 serials_map[key] = []
             serials_map[key].append(s.serial_number)
@@ -195,6 +214,7 @@ async def get_stock_balances(
         # BUG-FIX: Manually construct dict to avoid Pydantic ValidationError 
         # caused by 'batch' and 'bin' model relationships colliding with 
         # schema field names.
+        is_cen = b.warehouse_id in central_wh_ids
         data = {
             "id": b.id,
             "item_id": b.item_id,
@@ -208,7 +228,7 @@ async def get_stock_balances(
             "valuation_rate": b.valuation_rate,
             "stock_value": b.stock_value,
             "last_updated": b.last_updated.isoformat() if b.last_updated else None,
-            "serial_numbers": serials_map.get((b.item_id, b.warehouse_id, b.bin_id, b.batch_id), []),
+            "serial_numbers": serials_map.get((b.item_id, b.warehouse_id, b.bin_id if is_cen else None, b.batch_id), []),
         }
         if hasattr(b, 'item') and b.item:
             data["item_name"] = b.item.name
