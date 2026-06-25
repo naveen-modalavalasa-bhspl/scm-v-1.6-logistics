@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   Button, Card, Descriptions, Tabs, Table, Spin, Space, message,
   Tag, Empty, Typography, Divider, Progress, Popconfirm, Steps, Timeline,
-  Row, Col, Tooltip, Select,
+  Row, Col, Tooltip, Select, Modal, Input,
 } from 'antd';
 import {
   ArrowLeftOutlined, PrinterOutlined, CheckOutlined,
@@ -171,17 +171,45 @@ const PurchaseOrderDetail = () => {
     }
   };
 
-  const handleCancel = async () => {
-    setActionLoading(true);
-    try {
-      await api.post(`/procurement/purchase-orders/${id}/cancel`);
-      message.success('PO cancelled');
-      fetchPO();
-    } catch (err) {
-      message.error(getErrorMessage(err));
-    } finally {
-      setActionLoading(false);
-    }
+  const handleCancel = () => {
+    let reason = '';
+    Modal.confirm({
+      title: 'Cancel this Purchase Order?',
+      content: (
+        <div style={{ marginTop: 12 }}>
+          <Text type="secondary" style={{ display: 'block', marginBottom: 8 }}>
+            Please enter a cancellation reason (required):
+          </Text>
+          <Input
+            onChange={(e) => {
+              reason = e.target.value;
+            }}
+            placeholder="Enter reason here"
+          />
+        </div>
+      ),
+      okText: 'Cancel PO',
+      okType: 'danger',
+      cancelText: 'No',
+      onOk: async () => {
+        if (!reason || !reason.trim()) {
+          message.error('Cancellation reason is required');
+          return Promise.reject();
+        }
+        setActionLoading(true);
+        try {
+          await api.post(`/procurement/purchase-orders/${id}/cancel`, {
+            reason: reason.trim(),
+          });
+          message.success('PO cancelled');
+          fetchPO();
+        } catch (err) {
+          message.error(getErrorMessage(err));
+        } finally {
+          setActionLoading(false);
+        }
+      },
+    });
   };
 
   const handleCreateGRN = () => {
@@ -197,9 +225,10 @@ const PurchaseOrderDetail = () => {
   if (loading) {
     return (
       <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '60vh' }}>
-        <Spin size="large" tip="Loading Purchase Order...">
-          <div />
-        </Spin>
+        <Space direction="vertical" align="center" style={{ width: '100%', justifyContent: 'center' }}>
+          <Spin size="large" />
+          <Text type="secondary">Loading Purchase Order...</Text>
+        </Space>
       </div>
     );
   }
@@ -297,15 +326,9 @@ const PurchaseOrderDetail = () => {
             </Tooltip>
           )}
           {!['closed', 'cancelled', 'received'].includes(po.status) && (
-            <Popconfirm
-              title="Cancel this Purchase Order?"
-              onConfirm={handleCancel}
-              okButtonProps={{ danger: true }}
-            >
-              <Button danger icon={<CloseCircleOutlined />} loading={actionLoading}>
-                Cancel
-              </Button>
-            </Popconfirm>
+            <Button danger icon={<CloseCircleOutlined />} loading={actionLoading} onClick={handleCancel}>
+              Cancel
+            </Button>
           )}
           <Button icon={<PrinterOutlined />} onClick={handlePrint}>
             Print PO
@@ -377,12 +400,12 @@ const PurchaseOrderDetail = () => {
               <Descriptions.Item label="Warehouse">{po.warehouse_name || po.warehouse || '-'}</Descriptions.Item>
               <Descriptions.Item label="Payment Terms">{po.payment_terms || '-'}</Descriptions.Item>
               <Descriptions.Item label="Currency">{po.currency || 'INR'}</Descriptions.Item>
+              <Descriptions.Item label="Created By">{po.created_by_name || po.created_by || '-'}</Descriptions.Item>
+              <Descriptions.Item label="Created At">{formatDateTime(po.created_at)}</Descriptions.Item>
+              <Descriptions.Item label="Approved By" span={3}>{po.approved_by_name || po.approved_by || '-'}</Descriptions.Item>
               <Descriptions.Item label="Billing Address" span={3}>{po.billing_address || '-'}</Descriptions.Item>
               <Descriptions.Item label="Shipping Address" span={3}>{po.shipping_address || '-'}</Descriptions.Item>
               <Descriptions.Item label="Remarks" span={3}>{po.remarks || '-'}</Descriptions.Item>
-              <Descriptions.Item label="Created By">{po.created_by_name || po.created_by || '-'}</Descriptions.Item>
-              <Descriptions.Item label="Created At">{formatDateTime(po.created_at)}</Descriptions.Item>
-              <Descriptions.Item label="Approved By">{po.approved_by_name || po.approved_by || '-'}</Descriptions.Item>
             </Descriptions>
           </Col>
           <Col xs={24} lg={8}>

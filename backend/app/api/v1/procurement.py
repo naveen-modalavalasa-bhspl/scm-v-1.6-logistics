@@ -400,6 +400,25 @@ async def get_rfq(
     )
     quotations = q_result.scalars().unique().all()
 
+    # Fetch sum of qty from active POs linked to this MR to get the real allocated qty (including draft/pending)
+    mr_allocated_qty_map = {}
+    if rfq_row.mr_id:
+        po_allocated_res = await db.execute(
+            select(
+                PurchaseOrderItem.item_id,
+                func.sum(PurchaseOrderItem.qty)
+            )
+            .join(PurchaseOrder, PurchaseOrderItem.po_id == PurchaseOrder.id)
+            .where(
+                PurchaseOrder.mr_id == rfq_row.mr_id,
+                PurchaseOrder.is_current == True,
+                PurchaseOrder.status.notin_(["cancelled", "rejected"])
+            )
+            .group_by(PurchaseOrderItem.item_id)
+        )
+        for row in po_allocated_res.all():
+            mr_allocated_qty_map[row[0]] = float(row[1] or 0)
+
     # Pre-fill response details
     data = {
         "id": rfq_row.id,
@@ -419,6 +438,7 @@ async def get_rfq(
                 "item_name": line.item.name if line.item else "",
                 "qty": line.qty,
                 "uom": line.uom.name if line.uom else "",
+                "allocated_qty": mr_allocated_qty_map.get(line.item_id, 0.0),
                 "remarks": line.remarks,
             }
             for line in rfq_row.items
@@ -1145,26 +1165,9 @@ async def create_purchase_order(
                 status_code=400,
                 detail=f"Cannot raise PO against MR in '{_mr_row.status}' status — only approved MRs allowed",
             )
-        # BUG-PRO-004 fix: PO qty per item must not exceed the MR qty for that item.
-        mr_items_rows = (await db.execute(
-            select(MaterialRequestItem.item_id, MaterialRequestItem.qty)
-            .where(MaterialRequestItem.mr_id == payload.mr_id)
-        )).all()
-        mr_qty_by_item: dict[int, Decimal] = {}
-        for r in mr_items_rows:
-            mr_qty_by_item[r.item_id] = Decimal(str(r.qty or 0))
-        for li in payload.items:
-            mr_qty = mr_qty_by_item.get(li.item_id)
-            if mr_qty is None:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Item {li.item_id} is not on MR {_mr_row.mr_number}",
-                )
-            if Decimal(str(li.qty or 0)) > mr_qty:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"PO qty {li.qty} exceeds MR qty {mr_qty} for item {li.item_id}",
-                )
+        # Validate that new allocation does not exceed remaining MR quantities (race-safe, locked)
+        from app.services.procurement_service import validate_mr_allocation
+        await validate_mr_allocation(db, payload.mr_id, payload.items)
 
     # BUG-PRO-006 fix: when raising from a quotation, that quotation must be 'accepted'.
     if payload.quotation_id:
@@ -1472,13 +1475,8 @@ async def create_purchase_order(
 
     await db.flush()
 
-    # Update MR status if linked
-    if payload.mr_id:
-        mr_result = await db.execute(select(MaterialRequest).where(MaterialRequest.id == payload.mr_id))
-        mr = mr_result.scalar_one_or_none()
-        if mr and mr.status == "approved":
-            mr.status = "ordered"
-            await db.flush()
+    # No direct MR status update on draft PO creation
+    pass
 
     return {"id": po.id, "po_number": po_number, "message": "Purchase order created"}
 
@@ -1521,6 +1519,11 @@ async def update_purchase_order(
         from app.models.procurement import PurchaseOrderItem
         from sqlalchemy import delete
         
+        # If PO is linked to an MR, validate remaining quantities (excluding current PO)
+        if po.mr_id:
+            from app.services.procurement_service import validate_mr_allocation
+            await validate_mr_allocation(db, po.mr_id, payload.items, exclude_po_id=po.id)
+
         # Delete existing items of this PO
         await db.execute(
             delete(PurchaseOrderItem).where(PurchaseOrderItem.po_id == po.id)
@@ -1878,6 +1881,10 @@ async def approve_purchase_order(
     po.approved_date = datetime.now(timezone.utc)
     await db.flush()
 
+    if po.mr_id:
+        from app.services.procurement_service import handle_po_approval_qtys
+        await handle_po_approval_qtys(db, po.id)
+
     # BUG-PRO-025 fix: write a compliance/audit row on every PO approval so the
     # action is traceable independent of the ApprovalRequest history table.
     try:
@@ -1979,6 +1986,15 @@ async def cancel_purchase_order(
     )
     po.remarks = (po.remarks or "") + cancel_note
     await db.flush()
+
+    # Update linked MR ordered quantities and status incrementally
+    if po.mr_id and was_approved:
+        try:
+            from app.services.procurement_service import update_mr_ordered_qty_delta
+            deltas = {item.item_id: -item.qty for item in po.items}
+            await update_mr_ordered_qty_delta(db, po.mr_id, deltas)
+        except Exception:
+            logger.exception("Failed to restore MR status after PO cancel for PO %s", po.id)
 
     # BUG-PRO-037 fix: restore the linked MR.status from "ordered" back to
     # "approved" if this was the only PO consuming it. Otherwise the MR is
@@ -2299,6 +2315,10 @@ async def create_po_from_quotation(
             source_project_id = mr_row.project_id
             source_expected_delivery = mr_row.required_date
 
+        # Validate that quotation conversion won't exceed MR quantity limit
+        from app.services.procurement_service import validate_mr_allocation
+        await validate_mr_allocation(db, quotation.mr_id, quotation.items)
+
     # BUG-PRO-016 fix: clamp expected_delivery_date to the present at the
     # earliest. mr.required_date may be days/weeks in the past by the time
     # the PO is actually raised; copying that date verbatim produces a PO
@@ -2595,6 +2615,11 @@ async def create_split_po(
                     f"Phone: {warehouse_row.phone}" if warehouse_row.phone else None
                 ]
                 shipping_address = "\n".join([str(p) for p in ship_parts if p])
+
+        # Validate MR allocation for this vendor's awards
+        if mr_id_to_use:
+            from app.services.procurement_service import validate_mr_allocation
+            await validate_mr_allocation(db, mr_id_to_use, awards)
 
         base_upo = await generate_number(db, "procurement", "unapproved_purchase_order", pad_length=7)
         po_number = f"{base_upo}-V1.0"

@@ -1594,6 +1594,10 @@ async def update_document_status(db: AsyncSession, document_type: str, document_
             request.document_number = approved_po_number
         await db.flush()
 
+        if doc.mr_id:
+            from app.services.procurement_service import handle_po_approval_qtys
+            await handle_po_approval_qtys(db, doc.id)
+
     if document_type == "indent" and status == "approved":
         if doc.indent_number and "FA-IND" in doc.indent_number:
             from app.services.number_series import generate_number

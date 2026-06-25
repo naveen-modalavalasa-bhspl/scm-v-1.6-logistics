@@ -23,6 +23,7 @@ const QUOTE_STATUS_CONFIG = {
   accepted: { color: 'success', label: 'Accepted' },
   rejected: { color: 'red', label: 'Rejected' },
   cancelled: { color: 'default', label: 'Cancelled' },
+  expired: { color: 'default', label: 'Expired' },
 };
 
 const MR_STATUS_CONFIG = {
@@ -472,6 +473,16 @@ export default function SupplierPortal() {
   const pendingPos = purchaseOrders.filter((p) => p.supplier_acknowledgement === 'pending').length;
   const acceptedPos = purchaseOrders.filter((p) => p.supplier_acknowledgement === 'accepted').length;
 
+  const activeRfqs = rfqs.filter((r) => {
+    const status = getQuoteStatus(r);
+    return status === 'draft' || status === 'submitted';
+  });
+
+  const historyRfqs = rfqs.filter((r) => {
+    const status = getQuoteStatus(r);
+    return status === 'accepted' || status === 'rejected' || status === 'expired' || status === 'cancelled';
+  });
+
   /* ── RFQ Table ── */
   const expandedRender = (record) => (
     <div style={{ padding: '0 16px 16px' }}>
@@ -685,6 +696,30 @@ export default function SupplierPortal() {
             )}
           </Space>
         );
+      },
+    },
+  ];
+
+  const historyColumns = [
+    ...columns.slice(0, 6),
+    {
+      title: 'Actions',
+      key: 'actions',
+      width: 180,
+      render: (_, record) => {
+        if (record.my_quote) {
+          return (
+            <Button
+              type="default"
+              size="small"
+              icon={<FileSearchOutlined />}
+              onClick={() => handleOpenQuote(record, true)}
+            >
+              View Quote
+            </Button>
+          );
+        }
+        return <Text style={{ color: '#94a3b8', fontSize: '12px' }}>No Quote Submitted</Text>;
       },
     },
   ];
@@ -1185,7 +1220,7 @@ export default function SupplierPortal() {
               label: (
                 <Space>
                   <FileTextOutlined />
-                  <span>Purchase RFQs</span>
+                  <span>Active RFQs</span>
                   {open > 0 && <Badge count={open} style={{ backgroundColor: '#f97316' }} />}
                 </Space>
               ),
@@ -1195,8 +1230,8 @@ export default function SupplierPortal() {
                   title={
                     <Space>
                       <FileTextOutlined />
-                      <span style={{ fontWeight: 700 }}>Purchase RFQs</span>
-                      <Tag color="blue">{rfqs.length}</Tag>
+                      <span style={{ fontWeight: 700 }}>Active RFQs</span>
+                      <Tag color="blue">{activeRfqs.length}</Tag>
                     </Space>
                   }
                   extra={
@@ -1206,21 +1241,66 @@ export default function SupplierPortal() {
                   }
                   style={{ borderRadius: '0 0 12px 12px', boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}
                 >
-                  <Spin spinning={loading} tip="Loading your RFQs...">
-                    {rfqs.length === 0 && !loading ? (
+                  <Spin spinning={loading} tip="Loading active RFQs...">
+                    {activeRfqs.length === 0 && !loading ? (
                       <Empty
                         image={Empty.PRESENTED_IMAGE_SIMPLE}
-                        description="No RFQs have been assigned to you yet. The procurement team will notify you when a request is raised."
+                        description="No active RFQs assigned to you."
                       />
                     ) : (
                       <Table
-                        dataSource={rfqs}
+                        dataSource={activeRfqs}
                         columns={columns}
                         rowKey="quotation_id"
                         expandable={{ expandedRowRender: expandedRender }}
                         pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (t) => `${t} RFQs` }}
                         scroll={{ x: 900 }}
                         rowClassName={(r) => getQuoteStatus(r) === 'draft' ? 'rfq-row-open' : ''}
+                      />
+                    )}
+                  </Spin>
+                </Card>
+              )
+            },
+            {
+              key: 'history_rfqs',
+              label: (
+                <Space>
+                  <FileSearchOutlined />
+                  <span>RFQ / Quotation History</span>
+                </Space>
+              ),
+              children: (
+                <Card
+                  variant="borderless"
+                  title={
+                    <Space>
+                      <FileSearchOutlined />
+                      <span style={{ fontWeight: 700 }}>RFQ / Quotation History</span>
+                      <Tag color="blue">{historyRfqs.length}</Tag>
+                    </Space>
+                  }
+                  extra={
+                    <Button icon={<ClockCircleOutlined />} onClick={fetchRfqs} loading={loading}>
+                      Refresh
+                    </Button>
+                  }
+                  style={{ borderRadius: '0 0 12px 12px', boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}
+                >
+                  <Spin spinning={loading} tip="Loading RFQ history...">
+                    {historyRfqs.length === 0 && !loading ? (
+                      <Empty
+                        image={Empty.PRESENTED_IMAGE_SIMPLE}
+                        description="No RFQ or quotation history found."
+                      />
+                    ) : (
+                      <Table
+                        dataSource={historyRfqs}
+                        columns={historyColumns}
+                        rowKey="quotation_id"
+                        expandable={{ expandedRowRender: expandedRender }}
+                        pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (t) => `${t} RFQs` }}
+                        scroll={{ x: 900 }}
                       />
                     )}
                   </Spin>

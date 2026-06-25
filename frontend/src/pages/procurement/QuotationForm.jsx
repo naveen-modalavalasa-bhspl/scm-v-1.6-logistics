@@ -43,6 +43,7 @@ const QuotationForm = () => {
   // Items
   const [quotationItems, setQuotationItems] = useState([]);
   const [termsUrl, setTermsUrl] = useState('');
+  const [hasMR, setHasMR] = useState(false);
 
   // Lookups
   const [vendors, setVendors] = useState([]);
@@ -120,6 +121,7 @@ const QuotationForm = () => {
       const data = res.data;
       setQuotation(data);
       setTermsUrl(data.terms_url || '');
+      setHasMR(!!data.mr_id);
       form.setFieldsValue({
         ...data,
         quotation_date: data.quotation_date ? dayjs(data.quotation_date) : null,
@@ -153,7 +155,11 @@ const QuotationForm = () => {
   };
 
   const handleMRSelect = async (mrId) => {
-    if (!mrId) return;
+    if (!mrId) {
+      setHasMR(false);
+      setQuotationItems([createEmptyItem()]);
+      return;
+    }
     try {
       const res = await api.get(`/procurement/material-requests/${mrId}`);
       const mrData = res.data;
@@ -173,6 +179,7 @@ const QuotationForm = () => {
         amount: 0,
       }));
       setQuotationItems(items.length > 0 ? items : [createEmptyItem()]);
+      setHasMR(true);
       message.success('Items loaded from MR');
     } catch (err) {
       message.error(getErrorMessage(err));
@@ -486,7 +493,9 @@ const QuotationForm = () => {
     { title: '#', width: 40, render: (_, __, idx) => idx + 1 },
     {
       title: 'Item', dataIndex: 'item_id', width: 250,
-      render: (val, record) => (
+      render: (val, record) => hasMR ? (
+        <Text>{record.item_name || record.item_code || val}</Text>
+      ) : (
         <ItemSelector
           value={val}
           onChange={(itemId, item) => {
@@ -508,7 +517,15 @@ const QuotationForm = () => {
     },
     {
       title: 'Qty', dataIndex: 'qty', width: 80,
-      render: (val, record) => <InputNumber min={0.01} value={val} onChange={(v) => updateItem(record.key, 'qty', v)} style={{ width: '100%' }} />,
+      render: (val, record) => (
+        <InputNumber
+          min={0.01}
+          value={val}
+          onChange={(v) => updateItem(record.key, 'qty', v)}
+          style={{ width: '100%' }}
+          disabled={hasMR}
+        />
+      ),
     },
     {
       title: 'UOM', dataIndex: 'uom_id', width: 120,
@@ -522,12 +539,13 @@ const QuotationForm = () => {
           optionFilterProp="label"
           style={{ width: '100%' }}
           size="small"
+          disabled={hasMR}
         />
       ),
     },
     {
       title: '', width: 40,
-      render: (_, record) => quotationItems.length > 1 ? (
+      render: (_, record) => (!hasMR && quotationItems.length > 1) ? (
         <MinusCircleOutlined style={{ color: '#ff4d4f', cursor: 'pointer' }} onClick={() => removeItemRow(record.key)} />
       ) : null,
     },
@@ -685,9 +703,9 @@ const QuotationForm = () => {
           pagination={false}
           size="small"
           scroll={{ x: 600 }}
-          footer={() => (
+          footer={() => !hasMR ? (
             <Button type="dashed" onClick={addItemRow} icon={<PlusOutlined />} block>Add Item</Button>
-          )}
+          ) : null}
         />
 
         <Divider />

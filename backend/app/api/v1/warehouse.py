@@ -649,6 +649,12 @@ async def create_grn(
         po_result = await db.execute(select(PurchaseOrder).where(PurchaseOrder.id == payload.po_id))
         po = po_result.scalar_one_or_none()
         if po:
+            if po.mr_id:
+                deltas = {item.item_id: Decimal(str(item.received_qty)) for item in payload.items if item.item_id and item.received_qty}
+                if deltas:
+                    from app.services.procurement_service import update_mr_received_qty_delta
+                    await update_mr_received_qty_delta(db, po.mr_id, deltas)
+
             # Check if all items received
             poi_result = await db.execute(
                 select(PurchaseOrderItem).where(PurchaseOrderItem.po_id == po.id)
@@ -791,13 +797,21 @@ async def delete_grn(
     if grn.po_id:
         po_row = await db.execute(select(PurchaseOrder).where(PurchaseOrder.id == grn.po_id))
         po = po_row.scalar_one_or_none()
-        if po is not None and po.status in ("received", "partially_received"):
-            poi_result = await db.execute(
-                select(PurchaseOrderItem).where(PurchaseOrderItem.po_id == po.id)
-            )
-            po_items = poi_result.scalars().all()
-            any_received = any((pi.received_qty or 0) > 0 for pi in po_items)
-            po.status = "partially_received" if any_received else ("accepted" if po.supplier_acknowledgement == "accepted" else "approved")
+        if po is not None:
+            if po.mr_id:
+                # Revert MR received quantities
+                deltas = {gi.item_id: -Decimal(str(gi.received_qty)) for gi in grn.items or [] if gi.item_id and gi.received_qty}
+                if deltas:
+                    from app.services.procurement_service import update_mr_received_qty_delta
+                    await update_mr_received_qty_delta(db, po.mr_id, deltas)
+
+            if po.status in ("received", "partially_received"):
+                poi_result = await db.execute(
+                    select(PurchaseOrderItem).where(PurchaseOrderItem.po_id == po.id)
+                )
+                po_items = poi_result.scalars().all()
+                any_received = any((pi.received_qty or 0) > 0 for pi in po_items)
+                po.status = "partially_received" if any_received else ("accepted" if po.supplier_acknowledgement == "accepted" else "approved")
 
     grn.status = "cancelled"
     await db.flush()

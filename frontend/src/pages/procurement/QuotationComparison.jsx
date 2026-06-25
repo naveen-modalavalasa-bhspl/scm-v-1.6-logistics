@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Button, Card, Col, Descriptions, Empty, message, Popconfirm, Row, Select,
-  Space, Spin, Table, Tag, Tooltip, Typography, Checkbox, InputNumber, Collapse,
+  Space, Spin, Table, Tag, Tooltip, Typography, Checkbox, InputNumber, Collapse, Divider,
 } from 'antd';
 import {
   ArrowLeftOutlined, ReloadOutlined, ShoppingCartOutlined, StarFilled,
@@ -207,7 +207,7 @@ const QuotationComparison = () => {
       const data = res.data;
       setRfq({
         ...data,
-        items: data.quotations?.[0]?.items || [],
+        items: data.items || [],
       });
       setQuotations(data.quotations || []);
       setBestTechnicalId(null);
@@ -693,9 +693,10 @@ const QuotationComparison = () => {
 
       {loading && (
         <div style={{ display: 'flex', justifyContent: 'center', padding: 80 }}>
-          <Spin size="large" tip="Loading RFQ comparison...">
-            <div />
-          </Spin>
+          <Space direction="vertical" align="center" style={{ width: '100%', justifyContent: 'center' }}>
+            <Spin size="large" />
+            <Text type="secondary">Loading RFQ comparison...</Text>
+          </Space>
         </div>
       )}
 
@@ -793,15 +794,29 @@ const QuotationComparison = () => {
 
                 const header = (
                   <Row style={{ width: '100%' }} align="middle">
-                    <Col span={6}>
+                    <Col span={4}>
                       <Text strong style={{ color: '#0284c7' }}>{mi.item_code}</Text>
                     </Col>
-                    <Col span={10}>
+                    <Col span={8}>
                       <Text strong>{mi.item_name}</Text>
                     </Col>
-                    <Col span={8} style={{ textAlign: 'right', paddingRight: '24px' }}>
-                      <Text type="secondary">Required: </Text>
-                      <Text strong>{Number(mi.qty).toLocaleString('en-IN')} {mi.uom}</Text>
+                    <Col span={12} style={{ textAlign: 'right', paddingRight: '24px' }}>
+                      <Space split={<Divider type="vertical" />} size={4}>
+                        <span>
+                          <Text type="secondary">Required: </Text>
+                          <Text strong>{Number(mi.qty).toLocaleString('en-IN')} {mi.uom}</Text>
+                        </span>
+                        {Number(mi.allocated_qty || 0) > 0 && (
+                          <span>
+                            <Text type="secondary">Allocated: </Text>
+                            <Text strong style={{ color: '#fa8c16' }}>{Number(mi.allocated_qty).toLocaleString('en-IN')} {mi.uom}</Text>
+                          </span>
+                        )}
+                        <span>
+                          <Text type="secondary">Remaining: </Text>
+                          <Text strong style={{ color: '#52c41a' }}>{Number(Math.max(0, mi.qty - (mi.allocated_qty || 0))).toLocaleString('en-IN')} {mi.uom}</Text>
+                        </span>
+                      </Space>
                     </Col>
                   </Row>
                 );

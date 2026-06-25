@@ -48,7 +48,7 @@ async def supplier_list_rfqs(
     # Fetch all quotations for this vendor with their parent MR (if any)
     res = await db.execute(
         select(Quotation)
-        .where(Quotation.vendor_id == vendor_id, Quotation.status != "draft")
+        .where(Quotation.vendor_id == vendor_id)
         .options(
             selectinload(Quotation.material_request).selectinload(MaterialRequest.items)
                 .selectinload(MaterialRequestItem.item),
@@ -639,6 +639,16 @@ async def supplier_acknowledge_po(
         po.status = "rejected"
         action_desc = "rejected"
         po.remarks = (po.remarks or "") + f" | [REJECTED BY SUPPLIER] {payload.remarks or 'No reason given'}"
+        
+        # Update linked MR ordered quantities and status incrementally
+        if po.mr_id:
+            try:
+                from app.services.procurement_service import update_mr_ordered_qty_delta
+                deltas = {item.item_id: -item.qty for item in po.items}
+                await update_mr_ordered_qty_delta(db, po.mr_id, deltas)
+            except Exception:
+                import logging
+                logging.getLogger(__name__).exception("Failed to release MR quantities after supplier PO rejection for PO %s", po.id)
     else:
         raise HTTPException(400, "Invalid action. Must be 'accept' or 'reject'.")
         
