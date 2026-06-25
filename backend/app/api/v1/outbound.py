@@ -1210,6 +1210,33 @@ async def acknowledge_delivery(
         )
         db.add(new_item)
 
+        # Update SerialNumber records if the item has serial numbers
+        try:
+            serial_nums = it.serial_numbers
+            # Find matching DispatchOrderItem to get its serial numbers as fallback
+            doi = next((x for x in doi_list if x.id == it.dispatch_item_id), None)
+            if not serial_nums and doi and doi.serial_numbers:
+                serial_nums = doi.serial_numbers
+
+            if serial_nums:
+                dest_wh_id_resolved = new_ack.destination_warehouse_id or d.destination_warehouse_id
+                from app.models.warehouse import SerialNumber
+                sn_stmt = select(SerialNumber).where(
+                    SerialNumber.item_id == it.material_id,
+                    SerialNumber.serial_number.in_(serial_nums)
+                )
+                sn_rows = (await db.execute(sn_stmt)).scalars().all()
+                for sn_row in sn_rows:
+                    if dest_wh_id_resolved and dest_wh_id_resolved != d.warehouse_id:
+                        sn_row.warehouse_id = dest_wh_id_resolved
+                        sn_row.bin_id = None
+                        sn_row.status = "available"
+                    else:
+                        sn_row.status = "consumed"
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).exception("Failed to update SerialNumber records in acknowledge_delivery")
+
         # STOCK LEDGER MOVEMENT: If inter-warehouse transfer, transfer stock from in-transit to destination warehouse!
         dest_wh_id = new_ack.destination_warehouse_id or d.destination_warehouse_id
         if dest_wh_id and dest_wh_id != d.warehouse_id:
