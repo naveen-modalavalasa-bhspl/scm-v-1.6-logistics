@@ -45,7 +45,7 @@ const AcknowledgeDelivery = () => {
   const [items, setItems] = useState([]);
   const [uploadedUrls, setUploadedUrls] = useState({});
   const [custodyChain, setCustodyChain] = useState([]);
-  const hasPendingCustody = custodyChain.some(step => step.status === 'pending');
+  const hasPendingCustody = false; // custodyChain.some(step => step.status === 'pending');
 
 
 

@@ -651,28 +651,6 @@ async def get_dispatch(
         
     is_ready_for_acknowledgement = True
     transporter_status_message = ""
-    if h.dispatch_number.startswith("MDO-") or h.dispatch_number.startswith("DO-"):
-        from app.models.logistics import LogisticsMainDispatchOrder, LogisticsServiceOrder, LogisticsServiceOrderVehicle
-        res_mdo = await db.execute(
-            select(LogisticsMainDispatchOrder).where(LogisticsMainDispatchOrder.mdo_number == h.dispatch_number)
-        )
-        mdo = res_mdo.scalar_one_or_none()
-        if mdo:
-            res_so = await db.execute(
-                select(LogisticsServiceOrder).where(LogisticsServiceOrder.mdo_id == mdo.id)
-            )
-            so = res_so.scalars().first()
-            if so:
-                res_v = await db.execute(
-                    select(LogisticsServiceOrderVehicle).where(LogisticsServiceOrderVehicle.so_id == so.id)
-                )
-                vehicles = res_v.scalars().all()
-                for veh in vehicles:
-                    veh_status = veh.vehicle_status.name if hasattr(veh.vehicle_status, "name") else veh.vehicle_status
-                    if veh_status not in ("TRANSPORTER_ACKNOWLEDGED", "DELIVERY_ACKNOWLEDGED"):
-                        is_ready_for_acknowledgement = False
-                        transporter_status_message = f"Pending transporter arrival confirmation for vehicle {veh.vehicle_registration_no}."
-                        break
 
     return {
         "id": h.id,
