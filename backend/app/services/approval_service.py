@@ -71,13 +71,26 @@ async def get_hierarchical_active_position(db: AsyncSession, request, level_num:
     
     starting_position_id = emp.position_id
     if user.active_role_id:
-        pos_q = await db.execute(
-            select(Position.id).where(
-                Position.employee_id == emp.id,
-                Position.role_id == user.active_role_id
+        active_pos_id = None
+        if project_id:
+            pos_q = await db.execute(
+                select(Position.id).where(
+                    Position.employee_id == emp.id,
+                    Position.role_id == user.active_role_id,
+                    Position.project_id == project_id
+                )
             )
-        )
-        active_pos_id = pos_q.scalar_one_or_none()
+            active_pos_id = pos_q.scalars().first()
+            
+        if not active_pos_id:
+            pos_q = await db.execute(
+                select(Position.id).where(
+                    Position.employee_id == emp.id,
+                    Position.role_id == user.active_role_id
+                )
+            )
+            active_pos_id = pos_q.scalars().first()
+
         if active_pos_id:
             starting_position_id = active_pos_id
             
@@ -371,13 +384,26 @@ async def submit_for_approval(
                 starting_position_id = emp.position_id
                 if user.active_role_id:
                     from app.models.settings_master import Position
-                    pos_q = await db.execute(
-                        select(Position.id).where(
-                            Position.employee_id == emp.id,
-                            Position.role_id == user.active_role_id
+                    active_pos_id = None
+                    if project_id:
+                        pos_q = await db.execute(
+                            select(Position.id).where(
+                                Position.employee_id == emp.id,
+                                Position.role_id == user.active_role_id,
+                                Position.project_id == project_id
+                            )
                         )
-                    )
-                    active_pos_id = pos_q.scalar_one_or_none()
+                        active_pos_id = pos_q.scalars().first()
+                    
+                    if not active_pos_id:
+                        pos_q = await db.execute(
+                            select(Position.id).where(
+                                Position.employee_id == emp.id,
+                                Position.role_id == user.active_role_id
+                            )
+                        )
+                        active_pos_id = pos_q.scalars().first()
+
                     if active_pos_id:
                         starting_position_id = active_pos_id
 

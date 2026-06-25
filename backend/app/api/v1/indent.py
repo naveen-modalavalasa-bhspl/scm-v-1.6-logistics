@@ -676,7 +676,7 @@ async def create_indent(
                         Position.role_id == current_user.active_role_id
                     )
                 )
-                project_id = pos_q.scalar_one_or_none()
+                project_id = pos_q.scalars().first()
             if project_id is None and current_user.employee_id:
                 from app.models.settings_master import Employee, Position
                 emp_q = await db.execute(
@@ -684,7 +684,7 @@ async def create_indent(
                     .join(Employee, Employee.position_id == Position.id)
                     .where(Employee.id == current_user.employee_id)
                 )
-                project_id = emp_q.scalar_one_or_none()
+                project_id = emp_q.scalars().first()
     if warehouse_id is None:
         raise HTTPException(
             status_code=422,

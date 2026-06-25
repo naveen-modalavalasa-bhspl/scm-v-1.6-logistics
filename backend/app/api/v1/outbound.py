@@ -1038,28 +1038,52 @@ async def acknowledge_delivery(
     if not d:
         raise HTTPException(status_code=404, detail="Dispatch order not found")
 
-    # Auto-acknowledge any pending intermediate custody transfers
+    # Block sign-off if intermediate custody transfers are pending
     from app.models.dispatch_custody import DispatchCustodyTransfer
-    from datetime import datetime, timezone
-    pending_custody_res = await db.execute(
+    pending_custody = await db.execute(
         select(DispatchCustodyTransfer)
         .where(
             DispatchCustodyTransfer.dispatch_order_id == d.id,
             DispatchCustodyTransfer.status == "pending"
         )
+        .limit(1)
     )
-    for step in pending_custody_res.scalars().all():
-        step.status = "acknowledged"
-        step.acknowledged_by_id = current_user.id
-        step.acknowledged_at = datetime.now(timezone.utc)
-        step.remarks = "Bypassed by final delivery acknowledgment"
-        db.add(step)
+    if pending_custody.scalar_one_or_none():
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot acknowledge final delivery: Intermediate custody transfers are still pending."
+        )
         
     if d.status in ("acknowledged", "cancelled"):
         raise HTTPException(
             status_code=400,
             detail=f"Cannot acknowledge dispatch in '{d.status}' status",
         )
+
+    # Check if the dispatch is synced from an MDO/SO and verify transporter has reported arrival
+    if d.dispatch_number.startswith("MDO-") or d.dispatch_number.startswith("DO-"):
+        from app.models.logistics import LogisticsMainDispatchOrder, LogisticsServiceOrder, LogisticsServiceOrderVehicle
+        res_mdo = await db.execute(
+            select(LogisticsMainDispatchOrder).where(LogisticsMainDispatchOrder.mdo_number == d.dispatch_number)
+        )
+        mdo = res_mdo.scalar_one_or_none()
+        if mdo:
+            res_so = await db.execute(
+                select(LogisticsServiceOrder).where(LogisticsServiceOrder.mdo_id == mdo.id)
+            )
+            so = res_so.scalars().first()
+            if so:
+                res_v = await db.execute(
+                    select(LogisticsServiceOrderVehicle).where(LogisticsServiceOrderVehicle.so_id == so.id)
+                )
+                vehicles = res_v.scalars().all()
+                for veh in vehicles:
+                    veh_status = veh.vehicle_status.name if hasattr(veh.vehicle_status, "name") else veh.vehicle_status
+                    if veh_status not in ("TRANSPORTER_ACKNOWLEDGED", "DELIVERY_ACKNOWLEDGED"):
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"Cannot acknowledge delivery: Transporter has not reported arrival at the destination for vehicle {veh.vehicle_registration_no} (current status: {veh_status})"
+                        )
 
     # Generate unique acknowledgement number (e.g., BHSPL/26-27/ACK/00001) race-safely via SCM sequence service
     from app.services.fiscal_numbering import generate_number_v2

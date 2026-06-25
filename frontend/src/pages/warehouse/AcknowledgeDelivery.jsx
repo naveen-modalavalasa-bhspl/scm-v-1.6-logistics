@@ -45,7 +45,7 @@ const AcknowledgeDelivery = () => {
   const [items, setItems] = useState([]);
   const [uploadedUrls, setUploadedUrls] = useState({});
   const [custodyChain, setCustodyChain] = useState([]);
-  const hasPendingCustody = false; // custodyChain.some(step => step.status === 'pending');
+  const hasPendingCustody = custodyChain.some(step => step.status === 'pending');
 
 
 
@@ -517,7 +517,7 @@ const AcknowledgeDelivery = () => {
           <Button onClick={() => navigate('/logistics/dispatch')} icon={<ArrowLeftOutlined />}>
             Back to Plans
           </Button>
-           {!dispatch?.delivery_acknowledged && (
+          {!dispatch?.delivery_acknowledged && (
             <Button
               type="primary"
               icon={<CheckCircleOutlined />}
