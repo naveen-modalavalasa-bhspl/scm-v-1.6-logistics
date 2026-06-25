@@ -3910,20 +3910,32 @@ async def acknowledge_material_issue(
     for item in mi.items:
         try:
             serial_nums = item.serial_numbers
+            from app.models.warehouse import SerialNumber as _SN_ACK
+
             if serial_nums:
-                from app.models.warehouse import SerialNumber
-                sn_stmt = select(SerialNumber).where(
-                    SerialNumber.item_id == item.item_id,
-                    SerialNumber.serial_number.in_(serial_nums)
+                sn_stmt = select(_SN_ACK).where(
+                    _SN_ACK.item_id == item.item_id,
+                    _SN_ACK.serial_number.in_(serial_nums)
                 )
                 sn_rows = (await db.execute(sn_stmt)).scalars().all()
-                for sn_row in sn_rows:
-                    if mi.destination_warehouse_id and mi.destination_warehouse_id != mi.warehouse_id:
-                        sn_row.warehouse_id = mi.destination_warehouse_id
-                        sn_row.bin_id = None
-                        sn_row.status = "available"
-                    else:
-                        sn_row.status = "consumed"
+            else:
+                # Fallback: find all "issued" serials for this item at the source
+                # warehouse — handles intermediate warehouses that issued stock
+                # on to another warehouse without serial numbers on the MI item
+                sn_stmt = select(_SN_ACK).where(
+                    _SN_ACK.item_id == item.item_id,
+                    _SN_ACK.warehouse_id == mi.warehouse_id,
+                    _SN_ACK.status == "issued"
+                )
+                sn_rows = (await db.execute(sn_stmt)).scalars().all()
+
+            for sn_row in sn_rows:
+                if mi.destination_warehouse_id and mi.destination_warehouse_id != mi.warehouse_id:
+                    sn_row.warehouse_id = mi.destination_warehouse_id
+                    sn_row.bin_id = None
+                    sn_row.status = "available"
+                else:
+                    sn_row.status = "consumed"
         except Exception as e:
             import logging
             logging.getLogger(__name__).exception("Failed to update SerialNumber records in acknowledge_material_issue")

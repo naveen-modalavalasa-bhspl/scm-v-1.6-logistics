@@ -1218,21 +1218,51 @@ async def acknowledge_delivery(
             if not serial_nums and doi and doi.serial_numbers:
                 serial_nums = doi.serial_numbers
 
+            # Fallback 2: look up serial numbers from the linked MaterialIssueItem
+            # This handles the case where the DO was created from an MI at an
+            # intermediate warehouse and the serial numbers were never stored on the DOI
+            if not serial_nums and d.material_issue_id:
+                try:
+                    from app.models.issue import MaterialIssueItem as _MII_SN
+                    mi_sn_res = await db.execute(
+                        select(_MII_SN).where(
+                            _MII_SN.issue_id == d.material_issue_id,
+                            _MII_SN.item_id == it.material_id
+                        ).limit(1)
+                    )
+                    mi_sn_item = mi_sn_res.scalar_one_or_none()
+                    if mi_sn_item and mi_sn_item.serial_numbers:
+                        serial_nums = mi_sn_item.serial_numbers
+                except Exception:
+                    pass
+
+            dest_wh_id_resolved = new_ack.destination_warehouse_id or d.destination_warehouse_id
+            from app.models.warehouse import SerialNumber
+
             if serial_nums:
-                dest_wh_id_resolved = new_ack.destination_warehouse_id or d.destination_warehouse_id
-                from app.models.warehouse import SerialNumber
                 sn_stmt = select(SerialNumber).where(
                     SerialNumber.item_id == it.material_id,
                     SerialNumber.serial_number.in_(serial_nums)
                 )
                 sn_rows = (await db.execute(sn_stmt)).scalars().all()
-                for sn_row in sn_rows:
-                    if dest_wh_id_resolved and dest_wh_id_resolved != d.warehouse_id:
-                        sn_row.warehouse_id = dest_wh_id_resolved
-                        sn_row.bin_id = None
-                        sn_row.status = "available"
-                    else:
-                        sn_row.status = "consumed"
+            else:
+                # Fallback 3: find all "issued" serials for this item at the source
+                # warehouse — handles cases where serials were never stored in the
+                # dispatch chain at all (intermediate hop from non-central warehouse)
+                sn_stmt = select(SerialNumber).where(
+                    SerialNumber.item_id == it.material_id,
+                    SerialNumber.warehouse_id == d.warehouse_id,
+                    SerialNumber.status == "issued"
+                )
+                sn_rows = (await db.execute(sn_stmt)).scalars().all()
+
+            for sn_row in sn_rows:
+                if dest_wh_id_resolved and dest_wh_id_resolved != d.warehouse_id:
+                    sn_row.warehouse_id = dest_wh_id_resolved
+                    sn_row.bin_id = None
+                    sn_row.status = "available"
+                else:
+                    sn_row.status = "consumed"
         except Exception as e:
             import logging
             logging.getLogger(__name__).exception("Failed to update SerialNumber records in acknowledge_delivery")
