@@ -383,6 +383,7 @@ class MaterialIssueItemResponse(BaseModel):
     serial_numbers: Optional[List[str]] = None
     has_serial: bool = False
     has_batch: bool = False
+    item_type: Optional[str] = None
     model_config = {"from_attributes": True}
 
 class MaterialIssueResponse(BaseModel):
@@ -401,6 +402,7 @@ class MaterialIssueResponse(BaseModel):
     status: str
     remarks: Optional[str] = None
     issued_by: Optional[int] = None
+    position_code: Optional[str] = None
     created_at: Optional[datetime] = None
     items: List[MaterialIssueItemResponse] = []
     model_config = {"from_attributes": True}

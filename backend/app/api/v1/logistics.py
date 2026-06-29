@@ -740,6 +740,7 @@ async def get_mdos(db: AsyncSession = Depends(get_db), current_user: User = Depe
                     material_id=mat.material_id,
                     material_code=mat.material.item_code if mat.material else None,
                     material_name=mat.material.name if mat.material else None,
+                    material_type=mat.material.item_type if mat.material else None,
                     quantity=float(mat.quantity),
                     unit_of_measure=mat.unit_of_measure,
                     total_weight_kg=float(mat.total_weight_kg),
@@ -2286,6 +2287,7 @@ async def get_rfqs(db: AsyncSession = Depends(get_db), current_user: User = Depe
                             material_id=mat.material_id,
                             material_code=mat.material.item_code if mat.material else None,
                             material_name=mat.material.name if mat.material else None,
+                            material_type=mat.material.item_type if mat.material else None,
                             quantity=float(mat.quantity),
                             unit_of_measure=mat.unit_of_measure,
                             total_weight_kg=float(mat.total_weight_kg),
@@ -3578,14 +3580,18 @@ async def create_carrier_login(
     if res_existing.scalar_one_or_none():
         raise HTTPException(409, "This carrier already has a portal login. Use Reset Password instead.")
 
-    # Username uniqueness
-    res_u = await db.execute(select(CarrierUser).where(CarrierUser.username == payload.username))
+    # Normalize username to lowercase and underscores
+    import re as _re
+    username_normalized = _re.sub(r'[^a-zA-Z0-9_]', '_', payload.username.strip()).lower()
+
+    # Username uniqueness across all carrier users (case-insensitive)
+    res_u = await db.execute(select(CarrierUser).where(func.lower(CarrierUser.username) == username_normalized))
     if res_u.scalar_one_or_none():
         raise HTTPException(409, f"Username '{payload.username}' is already taken")
 
     cu = CarrierUser(
         vendor_id=vendor_id,
-        username=payload.username,
+        username=username_normalized,
         email=payload.email,
         password_hash=hash_password(payload.password),
         full_name=payload.full_name or v.contact_person,

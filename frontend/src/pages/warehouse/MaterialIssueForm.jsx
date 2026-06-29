@@ -7,13 +7,14 @@ import {
 import {
   ArrowLeftOutlined, PlusOutlined, EditOutlined, DeleteOutlined,
   CheckOutlined, MinusCircleOutlined, InboxOutlined, SaveOutlined,
-  SendOutlined, FileDoneOutlined,
+  SendOutlined, FileDoneOutlined, BarcodeOutlined, QrcodeOutlined,
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import PageHeader from '../../components/PageHeader';
 import StatusTag from '../../components/StatusTag';
 import ItemSelector from '../../components/ItemSelector';
 import SerialNumbersModal from '../../components/SerialNumbersModal';
+import AssetCodesTreeModal from '../../components/AssetCodesTreeModal';
 import api from '../../config/api';
 import useAuthStore from '../../store/authStore';
 import {
@@ -58,12 +59,18 @@ const MaterialIssueForm = () => {
   // Populated when an item is selected to allow batch/bin dropdown selection
   const [itemStockDetails, setItemStockDetails] = useState({});
 
+  // --- Tree Modal State for Asset/Consumable Codes ---
+  const [treeModalOpen, setTreeModalOpen] = useState(false);
+  const [activeRowKey, setActiveRowKey] = useState(null);
+  const activeTreeRow = issueItems.find((item) => item.key === activeRowKey);
+
   // --- Item Row Helpers ---
   const createEmptyItem = () => ({
     key: Date.now() + Math.random(),
     item_id: null,
     item_name: '',
     item_code: '',
+    item_type: '',
     uom_id: null,
     qty: 0,
     batch_id: null,
@@ -390,6 +397,7 @@ const MaterialIssueForm = () => {
         item_id: it.item_id,
         item_name: it.item_name || it.name || '',
         item_code: it.item_code || '',
+        item_type: it.item_type || '',
         uom_id: it.uom_id || null,
         qty: Math.max(
           Number(
@@ -442,6 +450,7 @@ const MaterialIssueForm = () => {
         item_id: item.item_id,
         item_name: item.item_name || '',
         item_code: item.item_code || '',
+        item_type: item.item_type || '',
         uom_id: item.uom_id,
         qty: Number(item.qty || 0),
         batch_id: item.batch_id || null,
@@ -551,6 +560,138 @@ const MaterialIssueForm = () => {
     }
   };
 
+  const handlePrintAllIssueQRs = () => {
+    if (!recordData || !recordData.items) return;
+    const printWindow = window.open('', '_blank');
+    
+    let labelsHTML = '';
+    recordData.items.forEach(item => {
+      const serials = item.serial_numbers || [];
+      if (serials.length === 0) return;
+      
+      const matCode = item.item_code || '';
+      const name = item.item_name || '';
+      const batch = item.batch_number || item.batch_name || '-';
+      const wh = recordData.warehouse_name || '-';
+      const exp = item.expiry_date ? dayjs(item.expiry_date).format('YYYY-MM-DD') : '-';
+      
+      serials.forEach(code => {
+        const payload = `Material: ${matCode}\nItem: ${name}\nBatch: ${batch}\nCode: ${code}\nWarehouse: ${wh}\nExpiry: ${exp}`;
+        const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(payload)}`;
+        labelsHTML += `
+          <div class="label-card">
+            <div class="label-title">${name} (${matCode})</div>
+            <div class="label-code">${code}</div>
+            <img class="label-qr" src="${qrUrl}" alt="QR" />
+            <div class="label-footer">
+              <div>Batch: ${batch}</div>
+              <div>Loc: ${wh}</div>
+            </div>
+          </div>
+        `;
+      });
+    });
+
+    if (!labelsHTML) {
+      message.warning("No serial or asset/consumable codes found to print");
+      return;
+    }
+
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>Print QR Labels - ${recordData.issue_number}</title>
+          <style>
+            body {
+              font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+              margin: 20px;
+              background: #ffffff;
+              color: #000000;
+            }
+            .no-print {
+              margin-bottom: 20px;
+            }
+            .grid-container {
+              display: grid;
+              grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+              gap: 15px;
+            }
+            .label-card {
+              border: 1px dashed #cccccc;
+              padding: 12px;
+              text-align: center;
+              border-radius: 8px;
+              page-break-inside: avoid;
+              display: flex;
+              flex-direction: column;
+              align-items: center;
+              justify-content: space-between;
+              height: 240px;
+              box-sizing: border-box;
+            }
+            .label-title {
+              font-size: 11px;
+              font-weight: bold;
+              color: #475569;
+              text-transform: uppercase;
+              width: 100%;
+              overflow: hidden;
+              text-overflow: ellipsis;
+              white-space: nowrap;
+            }
+            .label-code {
+              font-size: 13px;
+              font-weight: 700;
+              font-family: monospace;
+              margin: 4px 0;
+              color: #000000;
+            }
+            .label-qr {
+              width: 110px;
+              height: 110px;
+            }
+            .label-footer {
+              font-size: 9px;
+              color: #64748b;
+              width: 100%;
+              text-align: left;
+              border-top: 1px solid #f1f5f9;
+              padding-top: 4px;
+              margin-top: 4px;
+            }
+            @media print {
+              .no-print { display: none; }
+              body { margin: 0; }
+              .grid-container {
+                gap: 10px;
+              }
+              .label-card {
+                border: 1px solid #000000;
+              }
+            }
+          </style>
+        </head>
+        <body>
+          <div class="no-print">
+            <button onclick="window.print()" style="padding: 8px 16px; background: #2563eb; color: white; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 13px;">Print Labels</button>
+            <span style="margin-left: 10px; color: #64748b; font-size: 12px;">(Select Save as PDF or your Label Printer in the print dialog)</span>
+          </div>
+          <div class="grid-container">
+            ${labelsHTML}
+          </div>
+          <script>
+            window.onload = function() {
+              setTimeout(function() {
+                window.print();
+              }, 500);
+            };
+          </script>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+  };
+
   // --- Submit ---
   const handleSubmit = async () => {
     try {
@@ -627,7 +768,7 @@ const MaterialIssueForm = () => {
             batch_id: selectedBatches[0] || null,
             bin_id: selectedBins[0] || null,
             rate: item.rate,
-            serial_numbers: item.has_serial ? item.serial_numbers : null,
+            serial_numbers: (item.has_serial || item.item_type === 'asset' || item.item_type === 'consumable') ? item.serial_numbers : null,
           });
           continue;
         }
@@ -644,7 +785,7 @@ const MaterialIssueForm = () => {
             batch_id: row.batch_id || null,
             bin_id: row.bin_id || null,
             rate: Number(row.valuation_rate) || item.rate || 0,
-            serial_numbers: item.has_serial ? item.serial_numbers : null,
+            serial_numbers: (item.has_serial || item.item_type === 'asset' || item.item_type === 'consumable') ? item.serial_numbers : null,
           });
           remainingQty -= take;
         }
@@ -660,7 +801,7 @@ const MaterialIssueForm = () => {
               batch_id: selectedBatches[0] || null,
               bin_id: selectedBins[0] || null,
               rate: item.rate,
-              serial_numbers: item.has_serial ? item.serial_numbers : null,
+              serial_numbers: (item.has_serial || item.item_type === 'asset' || item.item_type === 'consumable') ? item.serial_numbers : null,
             });
           }
         }
@@ -693,6 +834,17 @@ const MaterialIssueForm = () => {
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const handleSaveTreeCodes = (selected) => {
+    if (activeRowKey) {
+      updateIssueItemFields(activeRowKey, {
+        serial_numbers: selected,
+        qty: selected.length
+      });
+    }
+    setTreeModalOpen(false);
+    setActiveRowKey(null);
   };
 
   // --- Group Material Issue Items ---
@@ -761,16 +913,53 @@ const MaterialIssueForm = () => {
         title: 'Serial Numbers',
         dataIndex: 'serial_numbers',
         width: 150,
-        render: (serials) =>
-          serials && serials.length > 0 ? (
-            <Tooltip title={serials.join(', ')}>
+        render: (serials, record) => {
+          if (!serials || serials.length === 0) return '-';
+          const matCode = record.item_code || '';
+          const prefix = matCode ? `${matCode}-1-` : '';
+          const parsed = serials.map(s => {
+            if (prefix && s.startsWith(prefix)) {
+              return s.slice(prefix.length);
+            }
+            if (s.startsWith('1-') && s.endsWith(`-${matCode}`)) {
+              return s.slice(2, -matCode.length - 1);
+            }
+            return s;
+          });
+          return (
+            <Tooltip title={parsed.join(', ')}>
               <div style={{ maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {serials.map((s) => <Tag key={s} color="blue">{s}</Tag>)}
+                {parsed.map((s) => <Tag key={s} color="blue">{s}</Tag>)}
               </div>
             </Tooltip>
-          ) : (
-            '-'
-          ),
+          );
+        }
+      },
+      {
+        title: 'Asset/Consumable Codes',
+        dataIndex: 'serial_numbers',
+        width: 150,
+        render: (serials, record) => {
+          const isAsset = record.item_type === 'asset';
+          const isConsumable = record.item_type === 'consumable';
+          if (!isAsset && !isConsumable) return '-';
+          if (!serials || serials.length === 0) return '-';
+          const matCode = record.item_code || '';
+          const prefix = matCode ? `${matCode}-1-` : '';
+          const parsed = serials.map(s => {
+            if (prefix && s.startsWith(prefix)) {
+              return s;
+            }
+            return `${prefix}${s}`;
+          });
+          return (
+            <Tooltip title={parsed.join(', ')}>
+              <div style={{ maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {parsed.map((s) => <Tag key={s} color={isAsset ? "cyan" : "orange"}>{s}</Tag>)}
+              </div>
+            </Tooltip>
+          );
+        }
       },
       { title: 'Rate', dataIndex: 'rate', width: 110, align: 'right', render: (v) => formatCurrency(v) },
       { title: 'Amount', dataIndex: 'amount', width: 120, align: 'right', render: (v) => <Text strong>{formatCurrency(v)}</Text> },
@@ -783,6 +972,11 @@ const MaterialIssueForm = () => {
           subtitle="Material Issue Details"
         >
           <Space>
+            {recordData.items && recordData.items.some(item => item.serial_numbers && item.serial_numbers.length > 0) && (
+              <Button icon={<QrcodeOutlined />} onClick={handlePrintAllIssueQRs} style={{ background: '#f0fdf4', color: '#16a34a', borderColor: '#bbf7d0', fontWeight: 600 }}>
+                Print QR Labels
+              </Button>
+            )}
             {recordData.status === 'draft' && (
               <>
                 <Button icon={<EditOutlined />} onClick={() => setEditMode(true)} type="primary">
@@ -856,6 +1050,7 @@ const MaterialIssueForm = () => {
               if (item) {
                 updateIssueItem(record.key, 'item_name', item.item_name || item.name || '');
                 updateIssueItem(record.key, 'item_code', item.item_code || item.code || '');
+                updateIssueItem(record.key, 'item_type', item.item_type || '');
                 updateIssueItem(record.key, 'batch_id', null);
                 updateIssueItem(record.key, 'bin_id', null);
                 updateIssueItem(record.key, 'serial_numbers', []);
@@ -1129,14 +1324,48 @@ const MaterialIssueForm = () => {
       },
     },
     {
-      title: 'Serial Numbers',
+      title: 'Serial / Asset Codes',
       dataIndex: 'serial_numbers',
-      width: 150,
+      width: 170,
       render: (val, record) => {
         const details = itemStockDetails[record.item_id] || {};
         const serialsMap = details.serialsMap || {};
         const key = `${record.batch_id || 'null'}-${record.bin_id || 'null'}`;
         const availableSerials = serialsMap[key] || [];
+        
+        const isAssetOrConsumableOrSerial = record.item_type === 'asset' || record.item_type === 'consumable' || record.has_serial;
+        
+        if (isAssetOrConsumableOrSerial) {
+          const selectedCount = val?.length || 0;
+          const isAsset = record.item_type === 'asset';
+          const isConsumable = record.item_type === 'consumable';
+          const shadowColor = isAsset ? 'rgba(6,182,212,0.3)' : isConsumable ? 'rgba(249,115,22,0.3)' : 'rgba(99,102,241,0.3)';
+          const label = isAsset ? 'Codes Selected' : isConsumable ? 'Codes Selected' : 'Serials Selected';
+          const buttonText = isAsset || isConsumable ? 'Select Codes' : 'Select Serials';
+
+          return (
+            <Tooltip title="Click to select specific items/serials from tree hierarchy">
+              <Button
+                size="small"
+                type={selectedCount > 0 ? "primary" : "dashed"}
+                icon={<BarcodeOutlined />}
+                onClick={() => {
+                  setActiveRowKey(record.key);
+                  setTreeModalOpen(true);
+                }}
+                style={{
+                  borderRadius: '20px',
+                  fontWeight: 600,
+                  fontSize: '11px',
+                  boxShadow: selectedCount > 0 ? `0 2px 6px ${shadowColor}` : 'none'
+                }}
+              >
+                {selectedCount > 0 ? `${selectedCount} ${label}` : buttonText}
+              </Button>
+            </Tooltip>
+          );
+        }
+
         return (
           <SerialNumbersModal
             value={val || []}
@@ -1349,6 +1578,26 @@ const MaterialIssueForm = () => {
           </div>
         </div>
       </Card>
+
+      {/* Tree Modal for Asset/Consumable Codes Selection */}
+      {activeTreeRow && (
+        <AssetCodesTreeModal
+          open={treeModalOpen}
+          onCancel={() => {
+            setTreeModalOpen(false);
+            setActiveRowKey(null);
+          }}
+          onSave={handleSaveTreeCodes}
+          selectedCodes={activeTreeRow.serial_numbers || []}
+          rawRows={itemStockDetails[activeTreeRow.item_id]?.rawRows || []}
+          itemCode={activeTreeRow.item_code}
+          itemName={activeTreeRow.item_name}
+          itemType={activeTreeRow.item_type}
+          batchIds={activeTreeRow.batch_ids || (activeTreeRow.batch_id ? [activeTreeRow.batch_id] : [])}
+          binIds={activeTreeRow.bin_ids || (activeTreeRow.bin_id ? [activeTreeRow.bin_id] : [])}
+          targetQty={activeTreeRow.qty}
+        />
+      )}
     </div>
   );
 };

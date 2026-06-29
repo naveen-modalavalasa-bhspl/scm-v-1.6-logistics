@@ -42,6 +42,10 @@ class RefreshTokenRequest(BaseModel):
     refresh_token: str
 
 
+class LogoutRequest(BaseModel):
+    refresh_token: Optional[str] = None
+
+
 class UserCreate(BaseModel):
     organization_id: Optional[int] = None
     employee_id: Optional[int] = None

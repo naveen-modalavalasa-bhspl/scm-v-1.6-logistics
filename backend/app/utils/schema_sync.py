@@ -16,6 +16,11 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession
 from app.models.master import Feature, ItemFeature, UOMCategory, UOMConversion, ItemUOMConversion, VendorType, VendorCategory, VendorVendorType, VendorItemHistory, SpecCategory, Spec, ItemSpec, ItemSpecValue, Office, Position, Employee, UserItemPermission, RoleItemPermission, PackagingLevel, ItemPackaging
 from app.models.vendor_portal import VendorUser
 from app.models.user import ApiKey, TokenBlocklist, PasswordHistory
+from app.models.consignment import (
+    Consignment, ConsignmentPackage, ConsignmentPackageItem,
+    ConsignmentPackageContainer, ConsignmentPackageAcknowledgement,
+    ConsignmentParentPackage, ConsignmentParentPackageChild,
+)
 
 
 async def ensure_api_keys_schema(session: AsyncSession) -> None:
@@ -30,6 +35,81 @@ async def ensure_api_keys_schema(session: AsyncSession) -> None:
     await conn.run_sync(TokenBlocklist.__table__.create, checkfirst=True)
     await conn.run_sync(PasswordHistory.__table__.create, checkfirst=True)
     await conn.run_sync(ApiKey.__table__.create, checkfirst=True)
+
+
+async def ensure_consignment_schema(session: AsyncSession) -> None:
+    """Create consignment pipeline tables if they do not exist.
+
+    Tables created (in dependency order):
+      consignments
+      consignment_packages
+      consignment_package_items
+      consignment_package_containers
+      consignment_package_acknowledgements
+
+    Also ensures the 'delivered' value exists in the mi_status_enum on the
+    material_issues table so consignment acknowledgement can flip MI status.
+    """
+    if not _should_sync("consignment_schema"):
+        return
+    conn = await session.connection()
+    await conn.run_sync(Consignment.__table__.create, checkfirst=True)
+    await conn.run_sync(ConsignmentPackage.__table__.create, checkfirst=True)
+    await conn.run_sync(ConsignmentPackageItem.__table__.create, checkfirst=True)
+    await conn.run_sync(ConsignmentPackageContainer.__table__.create, checkfirst=True)
+    await conn.run_sync(ConsignmentPackageAcknowledgement.__table__.create, checkfirst=True)
+    await conn.run_sync(ConsignmentParentPackage.__table__.create, checkfirst=True)
+    await conn.run_sync(ConsignmentParentPackageChild.__table__.create, checkfirst=True)
+
+    # Add 'delivered' to mi_status_enum if not present (MySQL ALTER COLUMN)
+    try:
+        await conn.execute(text("""
+            ALTER TABLE material_issues
+            MODIFY COLUMN status ENUM(
+                'draft','issued','dispatched','acknowledged',
+                'completed','cancelled','delivered','received','partially_acknowledged'
+            ) DEFAULT 'draft'
+        """))
+    except Exception:
+        pass  # already exists or DB doesn't need it
+
+    # Sync new consignment parent package columns if missing
+    try:
+        columns = {
+            row[0]
+            for row in (await conn.execute(text("""
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_schema = DATABASE()
+                  AND table_name = 'consignments'
+            """))).all()
+        }
+        if "parent_package_code" not in columns:
+            await conn.execute(text("ALTER TABLE consignments ADD COLUMN parent_package_code VARCHAR(100) NULL"))
+        if "parent_package_barcode" not in columns:
+            await conn.execute(text("ALTER TABLE consignments ADD COLUMN parent_package_barcode VARCHAR(500) NULL"))
+        if "receiver_position_code" not in columns:
+            await conn.execute(text("ALTER TABLE consignments ADD COLUMN receiver_position_code VARCHAR(100) NULL"))
+    except Exception:
+        pass
+
+    try:
+        pkg_columns = {
+            row[0]
+            for row in (await conn.execute(text("""
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_schema = DATABASE()
+                  AND table_name = 'consignment_packages'
+            """))).all()
+        }
+        if "parent_package_code" not in pkg_columns:
+            await conn.execute(text("ALTER TABLE consignment_packages ADD COLUMN parent_package_code VARCHAR(100) NULL"))
+        if "parent_package_barcode" not in pkg_columns:
+            await conn.execute(text("ALTER TABLE consignment_packages ADD COLUMN parent_package_barcode VARCHAR(500) NULL"))
+    except Exception:
+        pass
+
 
 
 async def ensure_user_item_permission_schema(session: AsyncSession) -> None:
@@ -1095,7 +1175,7 @@ async def ensure_material_issue_schema(session: AsyncSession) -> None:
     try:
         await conn.execute(text("""
             ALTER TABLE material_issues 
-            MODIFY COLUMN status ENUM('draft', 'issued', 'dispatched', 'acknowledged', 'completed', 'cancelled') DEFAULT 'draft'
+            MODIFY COLUMN status ENUM('draft', 'issued', 'dispatched', 'acknowledged', 'completed', 'cancelled', 'delivered', 'received', 'partially_acknowledged') DEFAULT 'draft'
         """))
     except Exception:
         pass
@@ -1267,3 +1347,59 @@ async def ensure_universal_dispatch_ack_schema(session: AsyncSession) -> None:
         await conn.execute(text("ALTER TABLE dispatch_order_items ADD COLUMN serial_numbers JSON NULL"))
 
 
+async def ensure_search_indexes(session: AsyncSession) -> None:
+    """Create MySQL FULLTEXT indexes for fast search on employees, positions, offices.
+
+    Without these, every search uses a full-table ilike() scan (leading % disables
+    B-tree). FULLTEXT indexes let us use MATCH ... AGAINST (IN BOOLEAN MODE) which
+    is significantly faster on large datasets (5000+ rows).
+
+    Safe to call repeatedly — each ALTER is wrapped in a try/except so it is
+    skipped if the index already exists.
+    """
+    if not _should_sync("search_indexes"):
+        return
+    conn = await session.connection()
+
+    for stmt in [
+        # employees: search by name + employee_code
+        """
+        ALTER TABLE employees
+        ADD FULLTEXT INDEX ft_emp_name_code (name, employee_code)
+        """,
+        # positions: search by name + code + role_name + department
+        """
+        ALTER TABLE positions
+        ADD FULLTEXT INDEX ft_pos_name_code (name, code, role_name, department)
+        """,
+        # offices: search by name + state + district + cluster
+        """
+        ALTER TABLE offices
+        ADD FULLTEXT INDEX ft_office_name (name, state, district, cluster)
+        """,
+    ]:
+        try:
+            await conn.execute(text(stmt))
+        except Exception:
+            pass  # Index already exists — safe to ignore
+
+
+async def ensure_asset_consumable_code_schema(session: AsyncSession) -> None:
+    if not _should_sync("asset_consumable_code_schema"):
+        return
+    import sqlalchemy as sa
+    conn = await session.connection()
+    cols = await conn.run_sync(
+        lambda sync_conn: sa.inspect(sync_conn).get_columns("serial_numbers")
+    )
+    col_names = {c["name"] for c in cols}
+    if "asset_code" not in col_names:
+        try:
+            await conn.execute(text("ALTER TABLE serial_numbers ADD COLUMN asset_code VARCHAR(100) NULL"))
+        except Exception:
+            pass
+    if "consumable_code" not in col_names:
+        try:
+            await conn.execute(text("ALTER TABLE serial_numbers ADD COLUMN consumable_code VARCHAR(100) NULL"))
+        except Exception:
+            pass

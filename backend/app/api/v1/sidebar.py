@@ -72,7 +72,7 @@ _ALL_KEYS: Set[str] = {
     'settings-masters-users', 'settings-masters-user-groups', 'settings-masters-organization-structure',
     'settings-reports-v2', 'settings-reports-system',
     # Logistics
-    'logistics', 'logistics-dashboard', 'logistics-master', 'logistics-dispatch', 'logistics-rfq', 'logistics-so', 'logistics-gate-entry',
+    'logistics', 'logistics-dashboard', 'logistics-master', 'logistics-dispatch', 'logistics-rfq', 'logistics-so', 'logistics-gate-entry', 'logistics-consignments',
 }
 
 
@@ -117,7 +117,7 @@ _ROLE_KEYS = {
         'inventory-stock-balance', 'inventory-stock-ledger',
         'inventory-stock-transfer', 'inventory-stock-audit',
         'inventory-replenishment',
-        'logistics', 'logistics-dashboard', 'logistics-master', 'logistics-dispatch', 'logistics-rfq', 'logistics-so', 'logistics-gate-entry',
+        'logistics', 'logistics-dashboard', 'logistics-master', 'logistics-dispatch', 'logistics-rfq', 'logistics-so', 'logistics-gate-entry', 'logistics-consignments', 'logistics-consignments',
     },
     'warehouse_operator': {
         'lms',

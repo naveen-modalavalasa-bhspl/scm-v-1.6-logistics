@@ -16,7 +16,7 @@ class MaterialIssue(Base):
     issue_date = Column(DateTime, nullable=False)
     department = Column(String(100))
     issued_to = Column(BigInteger, ForeignKey("users.id"))
-    status = Column(Enum("draft", "issued", "dispatched", "acknowledged", "completed", "cancelled", name="mi_status_enum"), default="draft")
+    status = Column(Enum("draft", "issued", "dispatched", "acknowledged", "completed", "cancelled", "delivered", "received", "partially_acknowledged", name="mi_status_enum"), default="draft")
     remarks = Column(Text)
     issued_by = Column(BigInteger)
     dispatched_at = Column(DateTime, nullable=True)

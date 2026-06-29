@@ -37,7 +37,7 @@ const ItemTypes = () => {
   const handleDelete = async (id) => {
     try {
       await api.delete(`/masters/item-types/${id}`);
-      message.success('Item type deactivated');
+      message.success('Item class deactivated');
       setRefreshKey((k) => k + 1);
     } catch (err) {
       message.error(getErrorMessage(err));
@@ -50,10 +50,10 @@ const ItemTypes = () => {
       setSubmitting(true);
       if (editingRow) {
         await api.put(`/masters/item-types/${editingRow.id}`, values);
-        message.success('Item type updated');
+        message.success('Item class updated');
       } else {
         await api.post('/masters/item-types', values);
-        message.success('Item type created');
+        message.success('Item class created');
       }
       setModalOpen(false);
       form.resetFields();
@@ -76,7 +76,7 @@ const ItemTypes = () => {
       render: (_, r) => (
         <Space>
           <Button size="small" icon={<EditOutlined />} onClick={() => handleEdit(r)} />
-          <Popconfirm title="Deactivate this item type?" onConfirm={() => handleDelete(r.id)}>
+          <Popconfirm title="Deactivate this item class?" onConfirm={() => handleDelete(r.id)}>
             <Button size="small" danger icon={<DeleteOutlined />} />
           </Popconfirm>
         </Space>
@@ -86,8 +86,8 @@ const ItemTypes = () => {
 
   return (
     <div>
-      <PageHeader title="Item Types" subtitle="Item type master — referenced by items">
-        <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>Add Item Type</Button>
+      <PageHeader title="Item Classes" subtitle="Item class master — referenced by items">
+        <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>Add Item Class</Button>
       </PageHeader>
       <DataTable
         key={refreshKey}
@@ -95,10 +95,10 @@ const ItemTypes = () => {
         fetchFunction={fetchItemTypes}
         rowKey="id"
         searchPlaceholder="Search by name..."
-        exportFileName="item_types"
+        exportFileName="item_classes"
       />
       <Modal
-        title={editingRow ? 'Edit Item Type' : 'Add Item Type'}
+        title={editingRow ? 'Edit Item Class' : 'Add Item Class'}
         open={modalOpen}
         onCancel={() => {
           if (submitting) return;
@@ -115,7 +115,7 @@ const ItemTypes = () => {
         destroyOnHidden
       >
         <Form form={form} layout="vertical">
-          <Form.Item name="name" label="Type Name" rules={[{ required: true, message: 'Name is required' }]}>
+          <Form.Item name="name" label="Class Name" rules={[{ required: true, message: 'Name is required' }]}>
             <Input placeholder="e.g. medicine" />
           </Form.Item>
           <Form.Item name="description" label="Description">

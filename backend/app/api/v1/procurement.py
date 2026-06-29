@@ -3853,14 +3853,18 @@ async def create_supplier_login(
     if res_existing.scalar_one_or_none():
         raise HTTPException(409, "This vendor already has a portal login. Use the update endpoint to reset password.")
 
-    # Username uniqueness across all vendor users
-    res_u = await db.execute(select(VendorUser).where(VendorUser.username == payload.username))
+    # Normalize username to lowercase and underscores
+    import re as _re
+    username_normalized = _re.sub(r'[^a-zA-Z0-9_]', '_', payload.username.strip()).lower()
+
+    # Username uniqueness across all vendor users (case-insensitive)
+    res_u = await db.execute(select(VendorUser).where(func.lower(VendorUser.username) == username_normalized))
     if res_u.scalar_one_or_none():
         raise HTTPException(409, f"Username '{payload.username}' is already taken")
 
     vu = VendorUser(
         vendor_id=vendor_id,
-        username=payload.username,
+        username=username_normalized,
         email=str(payload.email),
         password_hash=_hash_password(payload.password),
         full_name=payload.full_name or v.contact_person,

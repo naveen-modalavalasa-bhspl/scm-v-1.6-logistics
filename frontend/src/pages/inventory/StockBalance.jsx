@@ -2,6 +2,7 @@ import React, { useState, useCallback, useEffect } from 'react';
 import {
   Button, Card, Row, Col, Select, Switch, Input, InputNumber, Modal, Table, Descriptions,
   message, Tag, Tooltip, Tabs, Space, Typography, Badge, Form, DatePicker, Popover, List,
+  Radio,
 } from 'antd';
 import {
   AppstoreOutlined, WarningOutlined, ClockCircleOutlined,
@@ -79,6 +80,44 @@ const StockBalance = () => {
   const [addStockBatchNumber, setAddStockBatchNumber] = useState('');
   const [addStockMfgDate, setAddStockMfgDate] = useState(null);
   const [addStockExpiryDate, setAddStockExpiryDate] = useState(null);
+
+  const handleDownloadQRCode = (code, record) => {
+    const matCode = record.item_code || '-';
+    const itemName = record.item_name || '-';
+    const batch = record.batch_number || record.batch_name || '-';
+    const wh = record.warehouse_name || '-';
+    const exp = record.expiry_date ? dayjs(record.expiry_date).format('YYYY-MM-DD') : '-';
+    
+    const payload = `Material: ${matCode}\nItem: ${itemName}\nBatch: ${batch}\nCode: ${code}\nWarehouse: ${wh}\nExpiry: ${exp}`;
+    
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.src = `https://bwipjs-api.metafloor.com/?bcid=qrcode&text=${encodeURIComponent(payload)}&scale=4`;
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = 354; // 30mm at 300 DPI
+      canvas.height = 295; // 25mm at 300 DPI
+      const ctx = canvas.getContext('2d');
+      
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      
+      const qrSize = 255;
+      const qrX = Math.floor((canvas.width - qrSize) / 2);
+      const qrY = Math.floor((canvas.height - qrSize) / 2);
+      
+      ctx.drawImage(img, qrX, qrY, qrSize, qrSize);
+      
+      const url = canvas.toDataURL('image/png');
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `qrcode_${code}.png`;
+      a.click();
+    };
+    img.onerror = () => {
+      message.error('Failed to download QR code');
+    };
+  };
 
   const handleAddStock = async () => {
     // BUG-INV-132: guard against double-click. Antd's confirmLoading prevents
@@ -158,6 +197,7 @@ const StockBalance = () => {
   const [drillDownItem, setDrillDownItem] = useState(null);
   const [drillDownData, setDrillDownData] = useState([]);
   const [drillDownLoading, setDrillDownLoading] = useState(false);
+  const [breakdownViewMode, setBreakdownViewMode] = useState('tree');
 
   // Load lookups
   useEffect(() => {
@@ -403,6 +443,52 @@ const StockBalance = () => {
       },
     },
     {
+      title: 'Asset/Consumable Code',
+      dataIndex: 'asset_codes',
+      width: 135,
+      render: (assetCodes, record) => {
+        if (record.item_type !== 'asset' && record.item_type !== 'consumable') return '-';
+        const isAsset = record.item_type === 'asset';
+        const list = isAsset ? (record.asset_codes || []) : (record.consumable_codes || []);
+        if (list.length === 0) return <Text type="secondary">None</Text>;
+        const popoverContent = (
+          <div style={{ maxHeight: 200, overflowY: 'auto', minWidth: 200 }}>
+            <List
+              size="small"
+              dataSource={list}
+              renderItem={(code) => (
+                <List.Item 
+                  style={{ padding: '2px 0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+                >
+                  <Tag color={isAsset ? "cyan" : "orange"}>{code}</Tag>
+                  <Tooltip title="Download QR Code">
+                    <Button 
+                      type="text" 
+                      size="small" 
+                      icon={<DownloadOutlined />} 
+                      onClick={() => handleDownloadQRCode(code, record)} 
+                    />
+                  </Tooltip>
+                </List.Item>
+              )}
+            />
+          </div>
+        );
+        return (
+          <Popover
+            content={popoverContent}
+            title={isAsset ? "Asset Codes" : "Consumable Codes"}
+            trigger="click"
+            placement="bottom"
+          >
+            <Button type="link" size="small" style={{ padding: 0 }}>
+              View ({list.length})
+            </Button>
+          </Popover>
+        );
+      },
+    },
+    {
       title: 'Available Qty',
       dataIndex: 'available_qty',
       width: 110,
@@ -556,6 +642,52 @@ const StockBalance = () => {
       },
     },
     {
+      title: 'Asset/Consumable Code',
+      dataIndex: 'asset_codes',
+      width: 135,
+      render: (assetCodes, record) => {
+        if (record.item_type !== 'asset' && record.item_type !== 'consumable') return '-';
+        const isAsset = record.item_type === 'asset';
+        const list = isAsset ? (record.asset_codes || []) : (record.consumable_codes || []);
+        if (list.length === 0) return <Text type="secondary">None</Text>;
+        const popoverContent = (
+          <div style={{ maxHeight: 200, overflowY: 'auto', minWidth: 200 }}>
+            <List
+              size="small"
+              dataSource={list}
+              renderItem={(code) => (
+                <List.Item 
+                  style={{ padding: '2px 0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+                >
+                  <Tag color={isAsset ? "cyan" : "orange"}>{code}</Tag>
+                  <Tooltip title="Download QR Code">
+                    <Button 
+                      type="text" 
+                      size="small" 
+                      icon={<DownloadOutlined />} 
+                      onClick={() => handleDownloadQRCode(code, record)} 
+                    />
+                  </Tooltip>
+                </List.Item>
+              )}
+            />
+          </div>
+        );
+        return (
+          <Popover
+            content={popoverContent}
+            title={isAsset ? "Asset Codes" : "Consumable Codes"}
+            trigger="click"
+            placement="bottom"
+          >
+            <Button type="link" size="small" style={{ padding: 0 }}>
+              View ({list.length})
+            </Button>
+          </Popover>
+        );
+      },
+    },
+    {
       title: 'UOM',
       dataIndex: 'uom_name',
       width: 80,
@@ -660,6 +792,202 @@ const StockBalance = () => {
     </Space>
   );
 
+  const getDrillDownTreeData = () => {
+    const tree = [];
+    drillDownData.forEach((row) => {
+      const whName = row.warehouse_name || 'No Warehouse';
+      const locName = row.location_name || 'Main Area';
+      const rackName = row.rack_name || 'No Rack';
+      const binName = row.bin_name || row.bin_code || 'No Bin';
+      const batchName = row.batch_number || 'No Batch';
+      
+      let whNode = tree.find(w => w.name === whName);
+      if (!whNode) {
+        whNode = { name: whName, total_qty: 0, locations: [] };
+        tree.push(whNode);
+      }
+      whNode.total_qty += Number(row.total_qty) || 0;
+      
+      let locNode = whNode.locations.find(l => l.name === locName);
+      if (!locNode) {
+        locNode = { name: locName, racks: [] };
+        whNode.locations.push(locNode);
+      }
+      
+      let rackNode = locNode.racks.find(r => r.name === rackName);
+      if (!rackNode) {
+        rackNode = { name: rackName, bins: [] };
+        locNode.racks.push(rackNode);
+      }
+      
+      let binNode = rackNode.bins.find(b => b.name === binName);
+      if (!binNode) {
+        binNode = { name: binName, batches: [] };
+        rackNode.bins.push(binNode);
+      }
+      
+      const isAsset = row.item_type === 'asset';
+      const codes = isAsset ? (row.asset_codes || []) : (row.consumable_codes || []);
+      
+      binNode.batches.push({
+        batch_number: batchName,
+        expiry_date: row.expiry_date,
+        manufacturing_date: row.manufacturing_date,
+        available_qty: row.available_qty,
+        reserved_qty: row.reserved_qty,
+        total_qty: row.total_qty,
+        codes: codes,
+        isAsset: isAsset,
+        rowRef: row
+      });
+    });
+    return tree;
+  };
+
+  const renderTreeBreakdown = () => {
+    const treeData = getDrillDownTreeData();
+    if (treeData.length === 0) {
+      return (
+        <div style={{ padding: '24px 0', textAlign: 'center' }}>
+          <Text type="secondary">No breakdown data available</Text>
+        </div>
+      );
+    }
+    
+    return (
+      <div style={{ marginTop: 16 }}>
+        <List
+          dataSource={treeData}
+          renderItem={(wh) => (
+            <Card 
+              size="small" 
+              title={
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <Text strong style={{ fontSize: 15 }}><AppstoreOutlined style={{ marginRight: 8, color: '#1890ff' }} />{wh.name}</Text>
+                  <Tag color="blue">Total Qty: {formatNumber(wh.total_qty)}</Tag>
+                </div>
+              }
+              style={{ marginBottom: 16, borderRadius: 8, boxShadow: '0 2px 8px rgba(0,0,0,0.02)' }}
+            >
+              {wh.locations.map((loc) => (
+                <div key={loc.name} style={{ marginLeft: 8, borderLeft: '2px solid #f0f0f0', paddingLeft: 12, marginBottom: 12 }}>
+                  <Text type="secondary" style={{ fontSize: 13, display: 'block', marginBottom: 8 }}>
+                    <strong>Location:</strong> {loc.name}
+                  </Text>
+                  
+                  {loc.racks.map((rack) => (
+                    <div key={rack.name} style={{ marginLeft: 12, marginBottom: 8 }}>
+                      <Text style={{ fontSize: 13, display: 'block', marginBottom: 6 }}>
+                        <strong>Rack:</strong> {rack.name}
+                      </Text>
+                      
+                      {rack.bins.map((bin) => (
+                        <div key={bin.name} style={{ marginLeft: 16, marginBottom: 6 }}>
+                          <Text style={{ fontSize: 13, display: 'block', marginBottom: 4 }}>
+                            <strong>Bin:</strong> {bin.name}
+                          </Text>
+                          
+                          {bin.batches.map((batch, bIdx) => {
+                            const payloadBuilder = (code) => {
+                              const matCode = drillDownItem?.item_code || '-';
+                              const itemName = drillDownItem?.item_name || '-';
+                              const bNum = batch.batch_number || '-';
+                              const whName = wh.name || '-';
+                              const expDate = batch.expiry_date ? dayjs(batch.expiry_date).format('YYYY-MM-DD') : '-';
+                              return `Material: ${matCode}\nItem: ${itemName}\nBatch: ${bNum}\nCode: ${code}\nWarehouse: ${whName}\nExpiry: ${expDate}`;
+                            };
+                            
+                            return (
+                              <Card 
+                                size="small" 
+                                key={bIdx} 
+                                style={{ marginLeft: 20, marginBottom: 8, borderRadius: 6, backgroundColor: '#fafafa' }}
+                              >
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
+                                  <div>
+                                    <Tag color="purple">Batch: {batch.batch_number}</Tag>
+                                    {batch.expiry_date && <Tag color="red">Exp: {formatDate(batch.expiry_date)}</Tag>}
+                                  </div>
+                                  <Space>
+                                    <Tag color="green">Avail: {formatNumber(batch.available_qty)}</Tag>
+                                    <Tag color="cyan">Total: {formatNumber(batch.total_qty)}</Tag>
+                                  </Space>
+                                </div>
+                                
+                                {batch.codes.length > 0 ? (
+                                  <div style={{ marginTop: 12 }}>
+                                    <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>
+                                      QR Labels & Codes ({batch.codes.length}):
+                                    </Text>
+                                    <Row gutter={[12, 12]}>
+                                      {batch.codes.map((code) => {
+                                        const codePayload = payloadBuilder(code);
+                                        return (
+                                          <Col xs={24} sm={12} md={8} key={code}>
+                                            <div 
+                                              style={{ 
+                                                display: 'flex', 
+                                                alignItems: 'center', 
+                                                padding: '8px', 
+                                                borderRadius: 6, 
+                                                border: '1px solid #e8e8e8',
+                                                backgroundColor: '#fff',
+                                                justifyContent: 'space-between',
+                                                boxShadow: '0 1px 3px rgba(0,0,0,0.02)'
+                                              }}
+                                            >
+                                              <Space direction="vertical" size={2}>
+                                                <Tag color={batch.isAsset ? "cyan" : "orange"} style={{ margin: 0 }}>
+                                                  {code}
+                                                </Tag>
+                                                <img 
+                                                  src={`https://bwipjs-api.metafloor.com/?bcid=qrcode&text=${encodeURIComponent(codePayload)}&scale=1`} 
+                                                  alt="QR" 
+                                                  style={{ 
+                                                    height: 48, 
+                                                    width: 48, 
+                                                    marginTop: 4,
+                                                    border: '1px solid #eee', 
+                                                    padding: 2, 
+                                                    backgroundColor: '#fff', 
+                                                    borderRadius: 4 
+                                                  }} 
+                                                />
+                                              </Space>
+                                              <Tooltip title="Download QR Label">
+                                                <Button 
+                                                  type="primary" 
+                                                  shape="circle" 
+                                                  icon={<DownloadOutlined />} 
+                                                  size="small" 
+                                                  onClick={() => handleDownloadQRCode(code, batch.rowRef)} 
+                                                />
+                                              </Tooltip>
+                                            </div>
+                                          </Col>
+                                        );
+                                      })}
+                                    </Row>
+                                  </div>
+                                ) : (
+                                  <Text type="secondary" style={{ fontSize: 12 }}>No codes generated for this batch</Text>
+                                )}
+                              </Card>
+                            );
+                          })}
+                        </div>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </Card>
+          )}
+        />
+      </div>
+    );
+  };
+
   return (
     <div>
       <PageHeader title="Stock Balance" subtitle="Real-time stock visibility across all warehouses">
@@ -749,6 +1077,14 @@ const StockBalance = () => {
         footer={null}
         width={1000}
       >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, marginTop: 8 }}>
+          <Text type="secondary">Select layout presentation style for stock balance:</Text>
+          <Radio.Group value={breakdownViewMode} onChange={(e) => setBreakdownViewMode(e.target.value)} size="small">
+            <Radio.Button value="tree">Tree Hierarchy View</Radio.Button>
+            <Radio.Button value="table">Flat Grid View</Radio.Button>
+          </Radio.Group>
+        </div>
+
         {/* Weighted Average Cost (WAC) Valuation card for consumables only */}
         {String(drillDownItem?.item_type || '').toLowerCase().includes('consumable') && drillDownData && drillDownData.length > 0 && (() => {
           let overallTotalValue = 0;
@@ -801,67 +1137,70 @@ const StockBalance = () => {
             </div>
           );
         })()}
-        <Table
-          columns={breakdownColumns}
-          dataSource={drillDownData}
-          rowKey={(r, idx) => r.id || idx}
-          loading={drillDownLoading}
-          pagination={false}
-          scroll={{ x: 1500 }}
-          size="small"
-          style={{ marginTop: 16 }}
-          summary={(pageData) => {
-            if (!pageData || pageData.length === 0) return null;
-            // BUG-INV-121: avoid float drift on stock_value totals by
-            // accumulating in cents (×100) and dividing at the end. Quantities
-            // are similarly accumulated in milli-units (×1000) so 0.001-precise
-            // qty rolls up exactly. Without this the displayed total drifts
-            // by a few paise per ~100 rows.
-            const totalsScaled = pageData.reduce(
-              (acc, row) => ({
-                available: acc.available + Math.round((Number(row.available_qty) || 0) * 1000),
-                reserved: acc.reserved + Math.round((Number(row.reserved_qty) || 0) * 1000),
-                transit: acc.transit + Math.round((Number(row.transit_qty) || 0) * 1000),
-                total: acc.total + Math.round((Number(row.total_qty) || 0) * 1000),
-                valueCents: acc.valueCents + Math.round((Number(row.stock_value) || 0) * 100),
-              }),
-              { available: 0, reserved: 0, transit: 0, total: 0, valueCents: 0 }
-            );
-            const totals = {
-              available: totalsScaled.available / 1000,
-              reserved: totalsScaled.reserved / 1000,
-              transit: totalsScaled.transit / 1000,
-              total: totalsScaled.total / 1000,
-              value: totalsScaled.valueCents / 100,
-            };
-            return (
-              <Table.Summary.Row>
-                <Table.Summary.Cell index={0} colSpan={9}>
-                  <Text strong>Total</Text>
-                </Table.Summary.Cell>
-                <Table.Summary.Cell index={9} align="right">
-                  <Text strong>{formatNumber(totals.available)}</Text>
-                </Table.Summary.Cell>
-                <Table.Summary.Cell index={10} align="right">
-                  <Text strong>{formatNumber(totals.reserved)}</Text>
-                </Table.Summary.Cell>
-                <Table.Summary.Cell index={11} align="right">
-                  <Text strong>{formatNumber(totals.transit)}</Text>
-                </Table.Summary.Cell>
-                <Table.Summary.Cell index={12} align="right">
-                  <Text strong>{formatNumber(totals.total)}</Text>
-                </Table.Summary.Cell>
-                <Table.Summary.Cell index={13} align="right">
-                </Table.Summary.Cell>
-                <Table.Summary.Cell index={14} align="right">
-                  <Text strong>{formatCurrency(totals.value)}</Text>
-                </Table.Summary.Cell>
-                <Table.Summary.Cell index={15} align="right">
-                </Table.Summary.Cell>
-              </Table.Summary.Row>
-            );
-          }}
-        />
+
+        {breakdownViewMode === 'tree' ? renderTreeBreakdown() : (
+          <Table
+            columns={breakdownColumns}
+            dataSource={drillDownData}
+            rowKey={(r, idx) => r.id || idx}
+            loading={drillDownLoading}
+            pagination={false}
+            scroll={{ x: 1500 }}
+            size="small"
+            style={{ marginTop: 16 }}
+            summary={(pageData) => {
+              if (!pageData || pageData.length === 0) return null;
+              // BUG-INV-121: avoid float drift on stock_value totals by
+              // accumulating in cents (×100) and dividing at the end. Quantities
+              // are similarly accumulated in milli-units (×1000) so 0.001-precise
+              // qty rolls up exactly. Without this the displayed total drifts
+              // by a few paise per ~100 rows.
+              const totalsScaled = pageData.reduce(
+                (acc, row) => ({
+                  available: acc.available + Math.round((Number(row.available_qty) || 0) * 1000),
+                  reserved: acc.reserved + Math.round((Number(row.reserved_qty) || 0) * 1000),
+                  transit: acc.transit + Math.round((Number(row.transit_qty) || 0) * 1000),
+                  total: acc.total + Math.round((Number(row.total_qty) || 0) * 1000),
+                  valueCents: acc.valueCents + Math.round((Number(row.stock_value) || 0) * 100),
+                }),
+                { available: 0, reserved: 0, transit: 0, total: 0, valueCents: 0 }
+              );
+              const totals = {
+                available: totalsScaled.available / 1000,
+                reserved: totalsScaled.reserved / 1000,
+                transit: totalsScaled.transit / 1000,
+                total: totalsScaled.total / 1000,
+                value: totalsScaled.valueCents / 100,
+              };
+              return (
+                <Table.Summary.Row>
+                  <Table.Summary.Cell index={0} colSpan={9}>
+                    <Text strong>Total</Text>
+                  </Table.Summary.Cell>
+                  <Table.Summary.Cell index={9} align="right">
+                    <Text strong>{formatNumber(totals.available)}</Text>
+                  </Table.Summary.Cell>
+                  <Table.Summary.Cell index={10} align="right">
+                    <Text strong>{formatNumber(totals.reserved)}</Text>
+                  </Table.Summary.Cell>
+                  <Table.Summary.Cell index={11} align="right">
+                    <Text strong>{formatNumber(totals.transit)}</Text>
+                  </Table.Summary.Cell>
+                  <Table.Summary.Cell index={12} align="right">
+                    <Text strong>{formatNumber(totals.total)}</Text>
+                  </Table.Summary.Cell>
+                  <Table.Summary.Cell index={13} align="right">
+                  </Table.Summary.Cell>
+                  <Table.Summary.Cell index={14} align="right">
+                    <Text strong>{formatCurrency(totals.value)}</Text>
+                  </Table.Summary.Cell>
+                  <Table.Summary.Cell index={15} align="right">
+                  </Table.Summary.Cell>
+                </Table.Summary.Row>
+              );
+            }}
+          />
+        )}
       </Modal>
 
       {/* Add Stock Modal */}

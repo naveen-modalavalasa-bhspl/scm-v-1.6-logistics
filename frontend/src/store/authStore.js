@@ -139,7 +139,8 @@ const useAuthStore = create((set, get) => ({
     // is written (audit trail). Failure to reach the backend must NOT block
     // local logout — we still clear tokens.
     try {
-      await api.post('/auth/logout');
+      const refreshToken = localStorage.getItem('refreshToken');
+      await api.post('/auth/logout', { refresh_token: refreshToken });
     } catch {
       /* network/auth error is fine; proceed with local cleanup */
     }

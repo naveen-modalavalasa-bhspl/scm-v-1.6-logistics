@@ -30,6 +30,66 @@ import('antd').then((m) => { _antdMessage = m.message; }).catch(() => { /* offli
 
 api.interceptors.request.use(
   (config) => {
+    // Rewrite legacy /masters/... URLs to new modular routes to prevent 307 redirects 
+    // which can strip Authorization headers and request bodies on mutating calls.
+    if (config.url && config.url.startsWith('/masters/')) {
+      const path = config.url.substring('/masters/'.length);
+      const pathLower = path.toLowerCase();
+      let targetPrefix = '';
+
+      if (
+        pathLower.startsWith('warehouses') ||
+        pathLower.startsWith('locations') ||
+        pathLower.startsWith('lines') ||
+        pathLower.startsWith('racks') ||
+        pathLower.startsWith('bins')
+      ) {
+        targetPrefix = 'warehouse';
+      } else if (
+        pathLower.startsWith('vendors') ||
+        pathLower.startsWith('vendor-categories') ||
+        pathLower.startsWith('vendor-types') ||
+        pathLower.startsWith('vendor-item-mappings') ||
+        pathLower.startsWith('departments')
+      ) {
+        targetPrefix = 'procurement';
+      } else if (
+        pathLower.startsWith('org-projects') ||
+        pathLower.startsWith('offices') ||
+        pathLower.startsWith('positions') ||
+        pathLower.startsWith('employees') ||
+        pathLower.startsWith('projects') ||
+        pathLower.startsWith('user-groups')
+      ) {
+        targetPrefix = 'users';
+      } else if (
+        pathLower.startsWith('items') ||
+        pathLower.startsWith('uom-categories') ||
+        pathLower.startsWith('uom-conversions') ||
+        pathLower.startsWith('item-uom-conversions') ||
+        pathLower.startsWith('uom') ||
+        pathLower.startsWith('categories') ||
+        pathLower.startsWith('user-material-mappings') ||
+        pathLower.startsWith('user-material-mapping') ||
+        pathLower.startsWith('price-lists') ||
+        pathLower.startsWith('boms') ||
+        pathLower.startsWith('item-types') ||
+        pathLower.startsWith('features') ||
+        pathLower.startsWith('brands') ||
+        pathLower.startsWith('item-attributes') ||
+        pathLower.startsWith('item-attribute-category-mappings') ||
+        pathLower.startsWith('spec-categories') ||
+        pathLower.startsWith('specs') ||
+        pathLower.startsWith('item-specs')
+      ) {
+        targetPrefix = 'inventory';
+      }
+
+      if (targetPrefix) {
+        config.url = `/${targetPrefix}/${path}`;
+      }
+    }
+
     const token = localStorage.getItem('token');
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;

@@ -157,6 +157,8 @@ class SerialNumber(Base):
     status = Column(Enum("available", "issued", "consumed", "returned", "scrapped", name="serial_status_enum"), default="available")
     warehouse_id = Column(BigInteger)
     bin_id = Column(BigInteger)
+    asset_code = Column(String(100), nullable=True)
+    consumable_code = Column(String(100), nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     item = relationship("Item")

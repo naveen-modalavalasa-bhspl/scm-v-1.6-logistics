@@ -51,6 +51,7 @@ class DispatchHeaderBase(BaseModel):
     destination_type: Optional[str] = "USER"
     dispatch_type: Optional[str] = "THIRD_PARTY"
     dispatch_mode: Optional[str] = "direct"
+    material_issue_id: Optional[int] = None
     warehouse_id: Optional[int] = None
     destination_warehouse_id: Optional[int] = None
     destination_user_id: Optional[int] = None

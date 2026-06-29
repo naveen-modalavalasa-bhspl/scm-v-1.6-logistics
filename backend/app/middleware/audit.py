@@ -10,6 +10,27 @@ from app.services.auth_service import verify_access_token
 logger = logging.getLogger(__name__)
 
 
+async def log_activity_background(
+    user_id, module, action, entity_type, entity_id, description, ip_address, user_agent
+):
+    try:
+        async with AsyncSessionLocal() as session:
+            log_entry = ActivityLog(
+                user_id=user_id,
+                module=module,
+                action=action,
+                entity_type=entity_type,
+                entity_id=entity_id,
+                description=description,
+                ip_address=ip_address,
+                user_agent=user_agent,
+            )
+            session.add(log_entry)
+            await session.commit()
+    except Exception as exc:
+        logger.error(f"Background audit logging failed: {exc}")
+
+
 class AuditMiddleware(BaseHTTPMiddleware):
     """Middleware to log API activity for audit trail."""
 
@@ -135,20 +156,52 @@ class AuditMiddleware(BaseHTTPMiddleware):
                             entity_id_value = None
                         break
 
-                async with AsyncSessionLocal() as session:
-                    log_entry = ActivityLog(
-                        user_id=user_id,
-                        module=module,
-                        action=action,
-                        entity_type=module,
-                        entity_id=entity_id_value,
-                        description=f"{request.method} {path} [{response.status_code}] {duration:.3f}s{entity_id_text}",
-                        ip_address=ip_address,
-                        user_agent=user_agent,
-                    )
-                    session.add(log_entry)
-                    await session.commit()
+                from starlette.background import BackgroundTask
+                from fastapi import BackgroundTasks
+
+                task = BackgroundTask(
+                    log_activity_background,
+                    user_id,
+                    module,
+                    action,
+                    module,
+                    entity_id_value,
+                    f"{request.method} {path} [{response.status_code}] {duration:.3f}s{entity_id_text}",
+                    ip_address,
+                    user_agent,
+                )
+
+                if response.background:
+                    if isinstance(response.background, BackgroundTasks):
+                        response.background.add_task(
+                            log_activity_background,
+                            user_id,
+                            module,
+                            action,
+                            module,
+                            entity_id_value,
+                            f"{request.method} {path} [{response.status_code}] {duration:.3f}s{entity_id_text}",
+                            ip_address,
+                            user_agent,
+                        )
+                    else:
+                        bg = BackgroundTasks()
+                        bg.add_task(response.background.func, *response.background.args, **response.background.kwargs)
+                        bg.add_task(
+                            log_activity_background,
+                            user_id,
+                            module,
+                            action,
+                            module,
+                            entity_id_value,
+                            f"{request.method} {path} [{response.status_code}] {duration:.3f}s{entity_id_text}",
+                            ip_address,
+                            user_agent,
+                        )
+                        response.background = bg
+                else:
+                    response.background = task
             except Exception as exc:
-                logger.error(f"Audit logging failed for {request.method} {path}: {exc}")
+                logger.error(f"Audit logging configuration failed for {request.method} {path}: {exc}")
 
         return response

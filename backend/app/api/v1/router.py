@@ -12,11 +12,13 @@ from app.api.v1 import (
     rate_contracts, cycle_count, landed_cost, lms, sidebar, packaging, inward, dispatch, api_keys, external,
     logistics, carrier_auth, carrier_portal,
     vendor_auth, vendor_portal,
+    consignment,
 )
 
 api_router = APIRouter(prefix="/api/v1")
 
 api_router.include_router(packaging.router)
+api_router.include_router(consignment.router, prefix="/consignment", tags=["Consignment & Packaging"])
 api_router.include_router(auth.router, prefix="/auth", tags=["Authentication"])
 api_router.include_router(users.router, prefix="/users", tags=["Users"])
 api_router.include_router(users.router, prefix="/settings/users", tags=["Settings"])

@@ -44,19 +44,26 @@ async def get_items(
             # If they have no matching granular scopes, return empty results
             stmt = stmt.filter(False)
 
-    if getattr(user, "used_api_key", None) and user.used_api_key.linked_user_ids:
-        linked_ids = user.used_api_key.linked_user_ids
-        stmt = stmt.join(
-            UserRole,
-            UserRole.user_id.in_(linked_ids)
-        ).join(
-            RoleItemPermission,
-            (RoleItemPermission.role_id == UserRole.role_id) &
-            (
-                ((RoleItemPermission.entity_type == "item") & (RoleItemPermission.entity_id == Item.id)) |
-                ((RoleItemPermission.entity_type == "item_category") & (RoleItemPermission.entity_id == Item.category_id))
+    linked_ids = getattr(user, "used_api_key", None) and user.used_api_key.linked_user_ids
+    if linked_ids:
+        if isinstance(linked_ids, str):
+            try:
+                import json as _json
+                linked_ids = _json.loads(linked_ids)
+            except Exception:
+                linked_ids = []
+        if linked_ids:
+            stmt = stmt.join(
+                UserRole,
+                UserRole.user_id.in_(linked_ids)
+            ).join(
+                RoleItemPermission,
+                (RoleItemPermission.role_id == UserRole.role_id) &
+                (
+                    ((RoleItemPermission.entity_type == "item") & (RoleItemPermission.entity_id == Item.id)) |
+                    ((RoleItemPermission.entity_type == "item_category") & (RoleItemPermission.entity_id == Item.category_id))
+                )
             )
-        )
     
     result = await db.execute(stmt.limit(limit).offset(offset))
     items = result.scalars().unique().all()
@@ -124,20 +131,27 @@ async def get_stock(
     is_item_joined = False
     
     # 1. User Warehouse/Role Item Filtering (if linked_user_ids is present)
-    if getattr(user, "used_api_key", None) and user.used_api_key.linked_user_ids:
-        linked_ids = user.used_api_key.linked_user_ids
-        stmt = stmt.join(Item, Item.id == StockBalance.item_id).join(
-            UserRole,
-            UserRole.user_id.in_(linked_ids)
-        ).join(
-            RoleItemPermission,
-            (RoleItemPermission.role_id == UserRole.role_id) &
-            (
-                ((RoleItemPermission.entity_type == "item") & (RoleItemPermission.entity_id == Item.id)) |
-                ((RoleItemPermission.entity_type == "item_category") & (RoleItemPermission.entity_id == Item.category_id))
+    linked_ids = getattr(user, "used_api_key", None) and user.used_api_key.linked_user_ids
+    if linked_ids:
+        if isinstance(linked_ids, str):
+            try:
+                import json as _json
+                linked_ids = _json.loads(linked_ids)
+            except Exception:
+                linked_ids = []
+        if linked_ids:
+            stmt = stmt.join(Item, Item.id == StockBalance.item_id).join(
+                UserRole,
+                UserRole.user_id.in_(linked_ids)
+            ).join(
+                RoleItemPermission,
+                (RoleItemPermission.role_id == UserRole.role_id) &
+                (
+                    ((RoleItemPermission.entity_type == "item") & (RoleItemPermission.entity_id == Item.id)) |
+                    ((RoleItemPermission.entity_type == "item_category") & (RoleItemPermission.entity_id == Item.category_id))
+                )
             )
-        )
-        is_item_joined = True
+            is_item_joined = True
 
     # 2. Granular Scopes Filtering (based on Item Types only)
     # Only filter if "inventory:stock-balance:read" is NOT in scopes

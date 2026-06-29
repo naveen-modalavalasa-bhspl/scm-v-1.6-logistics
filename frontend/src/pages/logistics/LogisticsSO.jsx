@@ -10,7 +10,9 @@ import {
   FileDoneOutlined,
   EnvironmentOutlined,
   EyeOutlined,
-  SendOutlined
+  SendOutlined,
+  BarcodeOutlined,
+  GiftOutlined
 } from '@ant-design/icons';
 import api from '../../config/api';
 import dayjs from 'dayjs';
@@ -37,6 +39,8 @@ export default function LogisticsSO() {
 
   const [linkedDispatch, setLinkedDispatch] = useState(null);
   const [searchingDispatch, setSearchingDispatch] = useState(false);
+  const [consignmentPackages, setConsignmentPackages] = useState([]);
+  const [consignmentAcks, setConsignmentAcks] = useState([]);
 
   const [activeTransporterId, setActiveTransporterId] = useState(null);
 
@@ -118,9 +122,14 @@ export default function LogisticsSO() {
     const findLinkedDispatch = async () => {
       if (!selectedVehicle || !selectedVehicle.vehicle_registration_no) {
         setLinkedDispatch(null);
+        setConsignmentPackages([]);
+        setConsignmentAcks([]);
         return;
       }
       setSearchingDispatch(true);
+      // Reset consignment state before fetching
+      setConsignmentPackages([]);
+      setConsignmentAcks([]);
       try {
         // Search in outbound dispatch orders
         const res = await api.get('/outbound/dispatch-orders', { params: { page_size: 100 } });
@@ -129,16 +138,51 @@ export default function LogisticsSO() {
           d.vehicle_number?.trim().toLowerCase() === selectedVehicle.vehicle_registration_no?.trim().toLowerCase()
         );
         
+        let dispatchData = null;
         if (matched) {
           setLinkedDispatch(matched);
+          dispatchData = matched;
         } else {
-          // Fallback to warehouse dispatches
-          const whRes = await api.get('/warehouse/dispatch', { params: { search: selectedVehicle.vehicle_registration_no } });
-          const whItems = whRes.data?.items || whRes.data?.data || whRes.data || [];
-          if (whItems.length > 0) {
-            setLinkedDispatch(whItems[0]);
-          } else {
+          // Fallback: search MDOs by handover vehicle number
+          try {
+            const mdoRes = await api.get('/logistics/mdo');
+            const mdoList = mdoRes.data || [];
+            const matchedMdo = mdoList.find(m => 
+              m.handover?.vehicle_no?.trim().toLowerCase() === selectedVehicle.vehicle_registration_no?.trim().toLowerCase()
+            );
+            if (matchedMdo) {
+              setLinkedDispatch(matchedMdo);
+              dispatchData = matchedMdo;
+            } else {
+              setLinkedDispatch(null);
+            }
+          } catch (e2) {
+            console.warn('Failed to search MDOs for fallback:', e2);
             setLinkedDispatch(null);
+          }
+        }
+        // Fetch consignment packages for the linked dispatch (runs for both matched & fallback)
+        if (dispatchData) {
+          const miId = dispatchData.material_issue_id;
+          if (miId) {
+            try {
+              const conRes = await api.get('/consignment/by-mi/' + miId);
+              if (conRes.data && conRes.data.length > 0) {
+                const conId = conRes.data[0].id;
+                const [conDetailRes, ackRes] = await Promise.all([
+                  api.get('/consignment/' + conId),
+                  api.get('/consignment/' + conId + '/acknowledgements')
+                ]);
+                if (conDetailRes.data && conDetailRes.data.packages) {
+                  setConsignmentPackages(conDetailRes.data.packages);
+                }
+                if (ackRes.data) {
+                  setConsignmentAcks(ackRes.data);
+                }
+              }
+            } catch (e2) {
+              console.warn('Failed to fetch consignment:', e2);
+            }
           }
         }
       } catch (err) {
@@ -772,6 +816,93 @@ export default function LogisticsSO() {
                             <div style={{ color: '#64748b', fontSize: '14px' }}>Locating associated SCM Dispatch Order...</div>
                           </div>
                         </div>
+                      ) : consignmentPackages.length > 0 ? (
+                        <div style={{ padding: '8px' }}>
+                          <Alert
+                            message={<span style={{ fontWeight: 600 }}><GiftOutlined /> Consignment Packages Ready for Acknowledgment</span>}
+                            description={
+                              <div style={{ marginTop: '8px', fontSize: '12px' }}>
+                                <p>Scan barcodes below to acknowledge delivery package by package.</p>
+                                {consignmentPackages.map((pkg, idx) => (
+                                  <Card
+                                    key={pkg.id}
+                                    size="small"
+                                    style={{ marginBottom: '8px', borderRadius: '8px', border: '1px solid #e2e8f0' }}
+                                    title={
+                                      <Space>
+                                        <Tag color="blue" style={{ fontFamily: 'monospace' }}>#{idx + 1}</Tag>
+                                        <span style={{ fontFamily: 'monospace', fontWeight: 600 }}>{pkg.package_number}</span>
+                                        <Tag>{pkg.package_type}</Tag>
+                                        <Tag color={pkg.status === 'RECEIVED' ? 'success' : 'default'}>
+                                          {pkg.status?.replace('_', ' ')}
+                                        </Tag>
+                                      </Space>
+                                    }
+                                    extra={
+                                      <Space>
+                                        {pkg.status !== 'RECEIVED' && (
+                                          <Button size="small" icon={<BarcodeOutlined />}
+                                            onClick={() => window.open('/consignment/package/' + pkg.id + '/label', '_blank')}>
+                                            View Barcode
+                                          </Button>
+                                        )}
+                                      </Space>
+                                    }
+                                  >
+                                    <Row gutter={[12, 8]}>
+                                      <Col span={8}><strong>Weight:</strong> {pkg.gross_weight_kg || 0} KG</Col>
+                                      <Col span={8}><strong>Seal:</strong> {pkg.seal_number || 'N/A'}</Col>
+                                      <Col span={8}><strong>Items:</strong> {pkg.material_count || 0}</Col>
+                                    </Row>
+                                    {pkg.items && pkg.items.length > 0 && (
+                                      <Table
+                                        size="small"
+                                        pagination={false}
+                                        rowKey="id"
+                                        style={{ marginTop: '8px' }}
+                                        dataSource={pkg.items}
+                                        columns={[
+                                          { title: 'Code', dataIndex: 'material_code', render: t => <span style={{ fontFamily: 'monospace', fontSize: '11px' }}>{t}</span> },
+                                          { title: 'Material', dataIndex: 'material_name', render: t => <span style={{ fontSize: '11px' }}>{t}</span> },
+                                          { title: 'Packed', dataIndex: 'quantity_packed', render: val => <b>{val}</b> },
+                                          { title: 'Received', dataIndex: 'quantity_received', render: val => val ? <span style={{ color: '#16a34a', fontWeight: 600 }}>{val}</span> : <span style={{ color: '#94a3b8' }}>--</span> },
+                                        ]}
+                                      />
+                                    )}
+                                  </Card>
+                                ))}
+                              </div>
+                            }
+                            type="success"
+                            showIcon
+                          />
+                          {consignmentAcks.length > 0 && (
+                            <Card
+                              size="small"
+                              title={<span style={{ fontSize: '12px', fontWeight: 700 }}>Package Acknowledgements</span>}
+                              style={{ marginTop: '12px', borderRadius: '8px' }}
+                            >
+                              <Table
+                                size="small"
+                                pagination={false}
+                                rowKey="id"
+                                dataSource={consignmentAcks}
+                                columns={[
+                                  { title: 'Package', dataIndex: 'package_number', render: t => <span style={{ fontFamily: 'monospace', fontWeight: 600 }}>{t}</span> },
+                                  { title: 'Status', dataIndex: 'acknowledgement_status', render: t => <Tag color={t === 'ACCEPTED' ? 'success' : 'warning'}>{t}</Tag> },
+                                  { title: 'By', dataIndex: 'acknowledged_by_name', render: t => t || '--' },
+                                  { title: 'Condition', dataIndex: 'packaging_condition', render: t => t || '--' },
+                                ]}
+                              />
+                            </Card>
+                          )}
+                          <Divider />
+                          <Button type="primary" icon={<CheckCircleOutlined />} block
+                            onClick={() => window.open('/logistics/dispatch-orders/' + (linkedDispatch?.dispatch_id || linkedDispatch?.dispatch_number || linkedDispatch?.mdo_number || linkedDispatch?.id) + '/acknowledge', '_self')}
+                            style={{ marginTop: '12px' }}>
+                            Proceed to Acknowledge All Packages
+                          </Button>
+                        </div>
                       ) : linkedDispatch ? (
                         <div style={{ padding: '8px' }}>
                           {linkedDispatch.status === 'acknowledged' ? (
@@ -782,7 +913,7 @@ export default function LogisticsSO() {
                                   <p>This shipment was securely signed off and verified using our geofenced Touch-Signature portal.</p>
                                   <div style={{ background: '#f0fdf4', padding: '12px', borderRadius: '6px', border: '1px solid #bbf7d0', marginBottom: '16px' }}>
                                     <Row gutter={[16, 8]}>
-                                      <Col span={12}>Dispatch ID: <strong>{linkedDispatch.dispatch_number || linkedDispatch.dispatch_id}</strong></Col>
+                                      <Col span={12}>Dispatch ID: <strong>{linkedDispatch.dispatch_number || linkedDispatch.dispatch_id || linkedDispatch.mdo_number}</strong></Col>
                                       <Col span={12}>Status: <Tag color="success">Acknowledged</Tag></Col>
                                       <Col span={12}>Receiver Name: <strong>{linkedDispatch.delivery_acknowledged_by_name || 'N/A'}</strong></Col>
                                       <Col span={12}>Date: <strong>{linkedDispatch.delivery_acknowledged_at ? dayjs(linkedDispatch.delivery_acknowledged_at).format('DD/MM/YYYY HH:mm') : 'N/A'}</strong></Col>
@@ -808,10 +939,10 @@ export default function LogisticsSO() {
                               message={<span style={{ fontWeight: 600 }}>Linked SCM Dispatch Order Found!</span>}
                               description={
                                 <div style={{ marginTop: '8px' }}>
-                                  <p>We have successfully matched this vehicle to active SCM dispatch <strong>{linkedDispatch.dispatch_number || linkedDispatch.dispatch_id}</strong>. Receipt verification must be completed via the new Universal Evidence-Based Flow.</p>
+                                  <p>We have successfully matched this vehicle to active SCM dispatch <strong>{linkedDispatch.dispatch_number || linkedDispatch.dispatch_id || linkedDispatch.mdo_number}</strong>. Receipt verification must be completed via the new Universal Evidence-Based Flow.</p>
                                   <div style={{ background: '#f8fafc', padding: '12px', borderRadius: '6px', border: '1px solid #cbd5e1', marginBottom: '16px', fontSize: '12px' }}>
                                     <Row gutter={[16, 8]}>
-                                      <Col span={12}>Dispatch ID: <strong style={{ color: '#481890' }}>{linkedDispatch.dispatch_number || linkedDispatch.dispatch_id}</strong></Col>
+                                      <Col span={12}>Dispatch ID: <strong style={{ color: '#481890' }}>{linkedDispatch.dispatch_number || linkedDispatch.dispatch_id || linkedDispatch.mdo_number}</strong></Col>
                                       <Col span={12}>Status: <Tag color="orange">{linkedDispatch.status}</Tag></Col>
                                       <Col span={12}>Destination Type: <strong>{linkedDispatch.destination_type || 'USER'}</strong></Col>
                                       <Col span={12}>Shipment Type: <strong>{linkedDispatch.dispatch_type || 'THIRD_PARTY'}</strong></Col>

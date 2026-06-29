@@ -12,7 +12,7 @@ from app.models.user import User, UserRole, Role, UserProject, UserWarehouse, To
 from app.models.warehouse import Warehouse
 from app.schemas.auth import (
     LoginRequest, TokenResponse, UserCreate, UserResponse,
-    ChangePassword, RefreshTokenRequest, RoleInfo, UserPositionInfo,
+    ChangePassword, RefreshTokenRequest, RoleInfo, UserPositionInfo, LogoutRequest,
 )
 from app.services.auth_service import (
     hash_password, verify_password, create_access_token,
@@ -89,48 +89,36 @@ else:
     limiter = Limiter(key_func=_client_ip, storage_uri=_RATE_LIMIT_STORAGE)
 
 
-async def _resolve_primary_warehouse(db: AsyncSession, user_id: int):
+async def _resolve_primary_warehouse(db: AsyncSession, user_id: int, active_role_id: Optional[int] = None):
     """Return (warehouse_id, warehouse_name) of the user's first
     `user_warehouses` assignment, or (None, None) if none.
 
     Prioritize warehouse mapping linked to the user's current active_role_id.
     """
-    user_res = await db.execute(select(User.active_role_id).where(User.id == user_id))
-    active_role_id = user_res.scalar_one_or_none()
-
     stmt = (
-        select(UserWarehouse.warehouse_id, Warehouse.name)
+        select(UserWarehouse.warehouse_id, Warehouse.name, UserWarehouse.role_id)
         .join(Warehouse, Warehouse.id == UserWarehouse.warehouse_id)
         .where(UserWarehouse.user_id == user_id)
+        .order_by(UserWarehouse.id.asc())
     )
+    rows = (await db.execute(stmt)).all()
+
+    if not rows:
+        return None, None
 
     if active_role_id is not None:
         # Try to find a warehouse mapped to the active role
-        row = (await db.execute(
-            stmt.where(UserWarehouse.role_id == active_role_id)
-            .order_by(UserWarehouse.id.asc())
-            .limit(1)
-        )).first()
-        if row is not None:
-            return row[0], row[1]
+        for row in rows:
+            if row[2] == active_role_id:
+                return row[0], row[1]
 
         # Fallback to a warehouse mapped to no specific role (role_id is null)
-        row = (await db.execute(
-            stmt.where(UserWarehouse.role_id.is_(None))
-            .order_by(UserWarehouse.id.asc())
-            .limit(1)
-        )).first()
-        if row is not None:
-            return row[0], row[1]
+        for row in rows:
+            if row[2] is None:
+                return row[0], row[1]
 
     # Final fallback: just get the first warehouse mapped to this user
-    row = (await db.execute(
-        stmt.order_by(UserWarehouse.id.asc())
-        .limit(1)
-    )).first()
-    if row is None:
-        return None, None
-    return row[0], row[1]
+    return rows[0][0], rows[0][1]
 
 
 # BUG-AUTH-002: tight prod default was 10/min, blew up multi-role UAT testing
@@ -159,12 +147,18 @@ async def login(
     # case-sensitive DB collations can still log in by typing their email or
     # username with different capitalisation than the stored row.
     ident_lower = identifier.lower()
+    import re as _re
+    ident_normalized = _re.sub(r'[^a-zA-Z0-9_]', '_', identifier).lower()
     result = await db.execute(
         select(User)
-        .options(selectinload(User.roles).selectinload(UserRole.role))
+        .options(
+            selectinload(User.roles).selectinload(UserRole.role),
+            selectinload(User.employee)
+        )
         .where(
             (func.lower(User.username) == ident_lower)
             | (func.lower(User.email) == ident_lower)
+            | (func.lower(User.username) == ident_normalized)
         )
     )
     user = result.scalar_one_or_none()
@@ -178,7 +172,10 @@ async def login(
             select(User)
             .join(Employee, Employee.id == User.employee_id)
             .join(Position, Position.id == Employee.position_id)
-            .options(selectinload(User.roles).selectinload(UserRole.role))
+            .options(
+                selectinload(User.roles).selectinload(UserRole.role),
+                selectinload(User.employee)
+            )
             .where(
                 (func.lower(Position.code) == normalized_identifier)
                 | (position_label == normalized_identifier)
@@ -225,41 +222,36 @@ async def login(
         # identifier so security can see WHICH account was being probed.
         try:
             from app.models.system import ActivityLog
-            from app.database import AsyncSessionLocal
             ip = request.headers.get("x-forwarded-for", "").split(",")[0].strip() or (
                 request.client.host if request.client else None
             )
             ua = request.headers.get("user-agent", "")[:500]
-            async with AsyncSessionLocal() as audit_db:
-                audit_db.add(ActivityLog(
-                    user_id=user.id if user else None,
-                    module="auth",
-                    action="login_failed",
-                    entity_type="user",
-                    entity_id=user.id if user else None,
-                    description=f"Failed login attempt for username='{identifier[:100]}'",
-                    ip_address=ip,
-                    user_agent=ua,
-                ))
-                await audit_db.commit()
+            db.add(ActivityLog(
+                user_id=user.id if user else None,
+                module="auth",
+                action="login_failed",
+                entity_type="user",
+                entity_id=user.id if user else None,
+                description=f"Failed login attempt for username='{identifier[:100]}'",
+                ip_address=ip,
+                user_agent=ua,
+            ))
         except Exception:
             pass
         # BUG-AUTH-001 (Wave 5): increment failed counter and lock if we hit
-        # the threshold. Use a separate session so the increment commits
-        # even though we're about to raise.
+        # the threshold. Reuse the request session to avoid connection pool exhaustion.
         if user is not None:
             try:
-                from app.database import AsyncSessionLocal
-                async with AsyncSessionLocal() as lock_db:
-                    fresh = (await lock_db.execute(select(User).where(User.id == user.id))).scalar_one_or_none()
-                    if fresh is not None:
-                        fresh.failed_login_attempts = (fresh.failed_login_attempts or 0) + 1
-                        if fresh.failed_login_attempts >= LOCKOUT_THRESHOLD:
-                            from datetime import timedelta as _td
-                            fresh.locked_until = datetime.now(timezone.utc) + _td(minutes=LOCKOUT_MINUTES)
-                        await lock_db.commit()
+                user.failed_login_attempts = (user.failed_login_attempts or 0) + 1
+                if user.failed_login_attempts >= LOCKOUT_THRESHOLD:
+                    from datetime import timedelta as _td
+                    user.locked_until = datetime.now(timezone.utc) + _td(minutes=LOCKOUT_MINUTES)
             except Exception:
                 pass
+        try:
+            await db.commit()
+        except Exception:
+            await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid username or password",
@@ -310,16 +302,18 @@ async def login(
         pass
 
     await sync_user_position_role(db, user)
-    user = (
-        await db.execute(
-            select(User)
-            .options(
-                selectinload(User.roles).selectinload(UserRole.role),
-                selectinload(User.employee)
+    role_added = any(isinstance(obj, UserRole) and obj.user_id == user.id for obj in db.new)
+    if role_added:
+        user = (
+            await db.execute(
+                select(User)
+                .options(
+                    selectinload(User.roles).selectinload(UserRole.role),
+                    selectinload(User.employee)
+                )
+                .where(User.id == user.id)
             )
-            .where(User.id == user.id)
-        )
-    ).scalar_one()
+        ).scalar_one()
 
     role_list = [RoleInfo(id=ur.role.id, code=ur.role.code, name=ur.role.name) for ur in user.roles if ur.role] if user.roles else []
     employee_position_id = user.employee.position_id if user.employee else None
@@ -347,7 +341,7 @@ async def login(
     if login_active_role is None:
         login_active_role = user.user_type
 
-    primary_wh_id, primary_wh_name = await _resolve_primary_warehouse(db, user.id)
+    primary_wh_id, primary_wh_name = await _resolve_primary_warehouse(db, user.id, user.active_role_id)
 
     return TokenResponse(
         access_token=access_token,
@@ -409,16 +403,19 @@ async def get_me(
 ):
     """Get current user profile."""
     await sync_user_position_role(db, current_user)
-    current_user = (
-        await db.execute(
-            select(User)
-            .options(
-                selectinload(User.roles).selectinload(UserRole.role),
-                selectinload(User.employee)
+    from sqlalchemy import inspect
+    role_added = any(isinstance(obj, UserRole) and obj.user_id == current_user.id for obj in db.new)
+    if role_added or 'employee' in inspect(current_user).unloaded:
+        current_user = (
+            await db.execute(
+                select(User)
+                .options(
+                    selectinload(User.roles).selectinload(UserRole.role),
+                    selectinload(User.employee)
+                )
+                .where(User.id == current_user.id)
             )
-            .where(User.id == current_user.id)
-        )
-    ).scalar_one()
+        ).scalar_one()
 
     role_list = [RoleInfo(id=ur.role.id, code=ur.role.code, name=ur.role.name) for ur in current_user.roles if ur.role] if current_user.roles else []
     employee_position_id = current_user.employee.position_id if current_user.employee else None
@@ -442,7 +439,7 @@ async def get_me(
     if active_role_code is None:
         active_role_code = current_user.user_type
 
-    primary_wh_id, primary_wh_name = await _resolve_primary_warehouse(db, current_user.id)
+    primary_wh_id, primary_wh_name = await _resolve_primary_warehouse(db, current_user.id, current_user.active_role_id)
 
     return UserResponse(
         id=current_user.id,
@@ -560,6 +557,7 @@ async def change_password(
 @router.post("/logout")
 async def logout(
     request: Request,
+    payload: Optional[LogoutRequest] = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -576,8 +574,8 @@ async def logout(
     if raw_token:
         from app.services.auth_service import decode_token
         token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
-        payload = decode_token(raw_token) or {}
-        exp_ts = payload.get("exp")
+        token_payload = decode_token(raw_token) or {}
+        exp_ts = token_payload.get("exp")
         exp_dt = None
         if exp_ts:
             try:
@@ -586,10 +584,10 @@ async def logout(
                 exp_dt = None
         try:
             db.add(TokenBlocklist(
-                jti=payload.get("jti"),
+                jti=token_payload.get("jti"),
                 token_hash=token_hash,
                 user_id=current_user.id,
-                token_type=payload.get("type", "access"),
+                token_type=token_payload.get("type", "access"),
                 expires_at=exp_dt,
                 reason="logout",
             ))
@@ -600,6 +598,33 @@ async def logout(
         except Exception:
             # Never let blocklist failure block logout. The activity-log
             # below still records the logout.
+            await db.rollback()
+
+    if payload and payload.refresh_token:
+        from app.services.auth_service import decode_token
+        rt = payload.refresh_token.strip()
+        rt_hash = hashlib.sha256(rt.encode("utf-8")).hexdigest()
+        rt_payload = decode_token(rt) or {}
+        rt_exp_ts = rt_payload.get("exp")
+        rt_exp_dt = None
+        if rt_exp_ts:
+            try:
+                rt_exp_dt = datetime.fromtimestamp(int(rt_exp_ts), tz=timezone.utc).replace(tzinfo=None)
+            except Exception:
+                rt_exp_dt = None
+        try:
+            db.add(TokenBlocklist(
+                jti=rt_payload.get("jti"),
+                token_hash=rt_hash,
+                user_id=current_user.id,
+                token_type="refresh",
+                expires_at=rt_exp_dt,
+                reason="logout",
+            ))
+            await db.flush()
+        except IntegrityError:
+            await db.rollback()
+        except Exception:
             await db.rollback()
 
     try:
@@ -627,6 +652,19 @@ async def logout(
 @limiter.limit("10/minute")
 async def refresh_token(request: Request, payload: RefreshTokenRequest, db: AsyncSession = Depends(get_db)):
     """Refresh access token using refresh token."""
+    # Check if refresh token has been blocklisted/revoked
+    import hashlib
+    from app.models.user import TokenBlocklist
+    rt_hash = hashlib.sha256(payload.refresh_token.encode("utf-8")).hexdigest()
+    bl_res = await db.execute(
+        select(TokenBlocklist.id).where(TokenBlocklist.token_hash == rt_hash).limit(1)
+    )
+    if bl_res.scalar_one_or_none() is not None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh token has been revoked",
+        )
+
     # BUG-AUTH-039 fix: distinguish "expired" from "malformed/invalid" so the
     # client can decide between forcing a re-login vs surfacing a generic
     # error. We don't leak detail beyond the existing two states.

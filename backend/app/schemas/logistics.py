@@ -151,6 +151,7 @@ class DispatchMaterialResponse(BaseModel):
     material_id: int
     material_code: Optional[str] = None
     material_name: Optional[str] = None
+    material_type: Optional[str] = None
     quantity: float
     unit_of_measure: str
     total_weight_kg: float

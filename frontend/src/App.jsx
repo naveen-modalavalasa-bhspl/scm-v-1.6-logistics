@@ -208,6 +208,7 @@ const LogisticsMaster = lazy(() => import('./pages/logistics/LogisticsMaster'));
 const LogisticsDispatch = lazy(() => import('./pages/logistics/LogisticsDispatch'));
 const LogisticsRfq = lazy(() => import('./pages/logistics/LogisticsRfq'));
 const LogisticsSO = lazy(() => import('./pages/logistics/LogisticsSO'));
+const LogisticsConsignment = lazy(() => import('./pages/logistics/LogisticsConsignment'));
 
 /* Carrier Portal (transporter self-service) */
 const CarrierPortal = lazy(() => import('./pages/carrier/CarrierPortal'));
@@ -718,6 +719,7 @@ const App = () => {
             <Route path="/logistics/gate-entry" element={<KeyRoute requiredKey="logistics-gate-entry"><GateEntry /></KeyRoute>} />
             <Route path="/logistics/gate-entry/new" element={<PermissionRoute module="logistics"><GateEntryForm /></PermissionRoute>} />
             <Route path="/logistics/gate-entry/:id" element={<PermissionRoute module="logistics"><GateEntryForm /></PermissionRoute>} />
+            <Route path="/logistics/consignments" element={<KeyRoute requiredKey="logistics-consignments"><LogisticsConsignment /></KeyRoute>} />
 
 
             {/* Settings (gated by 'settings' permission; profile/change-password/delegations always allowed) */}

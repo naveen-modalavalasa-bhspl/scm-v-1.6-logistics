@@ -42,6 +42,11 @@ export const STATUS_COLORS = {
   loaded: '#52c41a',
   skipped: '#8c8c8c',
   released: '#eb2f96',
+  consignment_received: '#722ed1',
+  partially_acknowledged: '#fa8c16',
+  acknowledged: '#52c41a',
+  unpacked: '#52c41a',
+  partially_unpacked: '#fa8c16',
   // Priority levels
   low: '#52c41a',
   normal: '#8c8c8c',
@@ -102,6 +107,11 @@ export const STATUS_LABELS = {
   loaded: 'Loaded',
   skipped: 'Skipped',
   released: 'Released',
+  consignment_received: 'Consignment Received',
+  partially_acknowledged: 'Partially Acknowledged',
+  acknowledged: 'Acknowledged',
+  unpacked: 'Unpacked',
+  partially_unpacked: 'Partially Unpacked',
   // Priority levels
   low: 'Low',
   normal: 'Normal',
@@ -235,6 +245,7 @@ export const MENU_CONFIG = [
       { key: 'logistics-dispatch', label: 'Dispatch Plans', path: '/logistics/dispatch' },
       { key: 'logistics-rfq', label: 'RFQ Bidding', path: '/logistics/rfq' },
       { key: 'logistics-so', label: 'Service Orders', path: '/logistics/so' },
+      { key: 'logistics-consignments', label: 'Consignments', path: '/logistics/consignments' },
     ],
   },
   {

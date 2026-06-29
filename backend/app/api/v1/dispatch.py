@@ -228,17 +228,27 @@ async def sync_mdos_to_dispatches(db: AsyncSession):
             select(LogisticsMainDispatchOrder)
             .outerjoin(
                 DispatchOrder,
-                collate(DispatchOrder.dispatch_number, "utf8mb4_unicode_ci") == collate(LogisticsMainDispatchOrder.mdo_number, "utf8mb4_unicode_ci")
+                or_(
+                    collate(DispatchOrder.dispatch_number, "utf8mb4_unicode_ci") == collate(LogisticsMainDispatchOrder.mdo_number, "utf8mb4_unicode_ci"),
+                    and_(
+                        DispatchOrder.material_issue_id == LogisticsMainDispatchOrder.material_issue_id,
+                        DispatchOrder.material_issue_id.is_not(None)
+                    )
+                )
             )
             .where(
-                LogisticsMainDispatchOrder.status.in_(["DISPATCHED", "IN_TRANSIT", "COMPLETED", "ACKNOWLEDGED"]),
+                LogisticsMainDispatchOrder.status.in_(["DISPATCHED", "IN_TRANSIT", "DELIVERED", "COMPLETED", "ACKNOWLEDGED", "PARTIALLY_RECEIVED", "CONSIGNMENT_RECEIVED", "PARTIALLY_ACKNOWLEDGED"]),
                 or_(
                     DispatchOrder.id.is_(None),
                     and_(LogisticsMainDispatchOrder.status == "DISPATCHED", collate(DispatchOrder.status, "utf8mb4_unicode_ci") != "dispatched"),
                     and_(LogisticsMainDispatchOrder.status == "IN_TRANSIT", collate(DispatchOrder.status, "utf8mb4_unicode_ci") != "in_transit"),
                     and_(LogisticsMainDispatchOrder.status == "TRANSPORTER_ACKNOWLEDGED", collate(DispatchOrder.status, "utf8mb4_unicode_ci") != "in_transit"),
-                    and_(LogisticsMainDispatchOrder.status == "COMPLETED", collate(DispatchOrder.status, "utf8mb4_unicode_ci") != "delivered"),
+                    and_(LogisticsMainDispatchOrder.status == "DELIVERED", collate(DispatchOrder.status, "utf8mb4_unicode_ci") != "delivered"),
+                    and_(LogisticsMainDispatchOrder.status == "COMPLETED", collate(DispatchOrder.status, "utf8mb4_unicode_ci") != "acknowledged"),
                     and_(LogisticsMainDispatchOrder.status == "ACKNOWLEDGED", collate(DispatchOrder.status, "utf8mb4_unicode_ci") != "acknowledged"),
+                    and_(LogisticsMainDispatchOrder.status == "PARTIALLY_RECEIVED", collate(DispatchOrder.status, "utf8mb4_unicode_ci") != "partially_acknowledged"),
+                    and_(LogisticsMainDispatchOrder.status == "CONSIGNMENT_RECEIVED", collate(DispatchOrder.status, "utf8mb4_unicode_ci") != "consignment_received"),
+                    and_(LogisticsMainDispatchOrder.status == "PARTIALLY_ACKNOWLEDGED", collate(DispatchOrder.status, "utf8mb4_unicode_ci") != "partially_acknowledged"),
                     collate(LogisticsMainDispatchOrder.dispatch_mode, "utf8mb4_unicode_ci") != collate(DispatchOrder.dispatch_mode, "utf8mb4_unicode_ci"),
                     DispatchOrder.expected_delivery_date != LogisticsMainDispatchOrder.required_delivery_date
                 )
@@ -251,7 +261,15 @@ async def sync_mdos_to_dispatches(db: AsyncSession):
             # Check if corresponding DispatchOrder already exists (eager-load items for backfill)
             stmt_check = select(DispatchOrder).options(
                 selectinload(DispatchOrder.items)
-            ).where(DispatchOrder.dispatch_number == mdo.mdo_number)
+            ).where(
+                or_(
+                    DispatchOrder.dispatch_number == mdo.mdo_number,
+                    and_(
+                        DispatchOrder.material_issue_id == mdo.material_issue_id,
+                        DispatchOrder.material_issue_id.is_not(None)
+                    )
+                )
+            )
             res_check = await db.execute(stmt_check)
             existing = res_check.scalar_one_or_none()
             
@@ -268,8 +286,12 @@ async def sync_mdos_to_dispatches(db: AsyncSession):
                 "DISPATCHED": "dispatched",
                 "IN_TRANSIT": "in_transit",
                 "TRANSPORTER_ACKNOWLEDGED": "in_transit",
-                "COMPLETED": "delivered",
-                "ACKNOWLEDGED": "acknowledged"
+                "DELIVERED": "delivered",
+                "CONSIGNMENT_RECEIVED": "consignment_received",
+                "COMPLETED": "acknowledged",
+                "ACKNOWLEDGED": "acknowledged",
+                "PARTIALLY_ACKNOWLEDGED": "partially_acknowledged",
+                "PARTIALLY_RECEIVED": "partially_acknowledged"
             }
             mapped_st = st_map.get(mdo.status, "in_transit")
             
@@ -291,7 +313,6 @@ async def sync_mdos_to_dispatches(db: AsyncSession):
                 )
                 db.add(disp)
                 await db.flush()
-                
                 # Fetch MDO's materials directly for both direct and multi-level dispatches
                 stmt_mats = select(LogisticsDispatchMaterial).where(LogisticsDispatchMaterial.mdo_id == mdo.id)
                 res_mats = await db.execute(stmt_mats)
@@ -330,8 +351,8 @@ async def sync_mdos_to_dispatches(db: AsyncSession):
                     db.add(item)
                 await db.flush()
 
-                # Trigger stock deduction if status is dispatched, in_transit, delivered, or acknowledged
-                if mapped_st in ("dispatched", "in_transit", "delivered", "acknowledged"):
+                # Trigger stock deduction if status is dispatched, in_transit, delivered, acknowledged, consignment_received, or partially_acknowledged
+                if mapped_st in ("dispatched", "in_transit", "delivered", "acknowledged", "consignment_received", "partially_acknowledged", "partially_received"):
                     await process_dispatch_stock_deduction(db, disp, mdo.created_by or 1)
             else:
                 existing.expected_delivery_date = mdo.required_delivery_date
@@ -345,9 +366,9 @@ async def sync_mdos_to_dispatches(db: AsyncSession):
                     existing.status = mapped_st
                     existing.delivery_acknowledged = (mdo.status == "ACKNOWLEDGED")
                     await db.flush()
-
-                    # Trigger stock deduction if transitioning to dispatched, in_transit, delivered, or acknowledged
-                    if mapped_st in ("dispatched", "in_transit", "delivered", "acknowledged") and old_status not in ("dispatched", "in_transit", "delivered", "acknowledged"):
+ 
+                    # Trigger stock deduction if transitioning to dispatched, in_transit, delivered, acknowledged, consignment_received, or partially_acknowledged
+                    if mapped_st in ("dispatched", "in_transit", "delivered", "acknowledged", "consignment_received", "partially_acknowledged", "partially_received") and old_status not in ("dispatched", "in_transit", "delivered", "acknowledged", "consignment_received", "partially_acknowledged", "partially_received"):
                         await process_dispatch_stock_deduction(db, existing, mdo.created_by or existing.dispatched_by or 1)
 
                 # Backfill missing items OR update serial_numbers on existing dispatch items

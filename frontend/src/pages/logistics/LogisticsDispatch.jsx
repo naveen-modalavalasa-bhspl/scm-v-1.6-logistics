@@ -1,14 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import {
   Card, Table, Tag, Badge, Button, Modal, Form, Select, DatePicker,
-  Input, InputNumber, Switch, Divider, Space, Collapse, Spin, App, Row, Col, Typography, Alert, Upload, Image
+  Input, InputNumber, Switch, Divider, Space, Collapse, Spin, App, Row, Col, Typography, Alert, Upload, Image, Tooltip
 } from 'antd';
 import {
   FolderAddOutlined, CheckCircleOutlined, PlusOutlined, DeleteOutlined,
   EnvironmentOutlined, GoldOutlined, FilePdfOutlined, CarOutlined,
   UserOutlined, MailOutlined, PhoneOutlined, KeyOutlined, ArrowRightOutlined,
   ClockCircleOutlined, SafetyCertificateOutlined, SendOutlined, UploadOutlined,
-  EyeOutlined, SearchOutlined, ArrowLeftOutlined
+  EyeOutlined, SearchOutlined, ArrowLeftOutlined, BarcodeOutlined, GiftOutlined
 } from '@ant-design/icons';
 import api from '../../config/api';
 import dayjs from 'dayjs';
@@ -281,6 +281,7 @@ export default function LogisticsDispatch() {
   const [selectedIndent, setSelectedIndent] = useState(null);
   const [selectedIndentItems, setSelectedIndentItems] = useState([]);
   const [selectedIssueItems, setSelectedIssueItems] = useState([]);
+  const [linkedConsignment, setLinkedConsignment] = useState(null);
   const [loadingIndent, setLoadingIndent] = useState(false);
   const [loadingIssue, setLoadingIssue] = useState(false);
   const [loadingDetails, setLoadingDetails] = useState(false);
@@ -479,6 +480,37 @@ export default function LogisticsDispatch() {
       if (issueId && (form.getFieldValue('dispatch_mode') || 'direct') === 'multi-level') {
         fetchChainPreview(issueId);
       }
+      // Fetch consignment packages for the selected MI
+      try {
+        const conRes = await api.get('/consignment/by-mi/' + issueId);
+        if (conRes.data && conRes.data.length > 0) {
+          const conData = conRes.data[0];
+          const conDetailRes = await api.get('/consignment/' + conData.id);
+          const conDetail = conDetailRes.data;
+          setLinkedConsignment(conDetail);
+
+          // Build a detailed description using package details
+          const pkgsInfo = (conDetail.packages || []).map((pkg, idx) => {
+            const dimStr = (pkg.length_cm && pkg.width_cm && pkg.height_cm) 
+              ? `${pkg.length_cm}x${pkg.width_cm}x${pkg.height_cm} cm`
+              : 'N/A';
+            return `Pkg #${idx+1} [${pkg.package_type}]: Weight: ${pkg.gross_weight_kg || 0} kg, Dim: ${dimStr}, Seal: ${pkg.seal_number || 'N/A'}`;
+          }).join(' | ');
+
+          const computedDesc = `Total Packages: ${conDetail.total_packages || 0}. Details: ${pkgsInfo}`;
+
+          form.setFieldsValue({
+            items_description: computedDesc,
+            logistics_weight: parseFloat(conDetail.total_weight_kg || 0),
+            logistics_volume: parseFloat(conDetail.total_volume_cft || 0),
+          });
+        } else {
+          setLinkedConsignment(null);
+        }
+      } catch (e) {
+        console.warn('No consignment found for this MI:', e);
+        setLinkedConsignment(null);
+      }
     } catch (err) {
       message.error('Failed to load material issue items');
     } finally {
@@ -607,6 +639,23 @@ export default function LogisticsDispatch() {
       fetchChainPreview(mdo.material_issue_id, mdo.destination_warehouse_id, mdo.destination_user_id);
     } else {
       setChainPreview(null);
+    }
+
+    // Fetch consignment packages for the selected MI
+    if (mdo.material_issue_id) {
+      try {
+        const conRes = await api.get('/consignment/by-mi/' + mdo.material_issue_id);
+        if (conRes.data && conRes.data.length > 0) {
+          const conData = conRes.data[0];
+          const conDetailRes = await api.get('/consignment/' + conData.id);
+          setLinkedConsignment(conDetailRes.data);
+        } else {
+          setLinkedConsignment(null);
+        }
+      } catch (e) {
+        console.warn('No consignment found for this MI:', e);
+        setLinkedConsignment(null);
+      }
     }
 
     const updatedUploadedUrls = {};
@@ -1621,7 +1670,7 @@ export default function LogisticsDispatch() {
             onClick={() => {
               setIsReadOnly(false);
               setShowDesigner(true);
-              setDispatchType('THIRD_PARTY');
+              setDispatchType('own vehicle');
             }}
             className="premium-btn"
             style={{
@@ -1751,15 +1800,19 @@ export default function LogisticsDispatch() {
                     border: '1px solid #cbd5e1'
                   }}>
                     <Row gutter={16}>
-                      <Col span={12}>
-                        <Text type="secondary" style={{ fontSize: '11px', display: 'block', color: '#64748b' }}>Dispatch Warehouse</Text>
-                        <Text strong style={{ fontSize: '12px', color: '#334155' }}>{selectedIssue.destination_warehouse_name || '—'}</Text>
-                      </Col>
-                      <Col span={12}>
-                        <Text type="secondary" style={{ fontSize: '11px', display: 'block', color: '#64748b' }}>Issued To</Text>
-                        <Text strong style={{ fontSize: '12px', color: '#334155' }}>{selectedIssue.issued_to_name || selectedIssue.issued_to || '—'}</Text>
-                      </Col>
-                    </Row>
+                       <Col span={8}>
+                         <Text type="secondary" style={{ fontSize: '11px', display: 'block', color: '#64748b' }}>Dispatch Warehouse</Text>
+                         <Text strong style={{ fontSize: '12px', color: '#334155' }}>{selectedIssue.destination_warehouse_name || '—'}</Text>
+                       </Col>
+                       <Col span={8}>
+                         <Text type="secondary" style={{ fontSize: '11px', display: 'block', color: '#64748b' }}>Issued To</Text>
+                         <Text strong style={{ fontSize: '12px', color: '#334155' }}>{selectedIssue.issued_to_name || '—'} {selectedIssue.issued_to_employee_code ? `(${selectedIssue.issued_to_employee_code})` : ''}</Text>
+                       </Col>
+                       <Col span={8}>
+                         <Text type="secondary" style={{ fontSize: '11px', display: 'block', color: '#64748b' }}>Position Code</Text>
+                         <Tag color="purple">{selectedIssue.position_code || '—'}</Tag>
+                       </Col>
+                     </Row>
                   </div>
                 )}
                 <Table
@@ -1795,6 +1848,276 @@ export default function LogisticsDispatch() {
               </Card>
             </Col>
           </Row>
+
+          {/* New separate space for Consignment Packages and Parent Packages Tree View */}
+          {(() => {
+            if (!selectedIssue) return null;
+            if (linkedConsignment === null) {
+              return (
+                <Alert
+                  message="No Consignment Created Yet"
+                  description="This Material Issue does not have a consignment. Create one from the Consignment Pipeline page."
+                  type="info"
+                  showIcon
+                  style={{ marginBottom: '20px', borderRadius: '8px' }}
+                />
+              );
+            }
+            const packages = linkedConsignment.packages || [];
+            if (packages.length === 0) {
+              return (
+                <Card
+                  title={<span style={{ color: '#0f172a', fontWeight: 700 }}><GiftOutlined style={{ color: '#d97706', marginRight: '8px' }} />Consignment Packaging Hierarchy (Tree View)</span>}
+                  style={{ borderRadius: '12px', border: '1px solid #cbd5e1', marginBottom: '20px' }}
+                >
+                  <Empty description="No packages in this consignment" />
+                </Card>
+              );
+            }
+
+            // Group packages by parent_package_code
+            const parentGroups = {};
+            const unassigned = [];
+            packages.forEach(pkg => {
+              if (pkg.parent_package_code) {
+                if (!parentGroups[pkg.parent_package_code]) {
+                  parentGroups[pkg.parent_package_code] = {
+                    code: pkg.parent_package_code,
+                    barcode: pkg.parent_package_barcode,
+                    packages: [],
+                    total_weight: 0,
+                    total_volume: 0,
+                  };
+                }
+                parentGroups[pkg.parent_package_code].packages.push(pkg);
+                parentGroups[pkg.parent_package_code].total_weight += Number(pkg.gross_weight_kg || 0);
+                parentGroups[pkg.parent_package_code].total_volume += Number(pkg.volume_cft || 0);
+              } else {
+                unassigned.push(pkg);
+              }
+            });
+
+            const parentsList = Object.values(parentGroups);
+
+            return (
+              <Card
+                title={
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+                    <span style={{ color: '#0f172a', fontWeight: 700 }}>
+                      <GiftOutlined style={{ color: '#d97706', marginRight: '8px' }} />
+                      Consignment Packaging Hierarchy (Tree View)
+                    </span>
+                    <Tag color="blue" style={{ fontWeight: 600 }}>
+                      Consignment: {linkedConsignment.consignment_number}
+                    </Tag>
+                  </div>
+                }
+                style={{
+                  borderRadius: '12px',
+                  border: '1px solid #cbd5e1',
+                  background: '#ffffff',
+                  marginBottom: '20px',
+                  boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)',
+                }}
+              >
+                <div style={{ maxHeight: '400px', overflowY: 'auto', paddingRight: '8px' }}>
+                  {parentsList.length > 0 && (
+                    <div style={{ marginBottom: unassigned.length > 0 ? '24px' : '0' }}>
+                      <div style={{ fontWeight: 700, fontSize: '14px', color: '#1e293b', marginBottom: '12px', borderBottom: '2px solid #e2e8f0', paddingBottom: '6px' }}>
+                        Parent Packages ({parentsList.length})
+                      </div>
+                      <Collapse defaultActiveKey={[]} ghost expandIconPosition="start">
+                        {parentsList.map(parent => (
+                          <Collapse.Panel
+                            key={parent.code}
+                            header={
+                              <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', width: '95%', alignItems: 'center', background: '#f8fafc', padding: '10px 14px', borderRadius: '8px', border: '1px solid #e2e8f0', marginLeft: '4px' }}>
+                                <Space size="middle">
+                                  <span style={{ fontWeight: 700, color: '#4f46e5', fontSize: '13px' }}>PARENT: {parent.code}</span>
+                                  <Tag color="cyan">Pallet/Crate</Tag>
+                                  <Tag color="blue">{parent.packages.length} Packages Included</Tag>
+                                </Space>
+                                <Space size="large" style={{ fontSize: '12px', color: '#64748b' }}>
+                                  <span><strong>Weight:</strong> {parent.total_weight.toFixed(2)} KG</span>
+                                  <span><strong>Volume:</strong> {parent.total_volume.toFixed(2)} CFT</span>
+                                </Space>
+                              </div>
+                            }
+                            style={{ marginBottom: '12px', border: 'none' }}
+                          >
+                            <div style={{ padding: '0 12px 12px 36px', borderLeft: '2px dashed #cbd5e1', marginLeft: '24px' }}>
+                              <Collapse defaultActiveKey={[]} ghost>
+                                {parent.packages.map((pkg, idx) => (
+                                  <Collapse.Panel
+                                    key={pkg.id}
+                                    header={
+                                      <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', width: '95%', alignItems: 'center', background: '#ffffff', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', cursor: 'pointer' }}>
+                                        <Space>
+                                          <Tag color="blue" style={{ fontFamily: 'monospace', fontWeight: 700 }}>PKG #{idx + 1}</Tag>
+                                          <span style={{ fontFamily: 'monospace', fontWeight: 600 }}>{pkg.package_number}</span>
+                                          <Tag color="default">{pkg.package_type}</Tag>
+                                          {pkg.seal_number && <Tag color="orange">Seal: {pkg.seal_number}</Tag>}
+                                        </Space>
+                                        <Space size="middle" style={{ fontSize: '12px', color: '#64748b' }}>
+                                          <span><strong>Weight:</strong> {pkg.gross_weight_kg || 0} KG</span>
+                                          <span><strong>Volume:</strong> {pkg.volume_cft ? pkg.volume_cft.toFixed(2) + ' CFT' : '—'}</span>
+                                          <span><strong>Items:</strong> {pkg.material_count || 0}</span>
+                                        </Space>
+                                      </div>
+                                    }
+                                    style={{ marginBottom: '8px', border: 'none' }}
+                                  >
+                                    <div style={{ padding: '8px 12px 8px 24px', borderLeft: '2px dashed #e2e8f0', marginLeft: '16px' }}>
+                                      {pkg.items && pkg.items.length > 0 && (
+                                        <Table
+                                          dataSource={pkg.items}
+                                          size="small"
+                                          pagination={false}
+                                          rowKey="id"
+                                          style={{ background: '#fff', borderRadius: '6px', overflow: 'hidden', border: '1px solid #e2e8f0' }}
+                                          columns={[
+                                            { title: 'Code', dataIndex: 'material_code', key: 'code', render: t => <span style={{ fontFamily: 'monospace' }}>{t}</span> },
+                                            { title: 'Material', dataIndex: 'material_name', key: 'name' },
+                                            { title: 'Batch', dataIndex: 'batch_number', key: 'batch', render: t => t || '—' },
+                                            { title: 'Qty', dataIndex: 'quantity_packed', key: 'qty', render: val => <span style={{ fontWeight: 600 }}>{val}</span> },
+                                            { title: 'UOM', dataIndex: 'uom_code', key: 'uom' },
+                                            {
+                                              title: 'Serial/Asset Codes',
+                                              key: 'serial_numbers',
+                                              width: 200,
+                                              render: (_, r) => {
+                                                const serials = r.serial_numbers || [];
+                                                if (serials.length === 0) return <span style={{ color: '#94a3b8' }}>—</span>;
+                                                const isAsset = r.material_type === 'asset' || r.item?.item_type === 'asset';
+                                                const isConsumable = r.material_type === 'consumable' || r.item?.item_type === 'consumable';
+                                                const labelColor = isAsset ? 'cyan' : isConsumable ? 'orange' : 'blue';
+                                                
+                                                if (serials.length <= 3) {
+                                                  return (
+                                                    <Space wrap size={[4, 4]}>
+                                                      {serials.map(sn => (
+                                                        <Tag key={sn} color={labelColor} style={{ fontFamily: 'monospace', margin: 0, fontSize: '11px', borderRadius: '4px' }}>
+                                                          {sn}
+                                                        </Tag>
+                                                      ))}
+                                                    </Space>
+                                                  );
+                                                }
+                                                return (
+                                                  <SerialNumbersModal
+                                                    value={serials}
+                                                    itemName={r.material_name || r.item?.name}
+                                                    itemCode={r.material_code}
+                                                    quantity={Math.round(Number(r.quantity_packed || 0))}
+                                                    hasSerial={true}
+                                                    size="small"
+                                                    readOnly
+                                                    />
+                                                );
+                                              }
+                                            },
+                                          ]}
+                                        />
+                                      )}
+                                    </div>
+                                  </Collapse.Panel>
+                                ))}
+                              </Collapse>
+                            </div>
+                          </Collapse.Panel>
+                        ))}
+                      </Collapse>
+                    </div>
+                  )}
+
+                  {unassigned.length > 0 && (
+                    <div>
+                      <div style={{ fontWeight: 700, fontSize: '14px', color: '#1e293b', marginBottom: '12px', borderBottom: '2px solid #e2e8f0', paddingBottom: '6px' }}>
+                        Individual Packages (Loose / Unassigned to Parent) ({unassigned.length})
+                      </div>
+                      <Collapse defaultActiveKey={[]} ghost>
+                        {unassigned.map((pkg, idx) => (
+                          <Collapse.Panel
+                            key={pkg.id}
+                            header={
+                              <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', width: '95%', alignItems: 'center', background: '#f8fafc', padding: '10px 14px', borderRadius: '8px', border: '1px solid #e2e8f0', marginLeft: '4px' }}>
+                                <Space>
+                                  <Tag color="blue" style={{ fontFamily: 'monospace', fontWeight: 700 }}>PKG #{idx + 1}</Tag>
+                                  <span style={{ fontFamily: 'monospace', fontWeight: 600 }}>{pkg.package_number}</span>
+                                  <Tag color="default">{pkg.package_type}</Tag>
+                                  {pkg.seal_number && <Tag color="orange">Seal: {pkg.seal_number}</Tag>}
+                                </Space>
+                                <Space size="large" style={{ fontSize: '12px', color: '#64748b' }}>
+                                  <span><strong>Weight:</strong> {pkg.gross_weight_kg || 0} KG</span>
+                                  <span><strong>Volume:</strong> {pkg.volume_cft ? pkg.volume_cft.toFixed(2) + ' CFT' : '—'}</span>
+                                  <span><strong>Items:</strong> {pkg.material_count || 0}</span>
+                                </Space>
+                              </div>
+                            }
+                            style={{ marginBottom: '12px', border: 'none' }}
+                          >
+                            <div style={{ padding: '0 12px 12px 36px', borderLeft: '2px dashed #cbd5e1', marginLeft: '24px' }}>
+                              {pkg.items && pkg.items.length > 0 && (
+                                <Table
+                                  dataSource={pkg.items}
+                                  size="small"
+                                  pagination={false}
+                                  rowKey="id"
+                                  style={{ background: '#fff', borderRadius: '6px', overflow: 'hidden', border: '1px solid #e2e8f0' }}
+                                  columns={[
+                                    { title: 'Code', dataIndex: 'material_code', key: 'code', render: t => <span style={{ fontFamily: 'monospace' }}>{t}</span> },
+                                    { title: 'Material', dataIndex: 'material_name', key: 'name' },
+                                    { title: 'Batch', dataIndex: 'batch_number', key: 'batch', render: t => t || '—' },
+                                    { title: 'Qty', dataIndex: 'quantity_packed', key: 'qty', render: val => <span style={{ fontWeight: 600 }}>{val}</span> },
+                                    { title: 'UOM', dataIndex: 'uom_code', key: 'uom' },
+                                    {
+                                      title: 'Serial/Asset Codes',
+                                      key: 'serial_numbers',
+                                      width: 200,
+                                      render: (_, r) => {
+                                        const serials = r.serial_numbers || [];
+                                        if (serials.length === 0) return <span style={{ color: '#94a3b8' }}>—</span>;
+                                        const isAsset = r.material_type === 'asset' || r.item?.item_type === 'asset';
+                                        const isConsumable = r.material_type === 'consumable' || r.item?.item_type === 'consumable';
+                                        const labelColor = isAsset ? 'cyan' : isConsumable ? 'orange' : 'blue';
+                                        
+                                        if (serials.length <= 3) {
+                                          return (
+                                            <Space wrap size={[4, 4]}>
+                                              {serials.map(sn => (
+                                                <Tag key={sn} color={labelColor} style={{ fontFamily: 'monospace', margin: 0, fontSize: '11px', borderRadius: '4px' }}>
+                                                  {sn}
+                                                </Tag>
+                                              ))}
+                                            </Space>
+                                          );
+                                        }
+                                        return (
+                                          <SerialNumbersModal
+                                            value={serials}
+                                            itemName={r.material_name || r.item?.name}
+                                            itemCode={r.material_code}
+                                            quantity={Math.round(Number(r.quantity_packed || 0))}
+                                            hasSerial={true}
+                                            size="small"
+                                            readOnly
+                                          />
+                                        );
+                                      }
+                                    },
+                                  ]}
+                                />
+                              )}
+                            </div>
+                          </Collapse.Panel>
+                        ))}
+                      </Collapse>
+                    </div>
+                  )}
+                </div>
+              </Card>
+            );
+          })() }
 
           <Divider orientation="left"><span style={{ color: '#4f46e5', fontWeight: 700 }}>Logistics & Routing Details</span></Divider>
 
@@ -1879,7 +2202,7 @@ export default function LogisticsDispatch() {
                   <Option value="own vehicle">Self-Owned Fleet Dispatch</Option>
                   <Option value="COURIER">Courier Dispatch</Option>
                   <Option value="IN_PERSON">In-Person Handover</Option>
-                  <Option value="THIRD_PARTY">Third-Party Carrier Bidding (RFQ)</Option>
+                  {/* <Option value="THIRD_PARTY">Third-Party Carrier Bidding (RFQ)</Option> */}
                 </Select>
               </Form.Item>
             </Col>
@@ -1888,7 +2211,7 @@ export default function LogisticsDispatch() {
               <Form.Item name="dispatch_mode" label={<span style={{ color: '#4f46e5', fontWeight: 600 }}>Dispatch Mode</span>} rules={[{ required: true, message: 'Please select dispatch mode' }]}>
                 <Select style={{ width: '100%' }}>
                   <Option value="direct">Direct Dispatch</Option>
-                  <Option value="multi-level">Multi-Level Custody Transfer</Option>
+                  {/* <Option value="multi-level">Multi-Level Custody Transfer</Option> */}
                 </Select>
               </Form.Item>
             </Col>

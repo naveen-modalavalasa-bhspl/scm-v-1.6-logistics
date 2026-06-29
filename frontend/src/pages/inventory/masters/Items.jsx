@@ -164,7 +164,7 @@ const Items = () => {
       render: (text, record) => text || record.category_name || '-',
     },
     {
-      title: 'Type',
+      title: 'Item Class',
       dataIndex: 'item_type',
       key: 'item_type',
       width: 130,
@@ -283,7 +283,7 @@ const Items = () => {
         options={allCategoryOptions}
       />
       <Select
-        placeholder="Item Type"
+        placeholder="Item Class"
         allowClear
         style={{ width: 150 }}
         value={filterType}

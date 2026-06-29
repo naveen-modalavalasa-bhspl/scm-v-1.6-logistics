@@ -170,10 +170,10 @@ async def get_stock_balances(
             if is_cen:
                 central_wh_ids.add(w.id)
 
-    # Gather balances with has_serial = True
+    # Gather balances with has_serial = True or item_type in (asset, consumable)
     serial_tracked_keys = []
     for b in balances:
-        if b.item and b.item.has_serial:
+        if b.item and (b.item.has_serial or b.item.item_type in ("asset", "consumable")):
             is_cen = b.warehouse_id in central_wh_ids
             # Non-central warehouses ignore bin and batch constraints
             resolved_bin = b.bin_id if is_cen else None
@@ -181,9 +181,12 @@ async def get_stock_balances(
             serial_tracked_keys.append((b.item_id, b.warehouse_id, resolved_bin, resolved_batch))
     
     serials_map = {}
+    asset_codes_map = {}
+    consumable_codes_map = {}
     if serial_tracked_keys:
         from sqlalchemy import and_, or_
         from app.models.warehouse import SerialNumber
+        from sqlalchemy.orm import joinedload
         
         # Build composite filter
         conditions = []
@@ -202,7 +205,7 @@ async def get_stock_balances(
                 )
             conditions.append(cond)
             
-        s_query = select(SerialNumber).where(or_(*conditions))
+        s_query = select(SerialNumber).options(joinedload(SerialNumber.item)).where(or_(*conditions))
         s_result = await db.execute(s_query)
         serials = s_result.scalars().all()
         
@@ -211,7 +214,46 @@ async def get_stock_balances(
             key = (s.item_id, s.warehouse_id, s.bin_id if is_cen else None, s.batch_id if is_cen else None)
             if key not in serials_map:
                 serials_map[key] = []
-            serials_map[key].append(s.serial_number)
+            if key not in asset_codes_map:
+                asset_codes_map[key] = []
+            if key not in consumable_codes_map:
+                consumable_codes_map[key] = []
+                
+            raw_serial = s.serial_number
+            act_asset_code = s.asset_code
+            act_consumable_code = s.consumable_code
+            
+            # Auto-generate dynamic codes if missing from database
+            if not act_asset_code and not act_consumable_code and s.item:
+                item_code = s.item.item_code
+                prefix = "1-"
+                suffix = f"-{item_code}"
+                new_prefix = f"{item_code}-1-"
+                if raw_serial.startswith(prefix) and raw_serial.endswith(suffix):
+                    if s.item.item_type == "asset":
+                        act_asset_code = raw_serial
+                    elif s.item.item_type == "consumable":
+                        act_consumable_code = raw_serial
+                    raw_serial = raw_serial[len(prefix):-len(suffix)]
+                elif raw_serial.startswith(new_prefix):
+                    if s.item.item_type == "asset":
+                        act_asset_code = raw_serial
+                    elif s.item.item_type == "consumable":
+                        act_consumable_code = raw_serial
+                    raw_serial = raw_serial[len(new_prefix):]
+                    
+            if s.item:
+                from app.services.asset_service import generate_asset_code
+                if s.item.item_type == "asset" and not act_asset_code:
+                    act_asset_code = generate_asset_code(raw_serial, s.item.item_code)
+                elif s.item.item_type == "consumable" and not act_consumable_code:
+                    act_consumable_code = generate_asset_code(raw_serial, s.item.item_code)
+            
+            serials_map[key].append(raw_serial)
+            if act_asset_code:
+                asset_codes_map[key].append(act_asset_code)
+            if act_consumable_code:
+                consumable_codes_map[key].append(act_consumable_code)
 
     response_items = []
     for b in balances:
@@ -219,6 +261,28 @@ async def get_stock_balances(
         # caused by 'batch' and 'bin' model relationships colliding with 
         # schema field names.
         is_cen = b.warehouse_id in central_wh_ids
+        key = (b.item_id, b.warehouse_id, b.bin_id if is_cen else None, b.batch_id if is_cen else None)
+        
+        sns = list(serials_map.get(key, []))
+        acs = list(asset_codes_map.get(key, []))
+        ccs = list(consumable_codes_map.get(key, []))
+        
+        # If the item is asset or consumable, and the database has NO serials/codes:
+        if b.item and b.item.item_type in ("asset", "consumable") and not sns and not acs and not ccs:
+            qty_int = int(b.total_qty)
+            if qty_int > 0:
+                from app.services.asset_service import generate_asset_code
+                for i in range(1, qty_int + 1):
+                    if i > 1000:  # Protect against massive quantities
+                        break
+                    v_sn = f"V{i}"
+                    v_code = generate_asset_code(v_sn, b.item.item_code)
+                    sns.append(v_sn)
+                    if b.item.item_type == "asset":
+                        acs.append(v_code)
+                    else:
+                        ccs.append(v_code)
+
         data = {
             "id": b.id,
             "item_id": b.item_id,
@@ -232,7 +296,9 @@ async def get_stock_balances(
             "valuation_rate": b.valuation_rate,
             "stock_value": b.stock_value,
             "last_updated": b.last_updated.isoformat() if b.last_updated else None,
-            "serial_numbers": serials_map.get((b.item_id, b.warehouse_id, b.bin_id if is_cen else None, b.batch_id if is_cen else None), []),
+            "serial_numbers": sns,
+            "asset_codes": acs,
+            "consumable_codes": ccs,
         }
         if hasattr(b, 'item') and b.item:
             data["item_name"] = b.item.name
@@ -357,13 +423,26 @@ async def get_stock_balances(
         bin_name = bin_code
         rack = ", ".join(sorted(list(set(racks)))) if racks else None
         location = ", ".join(sorted(list(set(locations)))) if locations else None
-        
-        # Merge serial numbers
+            # Merge serial numbers
         all_serials = []
         for item in group_list:
             if item.get("serial_numbers"):
                 all_serials.extend(item["serial_numbers"])
         all_serials = sorted(list(set(all_serials)))
+        
+        # Merge asset codes
+        all_asset_codes = []
+        for item in group_list:
+            if item.get("asset_codes"):
+                all_asset_codes.extend(item["asset_codes"])
+        all_asset_codes = sorted(list(set(all_asset_codes)))
+
+        # Merge consumable codes
+        all_consumable_codes = []
+        for item in group_list:
+            if item.get("consumable_codes"):
+                all_consumable_codes.extend(item["consumable_codes"])
+        all_consumable_codes = sorted(list(set(all_consumable_codes)))
         
         # Flags
         is_below_reorder = any(item.get("is_below_reorder", False) for item in group_list)
@@ -373,7 +452,7 @@ async def get_stock_balances(
         # Last updated: max ISO string
         last_updated_dates = [item["last_updated"] for item in group_list if item.get("last_updated")]
         last_updated = max(last_updated_dates) if last_updated_dates else None
-
+ 
         grouped_item = {
             "id": f"grouped_{item_id}_{warehouse_id}",
             "item_id": item_id,
@@ -388,6 +467,8 @@ async def get_stock_balances(
             "stock_value": total_value,
             "last_updated": last_updated,
             "serial_numbers": all_serials,
+            "asset_codes": all_asset_codes,
+            "consumable_codes": all_consumable_codes,
             "item_name": first.get("item_name"),
             "item_code": first.get("item_code"),
             "item_type": first.get("item_type"),

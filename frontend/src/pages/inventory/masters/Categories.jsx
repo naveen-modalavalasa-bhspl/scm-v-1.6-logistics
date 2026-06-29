@@ -280,7 +280,7 @@ const Categories = () => {
     { title: 'Readable Code', dataIndex: 'readable_code', key: 'readable_code', width: 220, render: (v) => v || '-' },
     { title: 'Item Code', dataIndex: 'item_code', key: 'code', width: 120 },
     { title: 'Name', dataIndex: 'name', key: 'name', width: 200, ellipsis: true },
-    { title: 'Type', dataIndex: 'item_type', key: 'type', width: 120 },
+    { title: 'Item Class', dataIndex: 'item_type', key: 'type', width: 120 },
     { title: 'UOM', dataIndex: ['primary_uom', 'name'], key: 'uom', width: 80, render: (t, r) => t || r.primary_uom_name || '-' },
     { title: 'Status', dataIndex: 'status', key: 'status', width: 90, render: (s) => <Tag color={s === 'active' ? 'green' : 'default'}>{s}</Tag> },
   ];

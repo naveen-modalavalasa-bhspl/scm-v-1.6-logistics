@@ -46,10 +46,13 @@ async def vendor_login(
 ):
     identifier = payload.username.strip()
     ident_lower = identifier.lower()
+    import re as _re
+    ident_normalized = _re.sub(r'[^a-zA-Z0-9_]', '_', identifier).lower()
     res = await db.execute(
         select(VendorUser).where(
             (func.lower(VendorUser.username) == ident_lower)
             | (func.lower(VendorUser.email) == ident_lower)
+            | (func.lower(VendorUser.username) == ident_normalized)
         )
     )
     vu = res.scalar_one_or_none()
@@ -115,8 +118,41 @@ async def vendor_me(
 
 @router.post("/logout")
 async def vendor_logout(
+    request: Request,
     current_vendor: VendorUser = Depends(get_current_vendor_user),
+    db: AsyncSession = Depends(get_db),
 ):
+    # Blocklist the token here on logout
+    import hashlib
+    from app.models.user import TokenBlocklist
+    from sqlalchemy.exc import IntegrityError
+    auth_header = request.headers.get("authorization", "")
+    raw_token = auth_header.split(" ", 1)[1].strip() if auth_header.lower().startswith("bearer ") else ""
+    if raw_token:
+        from app.services.auth_service import decode_token
+        token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+        payload = decode_token(raw_token) or {}
+        exp_ts = payload.get("exp")
+        exp_dt = None
+        if exp_ts:
+            try:
+                exp_dt = datetime.fromtimestamp(int(exp_ts), tz=timezone.utc).replace(tzinfo=None)
+            except Exception:
+                exp_dt = None
+        try:
+            db.add(TokenBlocklist(
+                jti=payload.get("jti"),
+                token_hash=token_hash,
+                user_id=None,
+                token_type=payload.get("type", "access"),
+                expires_at=exp_dt,
+                reason="logout",
+            ))
+            await db.flush()
+        except IntegrityError:
+            await db.rollback()
+        except Exception:
+            await db.rollback()
     return {"success": True, "message": "Logged out"}
 
 

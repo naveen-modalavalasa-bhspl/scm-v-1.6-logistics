@@ -466,6 +466,7 @@ async def lookup_users(
         User.email,
         User.department,
         User.is_active,
+        User.employee_code,
     ).where(User.is_active == True)  # noqa: E712
     # BUG-AUTH-065/093 fix: scope lookups to the caller's organisation so
     # cross-tenant leakage cannot happen via this dropdown endpoint.
@@ -497,6 +498,7 @@ async def lookup_users(
             "name": full,
             "full_name": full,
             "department": r.department,
+            "employee_code": r.employee_code,
         })
     return out
 

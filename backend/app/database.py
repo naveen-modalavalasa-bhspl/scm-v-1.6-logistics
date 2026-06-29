@@ -5,10 +5,11 @@ from app.config import settings
 engine = create_async_engine(
     settings.DATABASE_URL,
     echo=settings.DEBUG,
-    pool_size=20,
-    max_overflow=10,
+    pool_size=30,
+    max_overflow=30,
     pool_pre_ping=True,
-    pool_recycle=3600,
+    pool_recycle=1800,
+    pool_timeout=30.0,
     connect_args={"init_command": "SET time_zone='+05:30'"},
 )
 

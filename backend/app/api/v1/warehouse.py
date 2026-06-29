@@ -1352,16 +1352,44 @@ async def confirm_putaway_item(
         created_by=current_user.id,
     )
 
-    if has_serial and payload.status == "done":
-        for sn in payload.serial_numbers:
-            db.add(SerialNumber(
-                item_id=pi.item_id,
-                serial_number=sn.strip(),
-                batch_id=pi.batch_id,
-                status="available",
-                warehouse_id=po_warehouse_id,
-                bin_id=resolved_bin_id
-            ))
+    if payload.status == "done":
+        is_asset = (pi.item.item_type == "asset") if (pi and pi.item) else False
+        is_consumable = (pi.item.item_type == "consumable") if (pi and pi.item) else False
+        material_code = pi.item.item_code if (pi and pi.item) else ""
+        
+        if is_asset or is_consumable:
+            from app.services.asset_service import get_next_system_serial_number, generate_asset_code
+            qty_int = int(pi.qty)
+            serial_list = []
+            if has_serial and payload.serial_numbers:
+                serial_list = [sn.strip() for sn in payload.serial_numbers]
+            else:
+                for offset in range(qty_int):
+                    sys_sn = await get_next_system_serial_number(db, offset)
+                    serial_list.append(sys_sn)
+
+            for sn in serial_list:
+                generated_code = generate_asset_code(sn, material_code)
+                db.add(SerialNumber(
+                    item_id=pi.item_id,
+                    serial_number=sn,
+                    asset_code=generated_code if is_asset else None,
+                    consumable_code=generated_code if is_consumable else None,
+                    batch_id=pi.batch_id,
+                    status="available",
+                    warehouse_id=po_warehouse_id,
+                    bin_id=resolved_bin_id
+                ))
+        elif has_serial:
+            for sn in payload.serial_numbers:
+                db.add(SerialNumber(
+                    item_id=pi.item_id,
+                    serial_number=sn.strip(),
+                    batch_id=pi.batch_id,
+                    status="available",
+                    warehouse_id=po_warehouse_id,
+                    bin_id=resolved_bin_id
+                ))
 
     # Check if all items done
     # BUG-INV-034: a 'skipped' item is a terminal state (operator deliberately
@@ -2660,6 +2688,7 @@ async def list_material_issues(
                 f"{mi.issued_to_user.first_name} {mi.issued_to_user.last_name or ''}".strip()
                 or mi.issued_to_user.username
             ) if mi.issued_to_user else None,
+            "issued_to_employee_code": mi.issued_to_user.employee_code if mi.issued_to_user else None,
             "warehouse_name": mi.warehouse.name if mi.warehouse else None,
             "destination_warehouse_name": mi.destination_warehouse.name if mi.destination_warehouse else None,
             "status": mi.status,
@@ -2687,9 +2716,32 @@ async def list_material_issues(
                 "has_serial": bool(item.item.has_serial) if item.item else False,
             })
         items_list.append(mi_dict)
-
     return build_paginated_response(items_list, total, page, page_size)
 
+async def clean_serial_numbers(db: AsyncSession, item_id: int, serials: Optional[List[str]]) -> List[str]:
+    if not serials:
+        return []
+    from app.models.master import Item as _Item
+    res = await db.execute(select(_Item.item_code).where(_Item.id == item_id))
+    item_code = res.scalar()
+    if not item_code:
+        return serials
+    
+    cleaned = []
+    item_code_str = item_code.strip()
+    prefix = f"{item_code_str}-1-"
+    legacy_prefix = "1-"
+    legacy_suffix = f"-{item_code_str}"
+    
+    for s in serials:
+        s_str = s.strip()
+        if s_str.startswith(prefix):
+            cleaned.append(s_str[len(prefix):])
+        elif s_str.startswith(legacy_prefix) and s_str.endswith(legacy_suffix):
+            cleaned.append(s_str[len(legacy_prefix):-len(legacy_suffix)])
+        else:
+            cleaned.append(s_str)
+    return cleaned
 
 
 @router.post("/material-issues", status_code=201, dependencies=[Depends(require_key("warehouse-material-issues"))])
@@ -2931,6 +2983,7 @@ async def create_material_issue(
 
             for item in payload.items:
                 amount = item.qty * item.rate
+                cleaned_sns = await clean_serial_numbers(db, item.item_id, item.serial_numbers)
                 mi_item = MaterialIssueItem(
                     issue_id=mi.id,
                     item_id=item.item_id,
@@ -2940,7 +2993,7 @@ async def create_material_issue(
                     bin_id=item.bin_id,
                     rate=item.rate,
                     amount=amount,
-                    serial_numbers=item.serial_numbers,
+                    serial_numbers=cleaned_sns,
                 )
                 db.add(mi_item)
 
@@ -2953,6 +3006,580 @@ async def create_material_issue(
                     status_code=409,
                     detail="Failed to generate unique issue number after multiple retries"
                 )
+
+
+@router.post("/material-issues/bulk", status_code=201, dependencies=[Depends(require_key("warehouse-material-issues"))])
+async def bulk_create_material_issues(
+    payloads: List[MaterialIssueCreate],
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_any_role(
+        "super_admin", "admin", "warehouse_manager", "warehouse_operator", "store_keeper"
+    )),
+):
+    """Bulk create draft material issues."""
+    if not payloads:
+        raise HTTPException(status_code=400, detail="Payload list cannot be empty")
+
+    created_issues = []
+    
+    # Perform validations and creation for each payload
+    for payload in payloads:
+        if not payload.items:
+            raise HTTPException(status_code=422, detail="At least one item is required for all issues")
+
+        # Warehouse membership check
+        from app.utils.dependencies import (
+            get_user_role_codes as _get_role_codes,
+            user_warehouse_ids as _user_wh_ids,
+        )
+        _role_codes = await _get_role_codes(db, current_user.id)
+        if not ({"super_admin", "admin"} & set(_role_codes)):
+            _wh_ids = await _user_wh_ids(db, current_user.id)
+            if not _wh_ids or payload.warehouse_id not in _wh_ids:
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"You are not authorised to issue from warehouse {payload.warehouse_id}",
+                )
+
+        # Safety batch expiry check
+        from datetime import date as _date
+        from app.models.warehouse import Batch as _Batch
+        from app.models.master import Item as _MIItem
+        batch_ids = [i.batch_id for i in payload.items if i.batch_id]
+        batch_rows_list = []
+        if batch_ids:
+            br = await db.execute(
+                select(_Batch).where(_Batch.id.in_(batch_ids))
+            )
+            batch_rows_list = br.scalars().all()
+            today = _date.today()
+            for b in batch_rows_list:
+                exp = b.expiry_date
+                if exp is not None and hasattr(exp, "date"):
+                    exp = exp.date()
+                if exp is not None and exp <= today:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"Batch {b.batch_number} {'expired' if exp < today else 'expires today'} "
+                            f"({b.expiry_date}) — cannot issue."
+                        ),
+                    )
+
+        # Batch required check for batch-tracked items
+        item_ids_for_mi = list({i.item_id for i in payload.items if i.item_id})
+        if item_ids_for_mi:
+            rows = await db.execute(
+                select(_MIItem.id, _MIItem.item_code, _MIItem.has_batch, _MIItem.has_expiry, _MIItem.item_type)
+                .where(_MIItem.id.in_(item_ids_for_mi))
+            )
+            mi_item_meta = {r.id: r for r in rows.all()}
+            BATCH_REQUIRED_TYPES_MI = {"medicine", "pharma", "drug", "consumable_medicine"}
+            for it in payload.items:
+                m = mi_item_meta.get(it.item_id)
+                if not m:
+                    continue
+                requires_batch = m.has_batch or (
+                    m.item_type and str(m.item_type).lower() in BATCH_REQUIRED_TYPES_MI
+                )
+                if requires_batch and it.batch_id is None:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"{m.item_code}: batch_id is required for batch-tracked items "
+                            "(expiry must be verified before issue)."
+                        ),
+                    )
+
+        # Batch ownership check
+        _batch_map = {b.id: b for b in batch_rows_list}
+        for it in payload.items:
+            if it.batch_id and it.batch_id in _batch_map:
+                b = _batch_map[it.batch_id]
+                if getattr(b, "warehouse_id", None) and b.warehouse_id != payload.warehouse_id:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"Batch {b.batch_number} belongs to warehouse "
+                            f"{b.warehouse_id}, not {payload.warehouse_id}"
+                        ),
+                    )
+                if getattr(b, "item_id", None) and b.item_id != it.item_id:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Batch {b.batch_number} does not belong to item {it.item_id}",
+                    )
+
+        # Pre-flight stock balance check
+        from sqlalchemy import func as _sa_func
+        for it in payload.items:
+            bal_conds = [
+                StockBalance.item_id == it.item_id,
+                StockBalance.warehouse_id == payload.warehouse_id,
+            ]
+            if it.batch_id is not None:
+                bal_conds.append(StockBalance.batch_id == it.batch_id)
+            if it.bin_id is not None:
+                bal_conds.append(StockBalance.bin_id == it.bin_id)
+            bal_row = await db.execute(select(StockBalance).where(and_(*bal_conds)))
+            balances = bal_row.scalars().all()
+            avail = sum((bb.available_qty or Decimal("0")) for bb in balances) or Decimal("0")
+            if avail <= 0:
+                ledger_conds = [
+                    StockLedger.item_id == it.item_id,
+                    StockLedger.warehouse_id == payload.warehouse_id,
+                ]
+                if it.batch_id is not None:
+                    ledger_conds.append(StockLedger.batch_id == it.batch_id)
+                if it.bin_id is not None:
+                    ledger_conds.append(StockLedger.bin_id == it.bin_id)
+                led_q = select(
+                    _sa_func.coalesce(_sa_func.sum(StockLedger.qty_in), 0)
+                    - _sa_func.coalesce(_sa_func.sum(StockLedger.qty_out), 0)
+                ).where(and_(*ledger_conds))
+                led_avail = (await db.execute(led_q)).scalar() or Decimal("0")
+                if led_avail and led_avail > avail:
+                    avail = Decimal(str(led_avail))
+            if (it.qty or Decimal("0")) > avail:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Insufficient stock for item {it.item_id} "
+                        f"(batch {it.batch_id}, bin {it.bin_id}): "
+                        f"available={avail}, requested={it.qty}"
+                    ),
+                )
+
+        # Link validation for indents
+        if payload.indent_id:
+            try:
+                from app.models.indent import Indent as _Indent
+                ir = await db.execute(select(_Indent).where(_Indent.id == payload.indent_id))
+                ind = ir.scalar_one_or_none()
+                if not ind:
+                    raise HTTPException(status_code=404, detail="Linked indent not found")
+                if ind.status not in ("approved", "partially_fulfilled"):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"Cannot issue against indent in '{ind.status}' status — "
+                            "must be approved or partially_fulfilled"
+                        ),
+                    )
+            except ImportError:
+                pass
+
+        # Link validation for MRs
+        if payload.mr_id:
+            try:
+                from app.models.procurement import MaterialRequest as _MR
+                mrr = await db.execute(select(_MR).where(_MR.id == payload.mr_id))
+                mr = mrr.scalar_one_or_none()
+                if not mr:
+                    raise HTTPException(status_code=404, detail="Linked material request not found")
+                mr_org = getattr(mr, "organization_id", None)
+                if mr_org and mr_org != current_user.organization_id:
+                    raise HTTPException(
+                        status_code=403,
+                        detail="Material request belongs to a different organization",
+                    )
+                mr_wh = getattr(mr, "warehouse_id", None)
+                if mr_wh and mr_wh != payload.warehouse_id:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Material request warehouse does not match this issue",
+                    )
+            except ImportError:
+                pass
+
+        # Prescriber check
+        from app.services.compliance_service import assert_prescriber_present_on_lines
+        line_dicts = [
+            {
+                "item_id": l.item_id,
+                "prescriber_name": getattr(l, "prescriber_name", None),
+                "prescriber_license": getattr(l, "prescriber_license", None),
+            }
+            for l in payload.items
+        ]
+
+        # Insertion logic
+        max_retries = 3
+        mi_obj = None
+        for attempt in range(max_retries):
+            # Use nested transaction for safe retry
+            nested = await db.begin_nested()
+            try:
+                await assert_prescriber_present_on_lines(
+                    db, lines=line_dicts, source_type="material_issue", user_id=current_user.id,
+                )
+                issue_number = await generate_number(db, "warehouse", "material_issue")
+
+                mi = MaterialIssue(
+                    issue_number=issue_number,
+                    mr_id=payload.mr_id,
+                    indent_id=payload.indent_id,
+                    warehouse_id=payload.warehouse_id,
+                    destination_warehouse_id=payload.destination_warehouse_id,
+                    issue_date=payload.issue_date,
+                    department=payload.department,
+                    issued_to=payload.issued_to,
+                    remarks=payload.remarks,
+                    status="draft",
+                    issued_by=current_user.id,
+                )
+                db.add(mi)
+                await db.flush()
+
+                for item in payload.items:
+                    amount = item.qty * item.rate
+                    cleaned_sns = await clean_serial_numbers(db, item.item_id, item.serial_numbers)
+                    mi_item = MaterialIssueItem(
+                        issue_id=mi.id,
+                        item_id=item.item_id,
+                        batch_id=item.batch_id,
+                        qty=item.qty,
+                        uom_id=item.uom_id,
+                        bin_id=item.bin_id,
+                        rate=item.rate,
+                        amount=amount,
+                        prescriber_name=getattr(item, "prescriber_name", None),
+                        prescriber_license=getattr(item, "prescriber_license", None),
+                        patient_name=getattr(item, "patient_name", None),
+                        patient_id_text=getattr(item, "patient_id_text", None),
+                        serial_numbers=cleaned_sns,
+                    )
+                    db.add(mi_item)
+
+                await db.flush()
+                mi_obj = mi
+                break
+            except IntegrityError:
+                await nested.rollback()
+                if attempt == max_retries - 1:
+                    raise HTTPException(
+                        status_code=409,
+                        detail="Failed to generate unique issue number after multiple retries"
+                    )
+        
+        if mi_obj:
+            created_issues.append({"id": mi_obj.id, "issue_number": mi_obj.issue_number})
+
+    await db.commit()
+    return {"message": "Bulk material issues created successfully", "created_issues": created_issues}
+
+
+@router.post("/material-issues/bulk-issue", dependencies=[Depends(require_key("warehouse-material-issues"))])
+async def bulk_issue_material(
+    payload: BulkMaterialIssueConfirm,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_any_role(
+        "super_admin", "admin", "warehouse_manager", "warehouse_operator", "store_keeper"
+    )),
+):
+    """Bulk confirm and issue draft material issues, reserving stock, running safety checks, and crediting indents."""
+    if not payload.issue_ids:
+        raise HTTPException(status_code=400, detail="Issue IDs list cannot be empty")
+
+    issued_results = []
+    
+    for issue_id in payload.issue_ids:
+        # Lock and retrieve the MI
+        result = await db.execute(
+            select(MaterialIssue)
+            .options(
+                selectinload(MaterialIssue.items).selectinload(MaterialIssueItem.item)
+            )
+            .where(MaterialIssue.id == issue_id)
+            .with_for_update()
+        )
+        mi = result.scalar_one_or_none()
+        if not mi:
+            raise HTTPException(status_code=404, detail=f"Material issue {issue_id} not found")
+        if mi.status != "draft":
+            raise HTTPException(status_code=400, detail=f"Only draft material issues can be issued. Issue {mi.issue_number} is already {mi.status}.")
+
+        if not mi.items or len(mi.items) == 0:
+            raise HTTPException(status_code=400, detail=f"Material issue {mi.issue_number} has no items")
+
+        # Validate serial numbers
+        serials_to_issue = []
+        for item in mi.items:
+            has_serial = bool(item.item.has_serial) if item.item else False
+            if has_serial:
+                cleaned_sns = await clean_serial_numbers(db, item.item_id, item.serial_numbers)
+                item.serial_numbers = cleaned_sns
+                qty_int = int(item.qty)
+                if not item.serial_numbers or len(item.serial_numbers) != qty_int:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Item {item.item.name if item.item else item.item_id} requires {qty_int} serial numbers, but got {len(item.serial_numbers) if item.serial_numbers else 0} on issue {mi.issue_number}."
+                    )
+                if len(item.serial_numbers) != len(set(item.serial_numbers)):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Duplicate serial numbers provided for item {item.item.name if item.item else item.item_id} on issue {mi.issue_number}."
+                    )
+                
+                sn_conds = [
+                    SerialNumber.item_id == item.item_id,
+                    SerialNumber.serial_number.in_(item.serial_numbers),
+                    SerialNumber.warehouse_id == mi.warehouse_id,
+                    SerialNumber.status == "available"
+                ]
+                if item.bin_id is not None:
+                    sn_conds.append(SerialNumber.bin_id == item.bin_id)
+                if item.batch_id is not None:
+                    sn_conds.append(SerialNumber.batch_id == item.batch_id)
+                    
+                sn_stmt = select(SerialNumber).where(and_(*sn_conds))
+                sn_rows = (await db.execute(sn_stmt)).scalars().all()
+                
+                found_serials = {s.serial_number for s in sn_rows}
+                missing_serials = set(item.serial_numbers) - found_serials
+                if missing_serials:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"The following serial numbers are not available in selected warehouse/bin/batch for issue {mi.issue_number}: {', '.join(missing_serials)}"
+                    )
+                serials_to_issue.extend(sn_rows)
+
+        # Patient safety batch expiry check
+        from datetime import date as _date
+        from app.models.warehouse import Batch as _Batch
+        batch_ids = [i.batch_id for i in mi.items if i.batch_id]
+        if batch_ids:
+            batch_rows = await db.execute(
+                select(_Batch).where(_Batch.id.in_(batch_ids))
+            )
+            today = _date.today()
+            for b in batch_rows.scalars().all():
+                exp = b.expiry_date
+                if exp is not None and hasattr(exp, "date"):
+                    exp = exp.date()
+                if exp is not None and exp <= today:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"Batch {b.batch_number} {'expired' if exp < today else 'expires today'} "
+                            f"({b.expiry_date}) — cannot issue."
+                        ),
+                    )
+
+        # Compliance gates (prescriber check)
+        from app.services.compliance_service import (
+            assert_prescriber_present_on_lines, items_requiring_prescriber, record_prescription,
+        )
+        line_dicts = [
+            {
+                "item_id": i.item_id,
+                "prescriber_name": i.prescriber_name,
+                "prescriber_license": i.prescriber_license,
+            }
+            for i in mi.items
+        ]
+        await assert_prescriber_present_on_lines(
+            db, lines=line_dicts, source_type="material_issue", user_id=current_user.id,
+        )
+        flagged_items = await items_requiring_prescriber(db, [i.item_id for i in mi.items])
+
+        # Bin validations and stock availability precheck
+        bin_ids_on_lines = [it.bin_id for it in mi.items if it.bin_id is not None]
+        bin_to_wh: dict = {}
+        if bin_ids_on_lines:
+            from app.models.warehouse import (
+                WarehouseBin as _Bin, WarehouseRack as _Rack,
+                WarehouseLine as _Line, WarehouseLocation as _Loc,
+            )
+            wh_rows = await db.execute(
+                select(_Bin.id, _Loc.warehouse_id)
+                .join(_Rack, _Rack.id == _Bin.rack_id)
+                .join(_Line, _Line.id == _Rack.line_id)
+                .join(_Loc, _Loc.id == _Line.location_id)
+                .where(_Bin.id.in_(bin_ids_on_lines))
+            )
+            bin_to_wh = {r[0]: r[1] for r in wh_rows.all()}
+
+        for item in mi.items:
+            BATCH_REQUIRED_TYPES_MI = {"medicine", "pharma", "drug", "consumable_medicine"}
+            requires_batch = (item.item.has_batch) or (
+                item.item.item_type and str(item.item.item_type).lower() in BATCH_REQUIRED_TYPES_MI
+            )
+            if requires_batch and item.batch_id is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"{item.item.item_code}: batch_id is required for batch-tracked items on issue {mi.issue_number}."
+                )
+            if item.bin_id is not None:
+                wh_for_bin = bin_to_wh.get(item.bin_id)
+                if wh_for_bin is None:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Bin {item.bin_id} not found",
+                    )
+                if wh_for_bin != mi.warehouse_id:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"Bin {item.bin_id} belongs to warehouse {wh_for_bin}, "
+                            f"but material issue {mi.issue_number} is for warehouse {mi.warehouse_id}"
+                        ),
+                    )
+            bal_conds = [
+                StockBalance.item_id == item.item_id,
+                StockBalance.warehouse_id == mi.warehouse_id,
+            ]
+            if item.batch_id is not None:
+                bal_conds.append(StockBalance.batch_id == item.batch_id)
+            else:
+                bal_conds.append(StockBalance.batch_id.is_(None))
+            if item.bin_id is not None:
+                bal_conds.append(StockBalance.bin_id == item.bin_id)
+            bal_row = await db.execute(select(StockBalance).where(and_(*bal_conds)))
+            balances = bal_row.scalars().all()
+            avail = sum((b.available_qty or Decimal("0")) for b in balances) or Decimal("0")
+            if (item.qty or Decimal("0")) > avail:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Insufficient stock for item {item.item_id} "
+                        f"(batch {item.batch_id}, bin {item.bin_id}) on issue {mi.issue_number}: "
+                        f"available={avail}, requested={item.qty}"
+                    ),
+                )
+
+        # Reserve stock
+        from app.services.stock_service import reserve_stock, _get_or_create_balance
+        for item in mi.items:
+            success = await reserve_stock(
+                db,
+                item_id=item.item_id,
+                warehouse_id=mi.warehouse_id,
+                qty=item.qty,
+                bin_id=item.bin_id,
+                batch_id=item.batch_id,
+            )
+            if not success:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Failed to reserve stock for item {item.item_id} on issue {mi.issue_number}",
+                )
+            
+            balance = await _get_or_create_balance(
+                db,
+                item_id=item.item_id,
+                warehouse_id=mi.warehouse_id,
+                bin_id=item.bin_id,
+                batch_id=item.batch_id,
+            )
+            effective_rate = balance.valuation_rate or Decimal("0")
+            item.rate = effective_rate
+            item.amount = (item.qty or Decimal("0")) * effective_rate
+
+        for s in serials_to_issue:
+            s.status = "issued"
+
+        mi.status = "issued"
+        mi.issued_by = current_user.id
+
+        # Record prescriptions
+        for item in mi.items:
+            if item.item_id in flagged_items:
+                info = flagged_items[item.item_id]
+                await record_prescription(
+                    db,
+                    source_type="material_issue",
+                    source_id=mi.id,
+                    item_id=item.item_id,
+                    batch_id=item.batch_id,
+                    qty=item.qty,
+                    drug_schedule=info["drug_schedule"],
+                    prescriber_name=item.prescriber_name,
+                    prescriber_license=item.prescriber_license,
+                    patient_name=item.patient_name,
+                    patient_id=item.patient_id_text,
+                    prescription_image_url=None,
+                    dispensed_by=current_user.id,
+                )
+
+        # Update linked indent
+        if mi.indent_id:
+            from app.models.indent import Indent, IndentItem
+            from app.models.master import UOMConversion as _UC
+            indent_result = await db.execute(
+                select(Indent).options(selectinload(Indent.items)).where(Indent.id == mi.indent_id)
+            )
+            indent = indent_result.scalar_one_or_none()
+            if indent:
+                for mi_item in mi.items:
+                    base_qty = mi_item.qty or Decimal("0")
+                    candidates = [
+                        il for il in indent.items
+                        if il.item_id == mi_item.item_id
+                    ]
+                    remaining_to_credit = Decimal(str(base_qty))
+                    for ind_item in candidates:
+                        if remaining_to_credit <= 0:
+                            break
+                        try:
+                            if (
+                                ind_item.uom_id
+                                and mi_item.uom_id
+                                and ind_item.uom_id != mi_item.uom_id
+                            ):
+                                cr = await db.execute(
+                                    select(_UC).where(
+                                        _UC.from_uom_id == mi_item.uom_id,
+                                        _UC.to_uom_id == ind_item.uom_id,
+                                    )
+                                )
+                                conv = cr.scalar_one_or_none()
+                                if conv and conv.conversion_factor:
+                                    add_qty_in_indent_uom = remaining_to_credit * Decimal(str(conv.conversion_factor))
+                                else:
+                                    cr2 = await db.execute(
+                                        select(_UC).where(
+                                            _UC.from_uom_id == ind_item.uom_id,
+                                            _UC.to_uom_id == mi_item.uom_id,
+                                        )
+                                    )
+                                    conv2 = cr2.scalar_one_or_none()
+                                    if conv2 and conv2.conversion_factor:
+                                        add_qty_in_indent_uom = remaining_to_credit / Decimal(str(conv2.conversion_factor))
+                                    else:
+                                        add_qty_in_indent_uom = remaining_to_credit
+                            else:
+                                add_qty_in_indent_uom = remaining_to_credit
+                        except Exception:
+                            add_qty_in_indent_uom = remaining_to_credit
+
+                        target = Decimal(str(ind_item.approved_qty or ind_item.requested_qty or 0))
+                        already = Decimal(str(ind_item.issued_qty or 0))
+                        capacity = target - already
+                        if capacity <= 0:
+                            continue
+                        take = min(add_qty_in_indent_uom, capacity)
+                        ind_item.issued_qty = already + take
+                        if take == add_qty_in_indent_uom:
+                            consumed_in_mi_uom = remaining_to_credit
+                        else:
+                            try:
+                                if add_qty_in_indent_uom > 0:
+                                    consumed_in_mi_uom = remaining_to_credit * (take / add_qty_in_indent_uom)
+                                else:
+                                    consumed_in_mi_uom = remaining_to_credit
+                            except Exception:
+                                consumed_in_mi_uom = remaining_to_credit
+                        remaining_to_credit -= consumed_in_mi_uom
+                    if remaining_to_credit > 0 and candidates:
+                        last_line = candidates[-1]
+                        last_line.issued_qty = (last_line.issued_qty or Decimal("0")) + remaining_to_credit
+        
+        await db.flush()
+        issued_results.append({"id": mi.id, "issue_number": mi.issue_number})
+
+    await db.commit()
+    return {"message": "Bulk material issues confirmed and issued successfully", "issued_issues": issued_results}
 
 
 @router.get("/material-issues/{issue_id}", response_model=MaterialIssueResponse, dependencies=[Depends(require_key("warehouse-material-issues"))])
@@ -2985,15 +3612,25 @@ async def get_material_issue(
         f"{mi.issued_to_user.first_name} {mi.issued_to_user.last_name or ''}".strip()
         or mi.issued_to_user.username
     ) if mi.issued_to_user else None
+    response["issued_to_employee_code"] = mi.issued_to_user.employee_code if mi.issued_to_user else None
     # Enrich with indent_number so the dispatch form can display it without an extra call
     if mi.indent_id:
-        indent_row = await db.get(Indent, mi.indent_id)
+        from app.models.indent import Indent as _Indent
+        ind_res = await db.execute(
+            select(_Indent)
+            .options(selectinload(_Indent.position))
+            .where(_Indent.id == mi.indent_id)
+        )
+        indent_row = ind_res.scalar_one_or_none()
         response["indent_number"] = indent_row.indent_number if indent_row else None
+        response["position_code"] = indent_row.position.code if (indent_row and indent_row.position) else None
     else:
         response["indent_number"] = None
+        response["position_code"] = None
     for i, item in enumerate(mi.items):
         response["items"][i]["item_name"] = item.item.name if item.item else None
         response["items"][i]["item_code"] = item.item.item_code if item.item else None
+        response["items"][i]["item_type"] = item.item.item_type if item.item else None
         response["items"][i]["uom_name"] = item.uom.name if item.uom else None
         response["items"][i]["batch_number"] = item.batch.batch_number if item.batch else None
         response["items"][i]["serial_numbers"] = item.serial_numbers
@@ -3098,6 +3735,7 @@ async def update_material_issue(
         # Add new items
         for item in payload.items:
             amount = item.qty * item.rate
+            cleaned_sns = await clean_serial_numbers(db, item.item_id, item.serial_numbers)
             mi_item = MaterialIssueItem(
                 issue_id=mi.id,
                 item_id=item.item_id,
@@ -3111,7 +3749,7 @@ async def update_material_issue(
                 prescriber_license=getattr(item, "prescriber_license", None),
                 patient_name=getattr(item, "patient_name", None),
                 patient_id_text=getattr(item, "patient_id_text", None),
-                serial_numbers=item.serial_numbers,
+                serial_numbers=cleaned_sns,
             )
             db.add(mi_item)
 
@@ -3171,6 +3809,8 @@ async def issue_material(
     for item in mi.items:
         has_serial = bool(item.item.has_serial) if item.item else False
         if has_serial:
+            cleaned_sns = await clean_serial_numbers(db, item.item_id, item.serial_numbers)
+            item.serial_numbers = cleaned_sns
             qty_int = int(item.qty)
             if not item.serial_numbers or len(item.serial_numbers) != qty_int:
                 raise HTTPException(
@@ -3485,6 +4125,33 @@ async def issue_material(
             pass
 
     await db.flush()
+
+    try:
+        from app.services.notification_service import create_notification
+        await create_notification(
+            db=db,
+            user_id=current_user.id,
+            title=f"Material Issued: {mi.issue_number}",
+            message=f"Material issue {mi.issue_number} has been confirmed and stock has been reserved.",
+            notification_type="success",
+            module="warehouse",
+            reference_type="material_issue",
+            reference_id=mi.id,
+        )
+        if mi.issued_to and mi.issued_to != current_user.id:
+            await create_notification(
+                db=db,
+                user_id=mi.issued_to,
+                title=f"Material Issued to You: {mi.issue_number}",
+                message=f"Material issue {mi.issue_number} has been raised for you. Please acknowledge receipt upon delivery.",
+                notification_type="info",
+                module="warehouse",
+                reference_type="material_issue",
+                reference_id=mi.id,
+            )
+    except Exception as notif_err:
+        logger.warning("Failed to create notification for issue_material: %s", notif_err)
+
     return {"id": mi.id, "issue_number": mi.issue_number, "message": "Material issued successfully, stock reserved"}
 
 
@@ -3859,6 +4526,34 @@ async def cancel_material_issue(
 
     mi.status = "cancelled"
     await db.flush()
+
+    try:
+        from app.services.notification_service import create_notification
+        notif_users = {mi.issued_by, mi.issued_to} - {None, current_user.id}
+        for uid in notif_users:
+            await create_notification(
+                db=db,
+                user_id=uid,
+                title=f"Material Issue Cancelled: {mi.issue_number}",
+                message=f"Material issue {mi.issue_number} has been cancelled.",
+                notification_type="warning",
+                module="warehouse",
+                reference_type="material_issue",
+                reference_id=mi.id,
+            )
+        await create_notification(
+            db=db,
+            user_id=current_user.id,
+            title=f"Material Issue Cancelled: {mi.issue_number}",
+            message=f"You have cancelled material issue {mi.issue_number}.",
+            notification_type="warning",
+            module="warehouse",
+            reference_type="material_issue",
+            reference_id=mi.id,
+        )
+    except Exception as notif_err:
+        logger.warning("Failed to create notification for cancel_material_issue: %s", notif_err)
+
     return {"id": mi.id, "issue_number": mi.issue_number, "message": "Material issue cancelled"}
 
 
@@ -3877,8 +4572,8 @@ async def acknowledge_material_issue(
     mi = result.scalar_one_or_none()
     if not mi:
         raise HTTPException(status_code=404, detail="Material issue not found")
-    if mi.status != "dispatched":
-        raise HTTPException(status_code=400, detail="Only dispatched material issues can be acknowledged")
+    if mi.status not in ("dispatched", "received"):
+        raise HTTPException(status_code=400, detail="Only dispatched or received material issues can be acknowledged")
 
     # BUG-ISS-021 — recipient-or-admin restriction. A non-admin must be the
     # MI's issued_to user before acknowledging on their behalf.
@@ -4033,6 +4728,33 @@ async def acknowledge_material_issue(
                     indent.status = "partially_fulfilled"  # partially acked → stays in pool with remaining qty
 
     await db.flush()
+
+    try:
+        from app.services.notification_service import create_notification
+        await create_notification(
+            db=db,
+            user_id=current_user.id,
+            title=f"Material Issue Acknowledged: {mi.issue_number}",
+            message=f"You have acknowledged receipt of material issue {mi.issue_number}. Inventory has been updated.",
+            notification_type="success",
+            module="warehouse",
+            reference_type="material_issue",
+            reference_id=mi.id,
+        )
+        if mi.issued_by and mi.issued_by != current_user.id:
+            await create_notification(
+                db=db,
+                user_id=mi.issued_by,
+                title=f"Material Issue Acknowledged: {mi.issue_number}",
+                message=f"Material issue {mi.issue_number} has been acknowledged by the recipient. The transaction is complete.",
+                notification_type="success",
+                module="warehouse",
+                reference_type="material_issue",
+                reference_id=mi.id,
+            )
+    except Exception as notif_err:
+        logger.warning("Failed to create notification for acknowledge_material_issue: %s", notif_err)
+
     return {"id": mi.id, "issue_number": mi.issue_number, "message": "Material issue acknowledged"}
 
 

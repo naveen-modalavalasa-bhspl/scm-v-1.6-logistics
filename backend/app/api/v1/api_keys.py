@@ -90,11 +90,17 @@ async def create_api_key(
     # Parse scopes back to list for response
     parsed_scopes = json.loads(new_key.scopes) if new_key.scopes else []
 
+    linked_ids = new_key.linked_user_ids
+    if isinstance(linked_ids, str):
+        try:
+            linked_ids = json.loads(linked_ids)
+        except Exception:
+            linked_ids = []
     return ApiKeyReveal(
         id=new_key.id,
         name=new_key.name,
         scopes=parsed_scopes,
-        linked_user_ids=new_key.linked_user_ids or [],
+        linked_user_ids=linked_ids or [],
         endpoint=new_key.endpoint,
         expires_at=new_key.expires_at,
         is_active=new_key.is_active,
@@ -117,12 +123,18 @@ async def list_api_keys(
     response_keys = []
     for key in keys:
         parsed_scopes = json.loads(key.scopes) if key.scopes else []
+        linked_ids = key.linked_user_ids
+        if isinstance(linked_ids, str):
+            try:
+                linked_ids = json.loads(linked_ids)
+            except Exception:
+                linked_ids = []
         response_keys.append(
             ApiKeyResponse(
                 id=key.id,
                 name=key.name,
                 scopes=parsed_scopes,
-                linked_user_ids=key.linked_user_ids or [],
+                linked_user_ids=linked_ids or [],
                 endpoint=key.endpoint,
                 expires_at=key.expires_at,
                 is_active=key.is_active,

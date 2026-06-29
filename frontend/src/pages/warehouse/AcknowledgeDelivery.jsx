@@ -1,30 +1,32 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Button, Form, Input, InputNumber, Select, Space, Card, Row, Col,
-  Table, Divider, Typography, Tag, Spin, App, Upload, Image, Alert
+  Table, Divider, Typography, Tag, Spin, App, Upload, Image, Alert, Collapse, Descriptions, Tooltip
 } from 'antd';
 import {
-  ArrowLeftOutlined, CheckCircleOutlined,
-  UploadOutlined, WarningOutlined, SearchOutlined
+  ArrowLeftOutlined, CheckCircleOutlined, UploadOutlined,
+  SearchOutlined, BarcodeOutlined, GiftOutlined, EnvironmentOutlined,
+  PictureOutlined, SafetyCertificateOutlined, AlertOutlined
 } from '@ant-design/icons';
+import Barcode from 'react-barcode';
+import { QRCodeSVG } from 'qrcode.react';
 import api from '../../config/api';
 import PageHeader from '../../components/PageHeader';
-import SerialNumbersModal from '../../components/SerialNumbersModal';
-import { getErrorMessage, formatNumber } from '../../utils/helpers';
+import { formatNumber, formatDate } from '../../utils/helpers';
 import useAuthStore from '../../store/authStore';
 
 const { TextArea } = Input;
 const { Title, Text } = Typography;
-
-
+const { Option } = Select;
+import AssetCodesTreeModal from '../../components/AssetCodesTreeModal';
+const { Panel } = Collapse;
 
 const AcknowledgeDelivery = () => {
   const { message } = App.useApp();
-  const { id } = useParams();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const queryDispatchNo = searchParams.get('dispatchNo');
+  const queryBarcode = searchParams.get('barcode');
 
   const [form] = Form.useForm();
   const user = useAuthStore(s => s.user);
@@ -32,187 +34,144 @@ const AcknowledgeDelivery = () => {
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
+  // Search/Scan state
+  const [barcodeInput, setBarcodeInput] = useState('');
+  const [activeScanType, setActiveScanType] = useState(null); // 'parent' or 'child'
+  const [consignmentData, setConsignmentData] = useState(null);
+  const [packageData, setPackageData] = useState(null);
+
   // SCM lookup states
   const [warehouses, setWarehouses] = useState([]);
-  const [dispatches, setDispatches] = useState([]);
-
-  // User operating choices
   const [selectedWarehouseId, setSelectedWarehouseId] = useState(null);
-  const [selectedDispatchId, setSelectedDispatchId] = useState(null);
-
-  // Active dispatch details
-  const [dispatch, setDispatch] = useState(null);
-  const [items, setItems] = useState([]);
   const [uploadedUrls, setUploadedUrls] = useState({});
-  const [custodyChain, setCustodyChain] = useState([]);
-  const hasPendingCustody = custodyChain.some(step => step.status === 'pending');
 
+  // Modal states for selectable serial numbers in delivery acknowledgement
+  const [modalOpen, setModalOpen] = useState(false);
+  const [activeRow, setActiveRow] = useState(null);
 
+  const mockRawRows = React.useMemo(() => {
+    if (!activeRow) return [];
+    const pool = activeRow.serial_numbers || [];
+    return [{
+      location: 'Packed Package',
+      bin_name: 'Package Area',
+      batch_number: activeRow.batch_number || 'Packed Batch',
+      serial_numbers: pool,
+      asset_codes: pool,
+      consumable_codes: pool,
+    }];
+  }, [activeRow]);
 
-  // Fetch initial masters list
+  const handleSaveModalCodes = (selected) => {
+    if (activeRow) {
+      form.setFieldsValue({
+        [`serials_rec_${activeRow.id}`]: selected,
+        [`qty_rec_${activeRow.id}`]: selected.length,
+        [`qty_acc_${activeRow.id}`]: selected.length,
+      });
+    }
+    setModalOpen(false);
+    setActiveRow(null);
+  };
+
+  // Fetch initial warehouses list
   useEffect(() => {
     const fetchMasters = async () => {
       try {
         setLoading(true);
-        const [warehouseRes, dispatchRes] = await Promise.all([
-          api.get('/masters/warehouses', { params: { page_size: 200 } }),
-          api.get('/warehouse/dispatch', { params: { page_size: 200 } })
-        ]);
-
+        const warehouseRes = await api.get('/masters/warehouses', { params: { page_size: 200 } });
         const whsList = warehouseRes.data?.items || warehouseRes.data?.data || warehouseRes.data || [];
         setWarehouses(whsList);
 
-        const dispList = dispatchRes.data?.items || dispatchRes.data?.data || dispatchRes.data || [];
-        setDispatches(dispList);
-
-        // Pre-select user's mapped warehouse or first operating warehouse if none selected
         if (user && user.warehouse_id) {
           setSelectedWarehouseId(user.warehouse_id);
         } else if (whsList.length > 0) {
           setSelectedWarehouseId(whsList[0].id);
         }
       } catch (err) {
-        message.error("Failed to load warehouses and dispatches master registries.");
+        message.error("Failed to load warehouses.");
       } finally {
         setLoading(false);
       }
     };
     fetchMasters();
-  }, []);
+  }, [user, message]);
 
-  // Recurse function to resolve sub-warehouses
-  const getDescendantWarehouseIds = (parentWhId, allWhs) => {
-    const descendants = [];
-    const recurse = (id) => {
-      const children = allWhs.filter(w => w.parent_id === id);
-      children.forEach(c => {
-        descendants.push(c.id);
-        recurse(c.id);
-      });
-    };
-    recurse(parentWhId);
-    return descendants;
-  };
-
-  // Filter available dispatches for operating warehouse based on parent relationship
-  const filteredDispatches = dispatches.filter(d => {
-    if (!selectedWarehouseId) return false;
-
-    const opWh = warehouses.find(w => w.id === selectedWarehouseId);
-    if (!opWh) return false;
-
-    // See only dispatches destined to itself or its descendants
-    const descendants = getDescendantWarehouseIds(selectedWarehouseId, warehouses);
-    const allowedIds = [selectedWarehouseId, ...descendants];
-    return allowedIds.includes(d.destination_warehouse_id);
-  });
-
-  // Handle URL Deep link matching on load
+  // Pre-fill barcode from URL query param if present
   useEffect(() => {
-    if (dispatches.length > 0) {
-      let targetId = null;
-      if (id) {
-        const found = dispatches.find(d => String(d.id) === String(id) || d.dispatch_id === id);
-        if (found) targetId = found.id;
-      } else if (queryDispatchNo) {
-        const found = dispatches.find(d => d.dispatch_id === queryDispatchNo);
-        if (found) targetId = found.id;
-      }
+    if (queryBarcode) {
+      setBarcodeInput(queryBarcode);
+      handleScan(queryBarcode);
+    }
+  }, [queryBarcode]);
 
-      if (targetId) {
-        setSelectedDispatchId(targetId);
-        // Ensure the operating warehouse matches the destination warehouse
-        const activeDisp = dispatches.find(d => d.id === targetId);
-        if (activeDisp && activeDisp.destination_warehouse_id) {
-          setSelectedWarehouseId(activeDisp.destination_warehouse_id);
+  // Pre-fill user info in form
+  useEffect(() => {
+    if (user) {
+      form.setFieldsValue({
+        acknowledged_by_name: `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.username || '',
+        acknowledged_by_employee_code: user.employee_code || '',
+        acknowledged_by_designation: user.designation || 'Warehouse operator',
+        acknowledged_by_department: user.department || 'SCM',
+        acknowledged_by_phone: user.phone || '9998880000',
+      });
+    }
+  }, [user, form]);
+
+  const handleScan = async (code = barcodeInput) => {
+    if (!code) {
+      message.warning('Please enter or scan a package/parent barcode.');
+      return;
+    }
+    setLoading(true);
+    setConsignmentData(null);
+    setPackageData(null);
+    setActiveScanType(null);
+
+    let parsedCode = code.trim();
+    if (parsedCode.includes('\n')) {
+      const lines = parsedCode.split('\n');
+      const codeLine = lines.find(l => l.trim().startsWith('Code:'));
+      if (codeLine) {
+        parsedCode = codeLine.replace('Code:', '').trim();
+      } else {
+        const matLine = lines.find(l => l.trim().startsWith('Material:'));
+        if (matLine) {
+          parsedCode = matLine.replace('Material:', '').trim();
         }
       }
     }
-  }, [id, queryDispatchNo, dispatches]);
 
-  // Load specific dispatch details on selection
-  useEffect(() => {
-    const fetchDispatchData = async () => {
-      if (!selectedDispatchId) {
-        setDispatch(null);
-        setItems([]);
-        return;
-      }
-      setLoading(true);
-      try {
-        const res = await api.get(`/warehouse/dispatch/${selectedDispatchId}`);
-        const data = res.data;
-        setDispatch(data);
-
-        // Map the dispatch items — carry serial numbers from dispatch
-        const initialItems = (data.items || []).map((it, idx) => ({
-          key: it.id || idx,
-          id: it.id,
-          material_id: it.material_id,
-          material_name: it.material_name || `Item ${it.material_id}`,
-          material_code: it.material_code || `CODE-${it.material_id}`,
-          quantity_dispatched: Number(it.dispatched_quantity || 0),
-          quantity_received: data.delivery_acknowledged ? Number(it.acknowledged_qty || 0) : Number(it.dispatched_quantity || 0),
-          uom: it.uom || 'Nos',
-          serial_numbers: it.serial_numbers || [],
-          has_serial: !!(it.has_serial || (it.serial_numbers && it.serial_numbers.length > 0)),
-          remarks: data.delivery_acknowledged ? (it.remarks || '') : ''
-        }));
-
-        setItems(initialItems);
-
-        // Fetch custody chain if multi-level
-        if (data.dispatch_mode === 'multi-level') {
-          try {
-            const chainRes = await api.get(`/warehouse/dispatch/${selectedDispatchId}/custody-chain`);
-            setCustodyChain(chainRes.data || []);
-          } catch (chainErr) {
-            console.error('Failed to load custody chain', chainErr);
-            setCustodyChain([]);
-          }
-        } else {
-          setCustodyChain([]);
-        }
-
-        // Pre-fill fields from acknowledgement data if acknowledged
-        if (data.delivery_acknowledged) {
+    try {
+      const res = await api.get(`/consignment/scan-any/${encodeURIComponent(parsedCode)}`);
+      if (res.data) {
+        const { type, data } = res.data;
+        if (type === 'parent') {
+          setConsignmentData(data);
+          setActiveScanType('consignment');
+          message.success('Consignment details loaded successfully.');
           form.setFieldsValue({
-            acknowledged_by_name: data.delivery_acknowledged_by_name || '',
-            acknowledged_by_phone: data.delivery_acknowledged_by_phone || '',
-            acknowledged_by_designation: data.delivery_acknowledged_by_designation || '',
-            acknowledged_by_department: data.delivery_acknowledged_by_department || '',
-            receiver_id_proof_type: data.receiver_id_proof_type || 'NONE',
-            receiver_id_proof_number: data.receiver_id_proof_number || '',
-            actual_delivery_location: data.actual_delivery_location || '',
-            photo_review: data.delivery_photo_urls?.review || '',
-            signature_image: data.receiver_signature_url || undefined
+            acknowledged_by_name: data.receiver_name || form.getFieldValue('acknowledged_by_name'),
+            acknowledged_by_employee_code: data.receiver_employee_code || form.getFieldValue('acknowledged_by_employee_code'),
+            acknowledged_by_designation: data.receiver_position_code || form.getFieldValue('acknowledged_by_designation'),
           });
-          setUploadedUrls({
-            signature_image: data.receiver_signature_url || undefined,
-            materials_photos: data.delivery_photo_urls?.photo || undefined
-          });
-        } else {
+        } else if (type === 'child') {
+          setPackageData(data);
+          setActiveScanType('package');
+          message.success('Package details loaded successfully.');
           form.setFieldsValue({
-            acknowledged_by_name: '',
-            acknowledged_by_phone: '',
-            acknowledged_by_designation: '',
-            acknowledged_by_department: '',
-            receiver_id_proof_type: 'NONE',
-            receiver_id_proof_number: '',
-            actual_delivery_location: '',
-            photo_review: '',
-            signature_image: undefined
+            acknowledged_by_name: data.receiver_name || form.getFieldValue('acknowledged_by_name'),
+            acknowledged_by_employee_code: data.receiver_employee_code || form.getFieldValue('acknowledged_by_employee_code'),
+            acknowledged_by_designation: data.receiver_position_code || form.getFieldValue('acknowledged_by_designation'),
           });
-          setUploadedUrls({});
         }
-      } catch (err) {
-        message.error('Failed to load dispatch details: ' + getErrorMessage(err));
-      } finally {
-        setLoading(false);
       }
-    };
-    fetchDispatchData();
-  }, [selectedDispatchId, form]);
+    } catch (err) {
+      message.error(err.response?.data?.detail || 'Barcode not recognized. Please scan a valid consignment or package code.');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleUploadFile = async (file, fieldKey) => {
     const formData = new FormData();
@@ -235,322 +194,178 @@ const AcknowledgeDelivery = () => {
     }
   };
 
-
-
-  const distributeQuantityAndSerials = (itemsList, targetMaterialId, totalReceivedQty, selectedSerials) => {
-    let remainingQty = totalReceivedQty;
-    let serialIndex = 0;
-
-    return itemsList.map(item => {
-      if (item.material_id === targetMaterialId) {
-        const allocatedQty = Math.min(item.quantity_dispatched, remainingQty);
-        remainingQty -= allocatedQty;
-
-        let itemSerials = [];
-        if (item.has_serial && selectedSerials) {
-          const numSerialsNeeded = Math.round(allocatedQty);
-          itemSerials = selectedSerials.slice(serialIndex, serialIndex + numSerialsNeeded);
-          serialIndex += numSerialsNeeded;
-        } else if (item.has_serial) {
-          const numSerialsNeeded = Math.round(allocatedQty);
-          itemSerials = (item.serial_numbers || []).slice(0, numSerialsNeeded);
-        }
-
-        return {
-          ...item,
-          quantity_received: allocatedQty,
-          serial_numbers: itemSerials
-        };
-      }
-      return item;
-    });
-  };
-
-  const handleReceivedQtyChange = (materialId, val) => {
-    setItems(prev => {
-      const existingSerials = prev
-        .filter(it => it.material_id === materialId)
-        .reduce((acc, it) => [...acc, ...(it.serial_numbers || [])], []);
-      return distributeQuantityAndSerials(prev, materialId, val || 0, existingSerials);
-    });
-  };
-
-  const handleRemarksChange = (materialId, val) => {
-    setItems(prev => prev.map(it => it.material_id === materialId ? { ...it, remarks: val } : it));
-  };
-
-  const handleSerialNumbersChange = (materialId, serials) => {
-    setItems(prev => {
-      const totalReceived = prev
-        .filter(it => it.material_id === materialId)
-        .reduce((acc, it) => acc + (it.quantity_received || 0), 0);
-      return distributeQuantityAndSerials(prev, materialId, totalReceived, serials);
-    });
-  };
-
-  const groupedItems = React.useMemo(() => {
-    const grouped = {};
-    items.forEach(it => {
-      const key = it.material_id;
-      if (!grouped[key]) {
-        grouped[key] = {
-          key: it.material_id,
-          material_id: it.material_id,
-          material_name: it.material_name,
-          material_code: it.material_code,
-          quantity_dispatched: 0,
-          quantity_received: 0,
-          uom: it.uom,
-          serial_numbers: [],
-          has_serial: false,
-          remarks: []
-        };
-      }
-      grouped[key].quantity_dispatched += it.quantity_dispatched;
-      grouped[key].quantity_received += it.quantity_received;
-      if (it.serial_numbers) {
-        grouped[key].serial_numbers = [...grouped[key].serial_numbers, ...it.serial_numbers];
-      }
-      if (it.has_serial) {
-        grouped[key].has_serial = true;
-      }
-      if (it.remarks) {
-        grouped[key].remarks.push(it.remarks);
-      }
-    });
-
-    return Object.values(grouped).map(g => ({
-      ...g,
-      remarks: g.remarks.filter(Boolean).join('; ')
-    }));
-  }, [items]);
-
   const handleSubmit = async () => {
-    if (!dispatch) {
-      message.warning("Please select a valid dispatch order to acknowledge.");
+    const values = await form.validateFields().catch(() => null);
+    if (!values) return;
+
+    if (!uploadedUrls.signature_image) {
+      message.error('Signature / Stamp upload is mandatory!');
       return;
     }
 
+    setSubmitting(true);
     try {
-      const values = await form.validateFields();
-
-      const signatureUrl = uploadedUrls.signature_image;
-      if (!signatureUrl) {
-        message.error('Signature image proof is mandatory!');
-        return;
-      }
-
-      // Validate that selected serials match quantity_received if has_serial is true
-      for (const item of items) {
-        if (item.has_serial) {
-          const serialCount = (item.serial_numbers || []).length;
-          if (serialCount !== Math.round(item.quantity_received)) {
-            message.error(`Please select exactly ${Math.round(item.quantity_received)} serial number(s) for ${item.material_name} (currently selected: ${serialCount})`);
-            return;
+      if (activeScanType === 'package') {
+        // Enforce that selected serials match Accepted Qty
+        for (const item of packageData.items || []) {
+          if (item.serial_numbers && item.serial_numbers.length > 0) {
+            const qtyAcc = values[`qty_acc_${item.id}`] !== undefined ? values[`qty_acc_${item.id}`] : item.quantity_packed;
+            const serialsRcvd = values[`serials_rec_${item.id}`] !== undefined ? values[`serials_rec_${item.id}`] : (item.serial_numbers || []);
+            if (serialsRcvd.length !== qtyAcc) {
+              message.error(`Please select exactly ${qtyAcc} serial/asset code(s) for ${item.material_name}. Currently selected: ${serialsRcvd.length}`);
+              setSubmitting(false);
+              return;
+            }
           }
         }
+
+        // Prepare single package payload
+        const payload = {
+          package_id: packageData.id,
+          acknowledged_by_name: values.acknowledged_by_name,
+          acknowledged_by_designation: values.acknowledged_by_designation || 'Storekeeper',
+          acknowledged_by_phone: values.acknowledged_by_phone,
+          acknowledged_by_employee_code: values.acknowledged_by_employee_code,
+          receiver_signature_url: uploadedUrls.signature_image,
+          photos: uploadedUrls.materials_photos ? [uploadedUrls.materials_photos] : [],
+          remarks: values.remarks || 'Received successfully',
+          packaging_condition: values.packaging_condition || 'INTACT',
+          seal_intact: values.seal_intact !== false,
+          seal_number_verified: !!packageData.seal_number,
+          latitude: null,
+          longitude: null,
+          geo_fence_verified: false,
+          device_id: 'WEB_PORTAL',
+          ip_address: '127.0.0.1',
+          items: (packageData.items || []).map(item => {
+            const qtyRec = values[`qty_rec_${item.id}`] !== undefined ? values[`qty_rec_${item.id}`] : item.quantity_packed;
+            const qtyAcc = values[`qty_acc_${item.id}`] !== undefined ? values[`qty_acc_${item.id}`] : qtyRec;
+            const serialsRcvd = values[`serials_rec_${item.id}`] !== undefined ? values[`serials_rec_${item.id}`] : (item.serial_numbers || []);
+            return {
+              package_item_id: item.id,
+              quantity_received: qtyRec,
+              quantity_accepted: qtyAcc,
+              quantity_rejected: Math.max(0, qtyRec - qtyAcc),
+              quantity_damaged: 0,
+              item_condition: values[`condition_${item.id}`] || 'GOOD',
+              serial_numbers_received: serialsRcvd,
+            };
+          }),
+        };
+
+        await api.post('/consignment/acknowledge', payload);
+        message.success('Package delivery acknowledged successfully!');
+        navigate('/logistics/consignments');
+      } else if (activeScanType === 'consignment') {
+        // Mark consignment as delivered (state transition only)
+        await api.post(`/consignment/${consignmentData.id}/deliver`);
+        message.success('Consignment marked as DELIVERED successfully!');
+        navigate('/logistics/consignments');
       }
-
-      setSubmitting(true);
-
-      const payload = {
-        acknowledgement_type: items.some(it => it.quantity_received < it.quantity_dispatched) ? 'PARTIAL_DELIVERY' : 'FULL_DELIVERY',
-        acknowledged_by_name: values.acknowledged_by_name || 'Receiver Rep',
-        acknowledged_by_designation: values.acknowledged_by_designation || 'Warehouse operator',
-        acknowledged_by_department: values.acknowledged_by_department || 'SCM',
-        acknowledged_by_phone: values.acknowledged_by_phone || '9998880000',
-        acknowledged_by_email: values.acknowledged_by_email || 'rep@bhspl.com',
-        acknowledged_by_employee_code: values.acknowledged_by_employee_code || 'EMP-ACK',
-        destination_warehouse_id: dispatch.destination_warehouse_id,
-        destination_user_id: dispatch.destination_user_id,
-        actual_delivery_location: values.actual_delivery_location || '',
-        verification_method: 'DIGITAL_SIGNATURE',
-        receiver_signature_url: signatureUrl,
-        receiver_signature_captured_via: 'FILE_UPLOAD',
-        receiver_id_proof_type: values.receiver_id_proof_type || 'NONE',
-        receiver_id_proof_number: values.receiver_id_proof_number || '',
-        receiver_id_proof_document_url: '',
-        delivery_photos: uploadedUrls.materials_photos ? { photo: uploadedUrls.materials_photos, review: values.photo_review || '' } : {},
-        delivery_latitude: null,
-        delivery_longitude: null,
-        geo_fence_verified: false,
-        device_id: 'BROWSER_CLIENT',
-        ip_address: '127.0.0.1',
-        total_items_expected: items.reduce((acc, it) => acc + it.quantity_dispatched, 0),
-        total_items_received: items.reduce((acc, it) => acc + it.quantity_received, 0),
-        total_items_damaged: 0,
-        total_items_rejected: 0,
-        goods_condition: 'GOOD',
-        quality_check_performed: true,
-        quality_checked_by: values.acknowledged_by_name || 'Receiver Rep',
-        quality_check_remarks: values.quality_check_remarks || 'Standard visual checkout completed.',
-        packaging_condition: 'INTACT',
-        seal_intact: true,
-        seal_number_verified: '',
-        temperature_recorded: null,
-        humidity_recorded: null,
-        discrepancy_reported: items.some(it => it.quantity_received < it.quantity_dispatched),
-        discrepancy_type: items.some(it => it.quantity_received < it.quantity_dispatched) ? 'QUANTITY_MISMATCH' : null,
-        discrepancy_description: values.discrepancy_description || '',
-        items: items.map(item => ({
-          dispatch_item_id: item.id,
-          material_id: item.material_id,
-          batch_number: item.batch_number || null,
-          serial_numbers: (item.serial_numbers || []).filter(s => s && s.trim()),
-          quantity_dispatched: item.quantity_dispatched,
-          quantity_received: item.quantity_received,
-          quantity_accepted: item.quantity_received,
-          quantity_rejected: Math.max(0, item.quantity_dispatched - item.quantity_received),
-          quantity_damaged: 0,
-          // DB ENUM: GOOD | DAMAGED | EXPIRED | DEFECTIVE | WRONG_ITEM  ('PARTIAL' is NOT valid)
-          unit_of_measure: item.uom || item.uom_name || 'Pcs',
-          item_condition: item.quantity_received >= item.quantity_dispatched ? 'GOOD' : 'DAMAGED',
-          rejection_reason: item.quantity_received < item.quantity_dispatched ? 'Short quantity received' : null,
-          damage_description: null,
-          item_photo_urls: [],
-          remarks: item.remarks || null,
-        }))
-      };
-
-      const response = await api.post(`/outbound/dispatch/${dispatch.id}/acknowledge`, payload);
-      message.success(response.data.message || 'Delivery Acknowledged Successfully!');
-      navigate('/logistics/dispatch');
     } catch (err) {
-      if (err?.errorFields) return;
-      const errMsg = err?.response?.data?.detail || err?.message || 'Unknown error';
-      message.error('Failed to acknowledge delivery: ' + errMsg);
+      console.error(err);
+      message.error(err.response?.data?.detail || 'Failed to submit receipt acknowledgement.');
     } finally {
       setSubmitting(false);
     }
   };
 
-  const columns = [
-    {
-      title: 'Material Name',
-      key: 'material',
-      render: (_, r) => (
-        <div>
-          <Text strong style={{ color: '#0f172a' }}>{r.material_name}</Text>
-          {r.material_code && (
-            <span style={{ fontSize: '11px', color: '#64748b', marginLeft: '8px', fontFamily: 'monospace' }}>
-              ({r.material_code})
-            </span>
-          )}
-        </div>
-      )
-    },
-    {
-      title: 'Dispatched Qty',
-      dataIndex: 'quantity_dispatched',
-      key: 'quantity_dispatched',
-      width: 140,
-      render: (val, r) => <span style={{ fontWeight: 600, color: '#475569' }}>{val} {r.uom}</span>
-    },
-    {
-      title: 'Received Qty',
-      key: 'quantity_received',
-      width: 160,
-      render: (_, r) => (
-        <InputNumber
-          min={0}
-          max={r.quantity_dispatched}
-          value={r.quantity_received}
-          onChange={(val) => handleReceivedQtyChange(r.key, val)}
-          style={{ width: '100%' }}
-          disabled={!!dispatch?.delivery_acknowledged || dispatch?.is_ready_for_acknowledgement === false}
-        />
-      )
-    },
-    {
-      title: 'Serial Numbers',
-      key: 'serial_numbers',
-      width: 150,
-      render: (_, r) => {
-        if (dispatch?.delivery_acknowledged) {
-          return (r.serial_numbers || []).length > 0 ? (
-            <Space wrap>{(r.serial_numbers || []).map(s => <Tag key={s} color="blue">{s}</Tag>)}</Space>
-          ) : <span style={{ color: '#94a3b8' }}>—</span>;
-        }
-        // Collect union of dispatched serials across all splits of this material
-        const dispatchedSerials = (dispatch?.items || [])
-          .filter(item => item.material_id === r.material_id)
-          .reduce((acc, item) => [...acc, ...(item.serial_numbers || [])], []);
-
-        return (
-          <SerialNumbersModal
-            value={r.serial_numbers || []}
-            onChange={(updated) => handleSerialNumbersChange(r.key, updated)}
-            itemName={r.material_name}
-            itemCode={r.material_code}
-            quantity={Math.round(Number(r.quantity_received || 0))}
-            hasSerial={r.has_serial || (dispatchedSerials && dispatchedSerials.length > 0)}
-            size="small"
-            mode="select"
-            availableSerials={dispatchedSerials}
-            width={640}
-          />
-        );
+  const getStatusValidation = () => {
+    if (activeScanType === 'package' && packageData) {
+      if (['UNPACKED', 'PARTIALLY_UNPACKED', 'RECEIVED', 'PARTIALLY_RECEIVED'].includes(packageData.status)) {
+        return { disabled: true, text: 'Package Already Unpacked', type: 'success', message: 'Already Acknowledged', description: `This package (${packageData.package_number}) has already been unpacked and acknowledged (${packageData.status}).` };
       }
-    },
-    {
-      title: 'Remarks',
-      key: 'remarks',
-      render: (_, r) => (
-        <Input
-          placeholder="Enter item condition or short notes..."
-          value={r.remarks}
-          onChange={(e) => handleRemarksChange(r.key, e.target.value)}
-          style={{ width: '100%' }}
-          disabled={!!dispatch?.delivery_acknowledged || dispatch?.is_ready_for_acknowledgement === false}
-        />
-      )
+      if (packageData.status === 'DRAFT') {
+        return { disabled: true, text: 'Cannot Acknowledge (DRAFT)', type: 'warning', message: 'Not Dispatched Yet', description: `This package (${packageData.package_number}) is in DRAFT status and has not been dispatched yet.` };
+      }
+      // Enforce two-step: check parent consignment status from packageData
+      const parentStatus = packageData.consignment_status;
+      if (parentStatus && !['CONSIGNMENT_RECEIVED', 'PARTIALLY_UNPACKED'].includes(parentStatus)) {
+        return {
+          disabled: true,
+          text: 'Acknowledge Consignment First',
+          type: 'warning',
+          message: 'Consignment Not Yet Acknowledged',
+          description: `Please scan consignment ${packageData.consignment_number || ''} and confirm its delivery before acknowledging individual packages. Current consignment status: '${parentStatus}'.`
+        };
+      }
+      if (!['PACKED', 'IN_TRANSIT', 'DELIVERED', 'CONSIGNMENT_RECEIVED'].includes(packageData.status)) {
+        return { disabled: true, text: `Cannot Acknowledge (${packageData.status})`, type: 'error', message: 'Invalid Status', description: `Cannot acknowledge package in '${packageData.status}' status.` };
+      }
+      return { disabled: false, text: 'Acknowledge Package & Sync Stock' };
     }
-  ];
+    if (activeScanType === 'consignment' && consignmentData) {
+      if (['UNPACKED', 'RECEIVED'].includes(consignmentData.status)) {
+        return { disabled: true, text: 'All Packages Unpacked', type: 'success', message: 'Fully Received', description: `All packages in consignment ${consignmentData.consignment_number} have been unpacked and acknowledged.` };
+      }
+      if (consignmentData.status === 'PARTIALLY_UNPACKED') {
+        return { disabled: true, text: 'Partially Unpacked — Scan Packages', type: 'info', message: 'Partially Unpacked', description: `Some packages in ${consignmentData.consignment_number} have been unpacked. Scan individual packages to continue.` };
+      }
+      if (consignmentData.status === 'CONSIGNMENT_RECEIVED') {
+        return { disabled: true, text: 'Consignment Already Received', type: 'success', message: 'Delivery Confirmed', description: `Consignment ${consignmentData.consignment_number} has been received. Scan individual packages to unpack and sync inventory.` };
+      }
+      if (consignmentData.status === 'DRAFT') {
+        return { disabled: true, text: 'Cannot Deliver (DRAFT)', type: 'warning', message: 'Not Dispatched Yet', description: `This consignment (${consignmentData.consignment_number}) is in DRAFT status and has not been dispatched yet.` };
+      }
+      if (!['PACKED', 'IN_TRANSIT'].includes(consignmentData.status)) {
+        return { disabled: true, text: `Cannot Deliver (${consignmentData.status})`, type: 'error', message: 'Invalid Status', description: `Cannot transition consignment in '${consignmentData.status}' status.` };
+      }
+      return { disabled: false, text: 'Confirm Consignment Delivery' };
+    }
+    return { disabled: true, text: 'Acknowledge & Sync Stock' };
+  };
+
+  const validation = getStatusValidation();
+  const isActionDisabled = validation.disabled;
 
   return (
     <div style={{ padding: '28px', background: 'radial-gradient(ellipse at top, #f8fafc 0%, #f1f5f9 80%)', minHeight: '100vh', color: '#334155' }}>
       <PageHeader
         title="Delivery Acknowledgement"
-        subtitle="Verify outbound dispatch shipments, check quantities,and submit digital POD proofs."
+        subtitle="Packaging-wise receipt, barcode/QR scans, digital signature uploads, and instant stock ledger postings."
       >
         <Space>
-          <Button onClick={() => navigate('/logistics/dispatch')} icon={<ArrowLeftOutlined />}>
-            Back to Plans
+          <Button onClick={() => navigate('/logistics/consignments')} icon={<ArrowLeftOutlined />}>
+            Back to Consignments
           </Button>
-          {!dispatch?.delivery_acknowledged && (
+          {(consignmentData || packageData) && (
             <Button
               type="primary"
               icon={<CheckCircleOutlined />}
               loading={submitting}
-              disabled={dispatch && (dispatch.is_ready_for_acknowledgement === false || hasPendingCustody)}
+              disabled={isActionDisabled}
               onClick={handleSubmit}
-              style={{ background: 'linear-gradient(135deg, #4f46e5 0%, #3730a3 100%)', borderColor: 'transparent', fontWeight: 'bold' }}
+              style={{
+                background: isActionDisabled ? '#cbd5e1' : 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                borderColor: 'transparent',
+                fontWeight: 'bold',
+                color: isActionDisabled ? '#94a3b8' : '#ffffff',
+                cursor: isActionDisabled ? 'not-allowed' : 'pointer'
+              }}
             >
-              Acknowledge Dispatch
+              {validation.text}
             </Button>
           )}
         </Space>
       </PageHeader>
 
-      <Row gutter={[20, 20]}>
-        {/* Step 1: Operating Location & Dispatch Search */}
+      <Form form={form} layout="vertical" style={{ width: '100%' }}>
+        <Row gutter={[20, 20]}>
+        {/* Step 1: Operating Location & Scan Input */}
         <Col span={24}>
           <Card
-            title={<span style={{ color: '#0f172a', fontWeight: 800 }}>Search SCM Dispatch</span>}
+            title={<span style={{ color: '#0f172a', fontWeight: 800 }}><BarcodeOutlined style={{ marginRight: 8, color: '#4f46e5' }} />Scan Barcode or QR Code</span>}
             size="small"
             style={{ borderRadius: '12px', border: '1px solid #cbd5e1', boxShadow: '0 4px 12px rgba(0,0,0,0.03)' }}
           >
-            <Row gutter={24}>
-              <Col xs={24} md={12}>
+            <Row gutter={24} align="middle">
+              <Col xs={24} md={10}>
                 <Form.Item label={<span style={{ color: '#475569', fontWeight: 600 }}>Operating Warehouse</span>} style={{ marginBottom: 0 }}>
                   <Select
                     showSearch
                     placeholder="Select operating warehouse location..."
                     value={selectedWarehouseId}
-                    onChange={(val) => {
-                      setSelectedWarehouseId(val);
-                      setSelectedDispatchId(null);
-                    }}
+                    onChange={(val) => setSelectedWarehouseId(val)}
                     options={warehouses.map(w => ({ label: `${w.name} (${w.code})`, value: w.id }))}
                     style={{ width: '100%' }}
                     filterOption={(input, option) => (option?.label ?? '').toLowerCase().includes(input.toLowerCase())}
@@ -558,124 +373,381 @@ const AcknowledgeDelivery = () => {
                 </Form.Item>
               </Col>
 
-              <Col xs={24} md={12}>
-                <Form.Item label={<span style={{ color: '#4f46e5', fontWeight: 600 }}>Select Dispatch Number</span>} style={{ marginBottom: 0 }}>
-                  <Select
-                    showSearch
-                    placeholder="Search by Dispatch No..."
-                    value={selectedDispatchId}
-                    onChange={(val) => setSelectedDispatchId(val)}
-                    options={filteredDispatches.map(d => ({
-                      label: `${d.dispatch_id} (To: ${d.destination_warehouse_name || d.destination_user_name || 'Client Drop'})`,
-                      value: d.id
-                    }))}
+              <Col xs={24} md={14}>
+                <Form.Item label={<span style={{ color: '#4f46e5', fontWeight: 700 }}>Scan Consignment or Package Code</span>} style={{ marginBottom: 0 }}>
+                  <Input.Search
+                    placeholder="Scan consignment barcode (e.g. CON-AP-...) or package barcode (e.g. PKG-AP-...)"
+                    value={barcodeInput}
+                    onChange={(e) => setBarcodeInput(e.target.value)}
+                    onSearch={() => handleScan()}
+                    enterButton={
+                      <Button type="primary" style={{ background: '#4f46e5', borderColor: '#4f46e5' }}>
+                        Load Package
+                      </Button>
+                    }
+                    loading={loading}
+                    size="large"
                     style={{ width: '100%' }}
-                    filterOption={(input, option) => (option?.label ?? '').toLowerCase().includes(input.toLowerCase())}
                   />
                 </Form.Item>
               </Col>
             </Row>
           </Card>
         </Col>
-        {dispatch && dispatch.is_ready_for_acknowledgement === false && (
-          <Col span={24}>
-            <Alert
-              message="Awaiting Transporter/Driver Arrival"
-              description={dispatch.transporter_status_message || "The transporter has not yet reported arrival at the destination for the vehicle carrying this dispatch order. Consignee receipt acknowledgment is locked until the vehicle has gated out and reported arrival."}
-              type="warning"
-              showIcon
-              style={{ borderRadius: '12px', border: '1px solid #ffe58f', background: '#fffbe6' }}
-            />
+
+        {loading && (
+          <Col span={24} style={{ textAlign: 'center', padding: '40px' }}>
+            <Spin size="large" tip="Reading scanned barcode details...">
+              <div style={{ minHeight: '30px' }} />
+            </Spin>
           </Col>
         )}
 
-        {dispatch && hasPendingCustody && (
+        {/* ── Case A: Consignment Scanned ── */}
+        {activeScanType === 'consignment' && consignmentData && (
           <Col span={24}>
-            <Alert
-              message="Intermediate Custody Transfers Pending"
-              description={
-                <div>
-                  This is a Multi-Level Dispatch, and intermediate custody handovers must be completed before final receipt sign-off.
-                  <div style={{ marginTop: 8 }}>
-                    <strong>Pending Steps:</strong>
-                    <ul style={{ margin: '4px 0 0 0', paddingLeft: 20 }}>
-                      {custodyChain.filter(step => step.status === 'pending').map(step => (
-                        <li key={step.id}>
-                          {step.role_name || step.position_name} ({step.employee_name})
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                </div>
-              }
-              type="error"
-              showIcon
-              style={{ borderRadius: '12px' }}
-            />
-          </Col>
-        )}
-
-        {dispatch ? (
-          <>
-            {/* Step 2: Dispatch Shipment details */}
-            <Col span={24}>
-              <Card
-                title={<span style={{ color: '#0f172a', fontWeight: 800 }}>2. Shipment Manifest Summary</span>}
-                size="small"
-                style={{ borderRadius: '12px', border: '1px solid #cbd5e1', boxShadow: '0 4px 12px rgba(0,0,0,0.03)' }}
-              >
-                <Row gutter={[24, 12]} style={{ fontSize: '13px' }}>
-                  <Col xs={12} md={6}>
-                    <Text type="secondary" style={{ display: 'block', fontSize: '11px', textTransform: 'uppercase' }}>Dispatch Number</Text>
-                    <strong style={{ color: '#0f172a', fontSize: '14px', fontFamily: 'monospace' }}>{dispatch.dispatch_id}</strong>
-                  </Col>
-                  <Col xs={12} md={6}>
-                    <Text type="secondary" style={{ display: 'block', fontSize: '11px', textTransform: 'uppercase' }}>Recipient / Destination</Text>
-                    <strong style={{ color: '#0f172a', fontSize: '14px' }}>
-                      {dispatch.destination_warehouse_name || dispatch.destination_user_name || 'SCM drop site'}
-                    </strong>
-                  </Col>
-                  <Col xs={12} md={6}>
-                    <Text type="secondary" style={{ display: 'block', fontSize: '11px', textTransform: 'uppercase' }}>Status</Text>
-                    <div>
-                      <Tag color="orange" style={{ fontWeight: 'bold' }}>{dispatch.status}</Tag>
+            <Row gutter={[20, 20]}>
+              {['CONSIGNMENT_RECEIVED', 'UNPACKED', 'PARTIALLY_UNPACKED', 'RECEIVED', 'PARTIALLY_RECEIVED'].includes(consignmentData.status) && (
+                <Col span={24}>
+                  <Alert
+                    message={
+                      consignmentData.status === 'CONSIGNMENT_RECEIVED' ? "Step 1 Complete — Confirm Individual Packages"
+                      : consignmentData.status === 'UNPACKED' ? "All Packages Unpacked"
+                      : consignmentData.status === 'PARTIALLY_UNPACKED' ? "Partially Unpacked — Scan Remaining Packages"
+                      : "Already Acknowledged"
+                    }
+                    description={
+                      consignmentData.status === 'CONSIGNMENT_RECEIVED'
+                        ? `Consignment ${consignmentData.consignment_number} has been received. Now scan each package individually to record accepted/rejected quantities and synchronize inventory.`
+                        : consignmentData.status === 'UNPACKED'
+                        ? `All packages in consignment ${consignmentData.consignment_number} have been unpacked and stock has been posted to the destination warehouse.`
+                        : consignmentData.status === 'PARTIALLY_UNPACKED'
+                        ? `Some packages in ${consignmentData.consignment_number} have been unpacked. Scan remaining packages to complete the process.`
+                        : `This consignment (${consignmentData.consignment_number}) has already been acknowledged and received.`
+                    }
+                    type={['CONSIGNMENT_RECEIVED', 'PARTIALLY_UNPACKED'].includes(consignmentData.status) ? 'info' : 'success'}
+                    showIcon
+                    style={{ borderRadius: '12px' }}
+                  />
+                </Col>
+              )}
+              <Col span={24}>
+                <Alert
+                  message="Consignment Scanned"
+                  description={
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      <div>Scanned code matches Consignment: <strong>{consignmentData.consignment_number}</strong>. Click <strong>Confirm Consignment Delivery</strong> to mark the consignment as received (Step 1). Then scan individual packages to unpack and sync inventory (Step 2).</div>
+                      <div style={{ background: '#ffffff', padding: '6px 12px', borderRadius: '6px', border: '1px solid #e2e8f0', display: 'inline-block', width: 'fit-content' }}>
+                        👤 <strong>Expected Receiver:</strong> {consignmentData.receiver_name || '—'} ({consignmentData.receiver_employee_code || '—'}) 
+                        <Divider type="vertical" />
+                        💼 <strong>Position Code:</strong> <Tag color="purple">{consignmentData.receiver_position_code || '—'}</Tag>
+                      </div>
                     </div>
-                  </Col>
-                  <Col xs={12} md={6}>
-                    <Text type="secondary" style={{ display: 'block', fontSize: '11px', textTransform: 'uppercase' }}>Dispatch Method</Text>
-                    <div>
-                      <Tag color="blue" style={{ fontWeight: 'bold' }}>{dispatch.dispatch_type || 'THIRD_PARTY'}</Tag>
-                    </div>
-                  </Col>
-                </Row>
-              </Card>
-            </Col>
-
-            {/* Step 3: Material Line Items Verification */}
-            <Col span={24}>
-              <Card
-                title={<span style={{ color: '#0f172a', fontWeight: 800 }}>3. Materials Receipt Check</span>}
-                size="small"
-                style={{ borderRadius: '12px', border: '1px solid #cbd5e1', boxShadow: '0 4px 12px rgba(0,0,0,0.03)' }}
-              >
-                <Table
-                  dataSource={groupedItems}
-                  columns={columns}
-                  pagination={false}
-                  bordered
-                  className="logistics-dark-subtable"
+                  }
+                  type="info"
+                  showIcon
+                  style={{ borderRadius: '12px' }}
                 />
-              </Card>
-            </Col>
+              </Col>
 
-            {/* Step 4: Secure Digital POD Evidence */}
+              <Col xs={24} md={8}>
+                <Card title="Consignment QR" style={{ borderRadius: '12px', border: '1px solid #cbd5e1', textAlign: 'center' }}>
+                  <QRCodeSVG value={consignmentData.parent_package_barcode || consignmentData.parent_package_code} size={150} includeMargin={true} />
+                  <div style={{ marginTop: '12px', fontFamily: 'monospace', fontWeight: 700, fontSize: '15px' }}>{consignmentData.parent_package_code}</div>
+                  <Text type="secondary">Consignment Reference: {consignmentData.consignment_number}</Text>
+                </Card>
+              </Col>
+
+              <Col xs={24} md={16}>
+                <Card title="Consignment Hierarchy & Packages" style={{ borderRadius: '12px', border: '1px solid #cbd5e1' }}>
+                  <Collapse 
+                    defaultActiveKey={['0']} 
+                    expandIconPosition="end" 
+                    items={(consignmentData.packages || []).map((pkg, idx) => ({
+                      key: idx.toString(),
+                      label: (
+                        <Space>
+                          <GiftOutlined style={{ color: '#4f46e5' }} />
+                          <strong>{pkg.package_number}</strong>
+                          <Tag color="blue">{pkg.package_type}</Tag>
+                          <span style={{ fontSize: '12px', color: '#64748b' }}>Weight: {pkg.gross_weight_kg || 0} kg</span>
+                        </Space>
+                      ),
+                      children: (
+                        <div>
+                          <Descriptions column={2} size="small" style={{ marginBottom: 12 }}>
+                            <Descriptions.Item label="Seal Number">{pkg.seal_number || 'No Seal'}</Descriptions.Item>
+                            <Descriptions.Item label="Items Count">{pkg.material_count || 0}</Descriptions.Item>
+                            <Descriptions.Item label="Package Status"><Tag>{pkg.status}</Tag></Descriptions.Item>
+                          </Descriptions>
+                          <div style={{ padding: '8px', background: '#f8fafc', borderRadius: '8px', fontSize: '12px', color: '#475569' }}>
+                            ℹ️ All items inside this package will be bulk accepted at packed quantity on submit.
+                          </div>
+                        </div>
+                      )
+                    }))}
+                  />
+                </Card>
+              </Col>
+            </Row>
+          </Col>
+        )}
+
+        {/* ── Case B: Single Package Scanned ── */}
+        {activeScanType === 'package' && packageData && (
+          <Col span={24}>
+            <Row gutter={[20, 20]}>
+              {['UNPACKED', 'PARTIALLY_UNPACKED', 'RECEIVED', 'PARTIALLY_RECEIVED'].includes(packageData.status) && (
+                <Col span={24}>
+                  <Alert
+                    message="Package Already Unpacked"
+                    description={`This package (${packageData.package_number}) has already been unpacked and acknowledged (${packageData.status}).`}
+                    type="success"
+                    showIcon
+                    style={{ borderRadius: '12px' }}
+                  />
+                </Col>
+              )}
+              {packageData.consignment_status && !['CONSIGNMENT_RECEIVED', 'PARTIALLY_UNPACKED'].includes(packageData.consignment_status) && !['UNPACKED', 'PARTIALLY_UNPACKED', 'RECEIVED', 'PARTIALLY_RECEIVED'].includes(packageData.status) && (
+                <Col span={24}>
+                  <Alert
+                    message="Step 1 Required: Acknowledge Consignment First"
+                    description={`Consignment ${packageData.consignment_number || ''} must be acknowledged as received before you can unpack individual packages. Current consignment status: '${packageData.consignment_status}'. Scan the consignment barcode first.`}
+                    type="warning"
+                    showIcon
+                    style={{ borderRadius: '12px' }}
+                  />
+                </Col>
+              )}
+              <Col span={24}>
+                <Card title={<span><GiftOutlined style={{ color: '#4f46e5', marginRight: 8 }} />Package Manifest: {packageData.package_number}</span>} style={{ borderRadius: '12px', border: '1px solid #cbd5e1' }}>
+                  <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+                    <Col xs={12} md={4}>
+                      <Text type="secondary">Package Number</Text>
+                      <div style={{ fontWeight: 700, fontFamily: 'monospace' }}>{packageData.package_number}</div>
+                    </Col>
+                    <Col xs={12} md={4}>
+                      <Text type="secondary">Package Type</Text>
+                      <div><Tag color="cyan">{packageData.package_type}</Tag></div>
+                    </Col>
+                    <Col xs={12} md={4}>
+                      <Text type="secondary">Expected Receiver</Text>
+                      <div style={{ fontWeight: 600 }}>{packageData.receiver_name || '—'} ({packageData.receiver_employee_code || '—'})</div>
+                    </Col>
+                    <Col xs={12} md={4}>
+                      <Text type="secondary">Receiver Position</Text>
+                      <div><Tag color="purple">{packageData.receiver_position_code || '—'}</Tag></div>
+                    </Col>
+                    <Col xs={12} md={4}>
+                      <Text type="secondary">Gross Weight</Text>
+                      <div style={{ fontWeight: 600 }}>{packageData.gross_weight_kg || 0} KG</div>
+                    </Col>
+                    <Col xs={12} md={4}>
+                      <Text type="secondary">Seal Number</Text>
+                      <div style={{ fontWeight: 600 }}>{packageData.seal_number || 'N/A'}</div>
+                    </Col>
+                  </Row>
+
+                  <Table
+                    dataSource={packageData.items || []}
+                    rowKey="id"
+                    pagination={false}
+                    size="small"
+                    bordered
+                    columns={[
+                      { title: 'Material Name', dataIndex: 'material_name', key: 'name' },
+                      { title: 'Material Code', dataIndex: 'material_code', key: 'code', render: t => <span style={{ fontFamily: 'monospace' }}>{t}</span> },
+                      { title: 'Batch', dataIndex: 'batch_number', key: 'batch', render: t => t || '—' },
+                      { title: 'Packed Qty', dataIndex: 'quantity_packed', key: 'packed_qty', render: v => <span style={{ fontWeight: 700 }}>{v}</span> },
+                      {
+                        title: 'Received Qty',
+                        key: 'qty_received',
+                        render: (_, r) => (
+                          <Form.Item name={`qty_rec_${r.id}`} initialValue={r.quantity_packed} style={{ marginBottom: 0 }}>
+                            <InputNumber
+                              min={0}
+                              max={r.quantity_packed}
+                              size="small"
+                              style={{ width: '80px' }}
+                              onChange={v => {
+                                const accVal = form.getFieldValue(`qty_acc_${r.id}`) || 0;
+                                if (accVal > (v || 0)) {
+                                  form.setFieldsValue({ [`qty_acc_${r.id}`]: v || 0 });
+                                  const serials = r.serial_numbers || [];
+                                  if (serials.length > 0) {
+                                    if (v === r.quantity_packed) {
+                                      form.setFieldsValue({ [`serials_rec_${r.id}`]: r.serial_numbers });
+                                    } else {
+                                      form.setFieldsValue({ [`serials_rec_${r.id}`]: [] });
+                                    }
+                                  }
+                                }
+                              }}
+                            />
+                          </Form.Item>
+                        )
+                      },
+                      {
+                        title: 'Accepted Qty',
+                        key: 'qty_accepted',
+                        render: (_, r) => (
+                          <Form.Item noStyle dependencies={[`qty_rec_${r.id}`]}>
+                            {() => {
+                              const recVal = form.getFieldValue(`qty_rec_${r.id}`) ?? r.quantity_packed;
+                              return (
+                                <Form.Item name={`qty_acc_${r.id}`} initialValue={r.quantity_packed} style={{ marginBottom: 0 }}>
+                                  <InputNumber
+                                    min={0}
+                                    max={recVal}
+                                    size="small"
+                                    style={{ width: '80px' }}
+                                    onChange={v => {
+                                      const serials = r.serial_numbers || [];
+                                      if (serials.length > 0) {
+                                        const currentSerials = form.getFieldValue(`serials_rec_${r.id}`) || [];
+                                        if (currentSerials.length !== v) {
+                                          if (v === r.quantity_packed) {
+                                            form.setFieldsValue({ [`serials_rec_${r.id}`]: r.serial_numbers });
+                                          } else {
+                                            form.setFieldsValue({ [`serials_rec_${r.id}`]: [] });
+                                          }
+                                        }
+                                      }
+                                    }}
+                                  />
+                                </Form.Item>
+                              );
+                            }}
+                          </Form.Item>
+                        )
+                      },
+                      {
+                        title: 'Condition',
+                        key: 'condition',
+                        render: (_, r) => (
+                          <Form.Item name={`condition_${r.id}`} initialValue="GOOD" style={{ marginBottom: 0 }}>
+                            <Select size="small" style={{ width: '120px' }}>
+                              <Option value="GOOD">Good</Option>
+                              <Option value="DAMAGED">Damaged</Option>
+                              <Option value="DEFECTIVE">Defective</Option>
+                              <Option value="EXPIRED">Expired</Option>
+                              <Option value="WRONG_ITEM">Wrong Item</Option>
+                            </Select>
+                          </Form.Item>
+                        )
+                      },
+                      {
+                        title: 'Serial / Asset Codes',
+                        key: 'serials',
+                        width: 250,
+                        render: (_, r) => {
+                          if (!r.serial_numbers || r.serial_numbers.length === 0) return <span style={{ color: '#94a3b8' }}>—</span>;
+                          const isAsset = r.material_type === 'asset';
+                          const label = isAsset ? 'Codes' : 'Serials';
+                          return (
+                            <Form.Item name={`serials_rec_${r.id}`} initialValue={r.serial_numbers} style={{ marginBottom: 0 }}>
+                              <Form.Item noStyle dependencies={[`serials_rec_${r.id}`]}>
+                                {() => {
+                                  const current = form.getFieldValue(`serials_rec_${r.id}`) || [];
+                                  const count = current.length;
+                                  return (
+                                    <Button
+                                      size="small"
+                                      type={count > 0 ? "primary" : "dashed"}
+                                      icon={<BarcodeOutlined />}
+                                      onClick={() => {
+                                        setActiveRow(r);
+                                        setModalOpen(true);
+                                      }}
+                                      style={{
+                                        borderRadius: '20px',
+                                        fontWeight: 600,
+                                        fontSize: '11px',
+                                        background: count > 0 ? '#16a34a' : undefined,
+                                        borderColor: count > 0 ? '#16a34a' : undefined,
+                                      }}
+                                    >
+                                      {count > 0 ? `${count} ${label} Received` : `Select ${label}`}
+                                    </Button>
+                                  );
+                                }}
+                              </Form.Item>
+                            </Form.Item>
+                          );
+                        }
+                      },
+                      {
+                        title: 'Asset/Consumable Codes',
+                        key: 'asset_codes',
+                        render: (_, r) => {
+                          const isAsset = r.material_type === 'asset';
+                          const isConsumable = r.material_type === 'consumable';
+                          if (!isAsset && !isConsumable) return <span style={{ color: '#94a3b8' }}>—</span>;
+                          return (
+                            <Form.Item noStyle dependencies={[`serials_rec_${r.id}`]}>
+                              {() => {
+                                const currentSerials = form.getFieldValue(`serials_rec_${r.id}`) || r.serial_numbers || [];
+                                if (currentSerials.length === 0) return <span style={{ color: '#94a3b8' }}>—</span>;
+                                const matCode = r.material_code || '';
+                                const prefix = matCode ? `${matCode}-1-` : '';
+                                const parsed = currentSerials.map(s => {
+                                  if (prefix && s.startsWith(prefix)) {
+                                     return s;
+                                  }
+                                  return `${prefix}${s}`;
+                                });
+
+                                const visible = parsed.slice(0, 4);
+                                const remainingCount = parsed.length - 4;
+                                const tooltipContent = (
+                                  <div style={{ maxHeight: '200px', overflowY: 'auto', padding: '4px' }}>
+                                    <div style={{ fontWeight: 700, marginBottom: '6px', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                                      All {parsed.length} Codes:
+                                    </div>
+                                    <Space wrap size={[4, 4]}>
+                                      {parsed.map(s => (
+                                        <Tag key={s} color={isAsset ? "cyan" : "orange"} style={{ margin: 0, fontSize: '11px' }}>{s}</Tag>
+                                      ))}
+                                    </Space>
+                                  </div>
+                                );
+
+                                return (
+                                  <Tooltip title={tooltipContent} color="#0f172a" placement="topLeft" overlayStyle={{ maxWidth: '340px' }}>
+                                    <Space wrap style={{ cursor: 'pointer' }}>
+                                      {visible.map(s => (
+                                        <Tag key={s} color={isAsset ? "cyan" : "orange"}>{s}</Tag>
+                                      ))}
+                                      {remainingCount > 0 && (
+                                        <Tag color="default" style={{ fontWeight: 700, border: '1px dashed #cbd5e1' }}>
+                                          + {remainingCount} more
+                                        </Tag>
+                                      )}
+                                    </Space>
+                                  </Tooltip>
+                                );
+                              }}
+                            </Form.Item>
+                          );
+                        }
+                      }
+                    ]}
+                  />
+                </Card>
+              </Col>
+            </Row>
+          </Col>
+        )}
+
+        {/* ── Steps 4 & 5: Receiver details, digital signature ── */}
+        {(consignmentData || packageData) && (
+          <>
             <Col xs={24} md={12}>
               <Card
-                title={<span style={{ color: '#0f172a', fontWeight: 800 }}>4. Signatory Credentials</span>}
+                title={<span style={{ color: '#0f172a', fontWeight: 800 }}><SafetyCertificateOutlined style={{ marginRight: 8, color: '#10b981' }} />Signatory Details</span>}
                 size="small"
                 style={{ borderRadius: '12px', border: '1px solid #cbd5e1', boxShadow: '0 4px 12px rgba(0,0,0,0.03)', height: '100%' }}
               >
-                <Form form={form} layout="vertical">
                   <Row gutter={16}>
                     <Col span={12}>
                       <Form.Item
@@ -683,7 +755,16 @@ const AcknowledgeDelivery = () => {
                         label={<span style={{ fontWeight: 600 }}>Receiver Name</span>}
                         rules={[{ required: true, message: 'Receiver name is required' }]}
                       >
-                        <Input placeholder="E.g., Nilesh Patil" disabled={!!dispatch?.delivery_acknowledged || dispatch?.is_ready_for_acknowledgement === false} />
+                        <Input placeholder="E.g., Nilesh Patil" />
+                      </Form.Item>
+                    </Col>
+                    <Col span={12}>
+                      <Form.Item
+                        name="acknowledged_by_employee_code"
+                        label={<span style={{ fontWeight: 600 }}>Receiver Emp Code</span>}
+                        rules={[{ required: true, message: 'Employee code is required' }]}
+                      >
+                        <Input placeholder="E.g., EMP023" />
                       </Form.Item>
                     </Col>
                     <Col span={12}>
@@ -692,170 +773,175 @@ const AcknowledgeDelivery = () => {
                         label={<span style={{ fontWeight: 600 }}>Contact Number</span>}
                         rules={[{ required: true, message: 'Phone number is required' }]}
                       >
-                        <Input placeholder="E.g., 9988001122" disabled={!!dispatch?.delivery_acknowledged || dispatch?.is_ready_for_acknowledgement === false} />
+                        <Input placeholder="E.g., 9988001122" />
                       </Form.Item>
                     </Col>
                     <Col span={12}>
                       <Form.Item name="acknowledged_by_designation" label="Designation">
-                        <Input placeholder="E.g., Store In-Charge" disabled={!!dispatch?.delivery_acknowledged || dispatch?.is_ready_for_acknowledgement === false} />
+                        <Input placeholder="E.g., Storekeeper" />
                       </Form.Item>
                     </Col>
                     <Col span={12}>
                       <Form.Item name="acknowledged_by_department" label="Department">
-                        <Input placeholder="E.g., Warehouse Ops" disabled={!!dispatch?.delivery_acknowledged || dispatch?.is_ready_for_acknowledgement === false} />
+                        <Input placeholder="E.g., Warehouse Ops" />
                       </Form.Item>
                     </Col>
                     <Col span={12}>
-                      <Form.Item name="receiver_id_proof_type" label="ID Proof Type">
-                        <Select disabled={!!dispatch?.delivery_acknowledged || dispatch?.is_ready_for_acknowledgement === false}>
-                          <Select.Option value="NONE">None</Select.Option>
-                          <Select.Option value="AADHAR">Aadhar Card</Select.Option>
-                          <Select.Option value="PAN">PAN Card</Select.Option>
-                          <Select.Option value="EMPLOYEE_ID">Employee ID Card</Select.Option>
+                      <Form.Item name="packaging_condition" label="Packaging Condition" initialValue="INTACT">
+                        <Select>
+                          <Option value="INTACT">Intact</Option>
+                          <Option value="DAMAGED">Damaged / Broken</Option>
                         </Select>
                       </Form.Item>
                     </Col>
                     <Col span={12}>
-                      <Form.Item name="receiver_id_proof_number" label="ID Proof Number">
-                        <Input placeholder="Enter ID characters" disabled={!!dispatch?.delivery_acknowledged || dispatch?.is_ready_for_acknowledgement === false} />
+                      <Form.Item name="seal_intact" label="Seal Intact?" valuePropName="checked" initialValue={true}>
+                        <Select>
+                          <Option value={true}>Yes</Option>
+                          <Option value={false}>No</Option>
+                        </Select>
                       </Form.Item>
                     </Col>
                     <Col span={24}>
-                      <Form.Item name="actual_delivery_location" label="Delivery Bin / drop-off Address">
-                        <Input placeholder="E.g., Main Yard, Sector 4 Bin" disabled={!!dispatch?.delivery_acknowledged || dispatch?.is_ready_for_acknowledgement === false} />
+                      <Form.Item name="remarks" label="Remarks / Discrepancy details">
+                        <TextArea rows={2} placeholder="Add package remarks, condition, or short receipt notes..." />
                       </Form.Item>
                     </Col>
                   </Row>
-                </Form>
               </Card>
             </Col>
 
             <Col xs={24} md={12}>
               <Card
-                title={<span style={{ color: '#0f172a', fontWeight: 800 }}>5. Secure Signature & Photos Evidence</span>}
+                title={<span style={{ color: '#0f172a', fontWeight: 800 }}><PictureOutlined style={{ marginRight: 8, color: '#0ea5e9' }} />Signature & Photo Proof</span>}
                 size="small"
                 style={{ borderRadius: '12px', border: '1px solid #cbd5e1', boxShadow: '0 4px 12px rgba(0,0,0,0.03)', height: '100%' }}
               >
-                <Form form={form} layout="vertical">
-                  {/* Upload Signature Proof / Stamp Photo */}
-                  <Form.Item label={<span style={{ fontWeight: 600, fontSize: '13px' }}>📝 Receiver Signature / Stamp Photo</span>}>
-                    {!dispatch?.delivery_acknowledged && dispatch?.is_ready_for_acknowledgement !== false && (
-                      <Upload
-                        maxCount={1}
-                        accept="image/*"
-                        customRequest={async ({ file, onSuccess, onError }) => {
-                          try {
-                            await handleUploadFile(file, 'signature_image');
-                            onSuccess(null, file);
-                          } catch (err) {
-                            onError(err);
-                          }
+                  <Form.Item label={<span style={{ fontWeight: 600, fontSize: '13px' }}>📝 Receiver Signature / Stamp Photo</span>} required>
+                    <Upload
+                      maxCount={1}
+                      accept="image/*"
+                      customRequest={async ({ file, onSuccess, onError }) => {
+                        try {
+                          await handleUploadFile(file, 'signature_image');
+                          onSuccess(null, file);
+                        } catch (err) {
+                          onError(err);
+                        }
+                      }}
+                      showUploadList={false}
+                    >
+                      <Button
+                        icon={<UploadOutlined />}
+                        style={{
+                          background: uploadedUrls.signature_image ? 'linear-gradient(135deg,#10b981,#059669)' : 'linear-gradient(135deg,#4f46e5,#3730a3)',
+                          color: '#fff',
+                          borderColor: 'transparent',
+                          fontWeight: 600,
+                          borderRadius: '8px',
+                          height: '40px',
+                          paddingInline: '20px'
                         }}
-                        showUploadList={false}
                       >
-                        <Button
-                          icon={<UploadOutlined />}
-                          style={{
-                            background: uploadedUrls.signature_image ? 'linear-gradient(135deg,#16a34a,#15803d)' : 'linear-gradient(135deg,#4f46e5,#3730a3)',
-                            color: '#fff',
-                            borderColor: 'transparent',
-                            fontWeight: 600,
-                            borderRadius: '8px',
-                            height: '40px',
-                            paddingInline: '20px'
-                          }}
-                        >
-                          {uploadedUrls.signature_image ? '✓ Signature Uploaded — Click to Replace' : 'Upload Signature / Stamp Photo'}
-                        </Button>
-                      </Upload>
-                    )}
+                        {uploadedUrls.signature_image ? '✓ Signature Uploaded — Click to Replace' : 'Upload Signature / Stamp'}
+                      </Button>
+                    </Upload>
                   </Form.Item>
 
                   {uploadedUrls.signature_image && (
                     <div style={{ marginBottom: '20px', background: 'linear-gradient(135deg,#f0fdf4,#dcfce7)', padding: '16px', borderRadius: '12px', border: '2px solid #86efac' }}>
                       <span style={{ display: 'block', fontSize: '11px', fontWeight: 700, color: '#166534', marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                        {dispatch?.delivery_acknowledged ? '✓ Saved Signature Proof — Click image to zoom' : '✓ Signature Preview — Click image to zoom'}
+                        Signature Preview
                       </span>
-                      <Image.PreviewGroup>
-                        <Image
-                          src={uploadedUrls.signature_image}
-                          alt="Receiver Signature Proof"
-                          style={{ width: '100%', maxHeight: '260px', objectFit: 'contain', borderRadius: '8px', border: '2px solid #86efac', background: '#fff', display: 'block' }}
-                          preview={{ mask: <span style={{ fontSize: '13px', fontWeight: 600 }}>🔍 Click to Zoom</span> }}
-                        />
-                      </Image.PreviewGroup>
+                      <Image
+                        src={uploadedUrls.signature_image}
+                        alt="Receiver Signature"
+                        style={{ width: '100%', maxHeight: '200px', objectFit: 'contain', borderRadius: '8px', background: '#fff', display: 'block' }}
+                        preview={{ mask: <span style={{ fontSize: '13px', fontWeight: 600 }}>🔍 Zoom</span> }}
+                      />
                     </div>
                   )}
 
-                  {/* Upload Material Photos */}
                   <Form.Item label={<span style={{ fontWeight: 600, fontSize: '13px' }}>📦 Materials Condition Photo Evidence</span>}>
-                    {!dispatch?.delivery_acknowledged && dispatch?.is_ready_for_acknowledgement !== false && (
-                      <Upload
-                        maxCount={1}
-                        accept="image/*"
-                        customRequest={async ({ file, onSuccess, onError }) => {
-                          try {
-                            await handleUploadFile(file, 'materials_photos');
-                            onSuccess(null, file);
-                          } catch (err) {
-                            onError(err);
-                          }
+                    <Upload
+                      maxCount={1}
+                      accept="image/*"
+                      customRequest={async ({ file, onSuccess, onError }) => {
+                        try {
+                          await handleUploadFile(file, 'materials_photos');
+                          onSuccess(null, file);
+                        } catch (err) {
+                          onError(err);
+                        }
+                      }}
+                      showUploadList={false}
+                    >
+                      <Button
+                        icon={<UploadOutlined />}
+                        style={{
+                          background: uploadedUrls.materials_photos ? 'linear-gradient(135deg,#10b981,#059669)' : 'linear-gradient(135deg,#0ea5e9,#0284c7)',
+                          color: '#fff',
+                          borderColor: 'transparent',
+                          fontWeight: 600,
+                          borderRadius: '8px',
+                          height: '40px',
+                          paddingInline: '20px'
                         }}
-                        showUploadList={false}
                       >
-                        <Button
-                          icon={<UploadOutlined />}
-                          style={{
-                            background: uploadedUrls.materials_photos ? 'linear-gradient(135deg,#16a34a,#15803d)' : 'linear-gradient(135deg,#0891b2,#0e7490)',
-                            color: '#fff',
-                            borderColor: 'transparent',
-                            fontWeight: 600,
-                            borderRadius: '8px',
-                            height: '40px',
-                            paddingInline: '20px'
-                          }}
-                        >
-                          {uploadedUrls.materials_photos ? '✓ Photo Uploaded — Click to Replace' : 'Upload Materials Condition Photo'}
-                        </Button>
-                      </Upload>
-                    )}
+                        {uploadedUrls.materials_photos ? '✓ Photo Uploaded — Click to Replace' : 'Upload Condition Photo'}
+                      </Button>
+                    </Upload>
                   </Form.Item>
 
                   {uploadedUrls.materials_photos && (
-                    <div style={{ marginBottom: '20px', background: 'linear-gradient(135deg,#f0f9ff,#e0f2fe)', padding: '16px', borderRadius: '12px', border: '2px solid #7dd3fc' }}>
+                    <div style={{ background: 'linear-gradient(135deg,#f0f9ff,#e0f2fe)', padding: '16px', borderRadius: '12px', border: '2px solid #7dd3fc' }}>
                       <span style={{ display: 'block', fontSize: '11px', fontWeight: 700, color: '#075985', marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                        {dispatch?.delivery_acknowledged ? '✓ Saved Materials Photo Evidence — Click image to zoom' : '✓ Materials Photo Preview — Click image to zoom'}
+                        Materials Condition Preview
                       </span>
-                      <Image.PreviewGroup>
-                        <Image
-                          src={uploadedUrls.materials_photos}
-                          alt="Materials Condition Evidence"
-                          style={{ width: '100%', maxHeight: '280px', objectFit: 'contain', borderRadius: '8px', border: '2px solid #7dd3fc', background: '#fff', display: 'block' }}
-                          preview={{ mask: <span style={{ fontSize: '13px', fontWeight: 600 }}>🔍 Click to Zoom</span> }}
-                        />
-                      </Image.PreviewGroup>
+                      <Image
+                        src={uploadedUrls.materials_photos}
+                        alt="Materials Condition"
+                        style={{ width: '100%', maxHeight: '200px', objectFit: 'contain', borderRadius: '8px', background: '#fff', display: 'block' }}
+                        preview={{ mask: <span style={{ fontSize: '13px', fontWeight: 600 }}>🔍 Zoom</span> }}
+                      />
                     </div>
                   )}
-
-                  {uploadedUrls.materials_photos && (
-                    <Form.Item name="photo_review" label={<span style={{ fontWeight: 600 }}>Photo Condition Assessment Remarks</span>} rules={[{ required: !dispatch?.delivery_acknowledged, message: 'Please describe the condition visible in the photo' }]}>
-                      <TextArea rows={3} placeholder="E.g., Checked items inside box; packaging intact, no leakage found, all serial tags visible." disabled={!!dispatch?.delivery_acknowledged} />
-                    </Form.Item>
-                  )}
-                </Form>
               </Card>
             </Col>
           </>
-        ) : (
+        )}
+
+        {/* ── Initial Selection Place Holder ── */}
+        {!consignmentData && !packageData && (
           <Col span={24}>
-            <Card style={{ borderRadius: '12px', border: '1px dashed #cbd5e1', textAlign: 'center', padding: '40px' }}>
-              <SearchOutlined style={{ fontSize: '32px', color: '#94a3b8', marginBottom: '12px' }} />
-              <Title level={5} style={{ margin: 0, color: '#64748b' }}>Awaiting SCM Dispatch Selection</Title>
-              <Text type="secondary">Select your operating location and search a dispatch order to begin confirmation process.</Text>
+            <Card style={{ borderRadius: '12px', border: '1px dashed #cbd5e1', textAlign: 'center', padding: '60px 40px' }}>
+              <BarcodeOutlined style={{ fontSize: '48px', color: '#94a3b8', marginBottom: '16px' }} />
+              <Title level={4} style={{ margin: 0, color: '#475569', fontWeight: 700 }}>Awaiting Barcode Scanner Input</Title>
+              <Text type="secondary" style={{ display: 'block', marginTop: '8px', fontSize: '14px' }}>
+                Please select your operating warehouse location and scan the barcode of a Consignment (delivery confirmation) or a Package to start the verification and acknowledgement pipeline.
+              </Text>
             </Card>
           </Col>
         )}
       </Row>
+      </Form>
+      {activeRow && (
+        <AssetCodesTreeModal
+          open={modalOpen}
+          onCancel={() => {
+            setModalOpen(false);
+            setActiveRow(null);
+          }}
+          onSave={handleSaveModalCodes}
+          selectedCodes={form.getFieldValue(`serials_rec_${activeRow.id}`) || []}
+          rawRows={mockRawRows}
+          itemCode={activeRow.material_code || ''}
+          itemName={activeRow.material_name || ''}
+          itemType={activeRow.material_type || 'asset'}
+          targetQty={form.getFieldValue(`qty_acc_${activeRow.id}`) ?? activeRow.quantity_packed}
+          autoSelectOnOpen={false}
+        />
+      )}
     </div>
   );
 };

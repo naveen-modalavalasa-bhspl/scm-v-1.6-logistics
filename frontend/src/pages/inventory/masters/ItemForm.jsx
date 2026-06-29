@@ -867,10 +867,10 @@ const ItemForm = () => {
                       <Col span={8}>
                         <Form.Item
                           name="item_type"
-                          label="Item Type"
-                          rules={[{ required: true, message: 'Select item type' }]}
+                          label="Item Class"
+                          rules={[{ required: true, message: 'Select item class' }]}
                         >
-                          <Select placeholder="Select type" options={itemTypeOptions} />
+                          <Select placeholder="Select class" options={itemTypeOptions} />
                         </Form.Item>
                       </Col>
                       <Col span={8}>

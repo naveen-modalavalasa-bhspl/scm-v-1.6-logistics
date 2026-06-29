@@ -11,6 +11,36 @@ from app.services.auth_service import verify_access_token
 import hashlib
 import json
 from datetime import datetime, timezone
+import time
+
+
+class SimpleTTLCache:
+    def __init__(self, ttl_seconds: float = 30.0):
+        self.ttl = ttl_seconds
+        self.cache = {}
+
+    def get(self, key):
+        if key in self.cache:
+            val, expiry = self.cache[key]
+            if time.time() < expiry:
+                return val
+            else:
+                del self.cache[key]
+        return None
+
+    def set(self, key, value):
+        self.cache[key] = (value, time.time() + self.ttl)
+
+    def invalidate(self, key):
+        self.cache.pop(key, None)
+
+    def clear(self):
+        self.cache.clear()
+
+
+_PERMISSIONS_CACHE = SimpleTTLCache(ttl_seconds=30.0)
+_USER_WAREHOUSES_CACHE = SimpleTTLCache(ttl_seconds=30.0)
+_WAREHOUSE_DESCENDANTS_CACHE = SimpleTTLCache(ttl_seconds=60.0)
 
 # Carrier model is imported lazily inside get_current_carrier_user to avoid
 # import-cycles between dependencies and the carrier router.
@@ -159,6 +189,11 @@ async def get_user_permissions(db: AsyncSession, user_id: int) -> List[str]:
     if not role_codes:
         return []
 
+    cache_key = (user_id, tuple(role_codes))
+    cached = _PERMISSIONS_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
     result = await db.execute(
         select(Permission.module, Permission.action, Permission.resource)
         .join(RolePermission, RolePermission.permission_id == Permission.id)
@@ -173,7 +208,9 @@ async def get_user_permissions(db: AsyncSession, user_id: int) -> List[str]:
         # has exactly two separator dots.
         return (s or "").replace(".", "_")
 
-    return [f"{_clean(p[0])}.{_clean(p[1])}.{_clean(p[2])}" for p in permissions]
+    res = [f"{_clean(p[0])}.{_clean(p[1])}.{_clean(p[2])}" for p in permissions]
+    _PERMISSIONS_CACHE.set(cache_key, res)
+    return res
 
 
 async def get_user_role_codes(db: AsyncSession, user_id: int) -> List[str]:
@@ -183,23 +220,40 @@ async def get_user_role_codes(db: AsyncSession, user_id: int) -> List[str]:
 
     BUG-AUTH-080 fix: filter on Role.is_active.
     """
-    user_res = await db.execute(select(User.active_role_id).where(User.id == user_id))
-    active_role_id = user_res.scalar_one_or_none()
+    from sqlalchemy import inspect
+    user = db.identity_map.get((User, user_id))
+    
+    raw_codes = None
+    if user is not None:
+        active_role_id = user.active_role_id
+        if 'roles' not in inspect(user).unloaded:
+            if active_role_id is not None:
+                for ur in user.roles:
+                    if ur.role and ur.role.id == active_role_id and ur.role.is_active:
+                        raw_codes = [ur.role.code]
+                        break
+            else:
+                raw_codes = [ur.role.code for ur in user.roles if ur.role and ur.role.is_active]
 
-    if active_role_id is not None:
-        result = await db.execute(
-            select(Role.code)
-            .where(Role.id == active_role_id)
-            .where(Role.is_active == True)  # noqa: E712
-        )
-    else:
-        result = await db.execute(
-            select(Role.code)
-            .join(UserRole, UserRole.role_id == Role.id)
-            .where(UserRole.user_id == user_id)
-            .where(Role.is_active == True)  # noqa: E712
-        )
-    raw_codes = [row[0] for row in result.all()]
+    if raw_codes is None:
+        user_res = await db.execute(select(User.active_role_id).where(User.id == user_id))
+        active_role_id = user_res.scalar_one_or_none()
+
+        if active_role_id is not None:
+            result = await db.execute(
+                select(Role.code)
+                .where(Role.id == active_role_id)
+                .where(Role.is_active == True)  # noqa: E712
+            )
+        else:
+            result = await db.execute(
+                select(Role.code)
+                .join(UserRole, UserRole.role_id == Role.id)
+                .where(UserRole.user_id == user_id)
+                .where(Role.is_active == True)  # noqa: E712
+            )
+        raw_codes = [row[0] for row in result.all()]
+
     normalized_codes = []
     for code in raw_codes:
         normalized_codes.append(code)
@@ -545,8 +599,17 @@ async def user_warehouse_ids(db: AsyncSession, user_id: int) -> List[int]:
     from app.models.settings_master import Employee, Position
     from sqlalchemy import or_
 
-    user_res = await db.execute(select(User.active_role_id).where(User.id == user_id))
-    active_role_id = user_res.scalar_one_or_none()
+    user = db.identity_map.get((User, user_id))
+    if user is not None:
+        active_role_id = user.active_role_id
+    else:
+        user_res = await db.execute(select(User.active_role_id).where(User.id == user_id))
+        active_role_id = user_res.scalar_one_or_none()
+
+    cache_key = (user_id, active_role_id)
+    cached = _USER_WAREHOUSES_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
 
     # Check if the user holds a STOREKEEPER position
     pos_res = await db.execute(
@@ -595,10 +658,13 @@ async def user_warehouse_ids(db: AsyncSession, user_id: int) -> List[int]:
         mapped = [row[0] for row in result.all()]
         if central_wh_id not in mapped:
             mapped.append(central_wh_id)
+        _USER_WAREHOUSES_CACHE.set(cache_key, mapped)
         return mapped
 
     result = await db.execute(stmt)
-    return [row[0] for row in result.all()]
+    mapped = [row[0] for row in result.all()]
+    _USER_WAREHOUSES_CACHE.set(cache_key, mapped)
+    return mapped
 
 
 async def get_warehouse_and_descendants(db: AsyncSession, warehouse_ids: List[int]) -> List[int]:
@@ -606,6 +672,11 @@ async def get_warehouse_and_descendants(db: AsyncSession, warehouse_ids: List[in
     if not warehouse_ids:
         return []
     
+    cache_key = tuple(sorted(warehouse_ids))
+    cached = _WAREHOUSE_DESCENDANTS_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
     from app.models.warehouse import Warehouse
     # Load active parent-child relationships
     result = await db.execute(
@@ -630,7 +701,9 @@ async def get_warehouse_and_descendants(db: AsyncSession, warehouse_ids: List[in
                 descendants.add(child)
                 queue.append(child)
                 
-    return list(descendants)
+    res = list(descendants)
+    _WAREHOUSE_DESCENDANTS_CACHE.set(cache_key, res)
+    return res
 
 
 async def get_user_warehouse_scope_ids(
@@ -693,6 +766,26 @@ async def get_current_carrier_user(
             detail="Invalid or expired token",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    
+    # Check server-side token blocklist
+    try:
+        from app.models.user import TokenBlocklist
+        token = credentials.credentials
+        token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        bl_res = await db.execute(
+            select(TokenBlocklist.id).where(TokenBlocklist.token_hash == token_hash).limit(1)
+        )
+        if bl_res.scalar_one_or_none() is not None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token has been revoked",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+    except HTTPException:
+        raise
+    except Exception:
+        pass
+
     if not payload.get("carrier_portal"):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -735,6 +828,26 @@ async def get_current_vendor_user(
             detail="Invalid or expired token",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    
+    # Check server-side token blocklist
+    try:
+        from app.models.user import TokenBlocklist
+        token = credentials.credentials
+        token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        bl_res = await db.execute(
+            select(TokenBlocklist.id).where(TokenBlocklist.token_hash == token_hash).limit(1)
+        )
+        if bl_res.scalar_one_or_none() is not None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token has been revoked",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+    except HTTPException:
+        raise
+    except Exception:
+        pass
+
     if not payload.get("vendor_portal"):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

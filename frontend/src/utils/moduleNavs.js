@@ -47,7 +47,7 @@ export const MODULE_NAVS = {
           { label: 'User Mapping', path: '/inventory/masters/user-material-mapping' },
           { label: 'UOM', path: '/inventory/masters/uom' },
           { label: 'Brands', path: '/inventory/masters/brands' },
-          { label: 'Item Types', path: '/inventory/masters/item-types' },
+          { label: 'Item Classes', path: '/inventory/masters/item-types' },
           { label: 'Attributes', path: '/inventory/masters/item-attributes' },
           { label: 'Attribute Mapping', path: '/inventory/masters/category-attribute-mapping' },
           { label: 'Specs', path: '/inventory/masters/specs' },
@@ -127,6 +127,7 @@ export const MODULE_NAVS = {
       { label: 'Service Orders', path: '/logistics/so' },
       { label: 'Gating Checkpoints', path: '/logistics/so-gating' },
       { label: 'Acknowledge Delivery', path: '/logistics/so-acknowledge' },
+      { label: 'Consignments', path: '/logistics/consignments' },
     ],
   },
   consumption: {
