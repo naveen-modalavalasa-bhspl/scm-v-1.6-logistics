@@ -38,26 +38,39 @@ function ProgressRing({ filled, needed, size = 52 }) {
 
 /* ─── single serial input row to prevent controlled lag ────────────────── */
 function SerialInput({ index, initialValue, onUpdate, onDelete }) {
-  const [val, setVal] = useState(initialValue || '');
+  const inputRef = useRef(null);
+  const [hasVal, setHasVal] = useState(!!initialValue);
 
   useEffect(() => {
-    setVal(initialValue || '');
+    if (inputRef.current) {
+      const elem = inputRef.current.input || inputRef.current;
+      if (elem) {
+        elem.value = initialValue || '';
+      }
+      setHasVal(!!initialValue);
+    }
   }, [initialValue]);
 
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
       <span style={{
         width: 24, height: 24, borderRadius: 6, flexShrink: 0,
-        background: val?.trim() ? '#dcfce7' : '#f1f5f9',
-        border: `1px solid ${val?.trim() ? '#86efac' : '#cbd5e1'}`,
+        background: hasVal ? '#dcfce7' : '#f1f5f9',
+        border: `1px solid ${hasVal ? '#86efac' : '#cbd5e1'}`,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
-        color: val?.trim() ? '#15803d' : '#64748b', fontSize: 10, fontWeight: 700,
+        color: hasVal ? '#15803d' : '#64748b', fontSize: 10, fontWeight: 700,
       }}>{index + 1}</span>
       <Input
+        ref={inputRef}
         className="serial-number-input-field"
         placeholder={`Serial #${index + 1}`}
-        value={val}
-        onChange={(e) => setVal(e.target.value)}
+        defaultValue={initialValue || ''}
+        onChange={(e) => {
+          const has = !!e.target.value.trim();
+          if (has !== hasVal) {
+            setHasVal(has);
+          }
+        }}
         onBlur={(e) => onUpdate(e.target.value)}
         onPressEnter={(e) => {
           onUpdate(e.target.value);
@@ -71,7 +84,7 @@ function SerialInput({ index, initialValue, onUpdate, onDelete }) {
           }, 80);
         }}
         style={{ flex: 1, borderRadius: 6, fontFamily: 'monospace', fontSize: 12 }}
-        suffix={val?.trim() ? <CheckCircleFilled style={{ color: '#16a34a', fontSize: 12 }} /> : null}
+        suffix={hasVal ? <CheckCircleFilled style={{ color: '#16a34a', fontSize: 12 }} /> : null}
       />
       <Button
         type="text" danger icon={<DeleteOutlined />}
