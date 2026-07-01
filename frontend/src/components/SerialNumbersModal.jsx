@@ -84,7 +84,17 @@ function SerialInput({ index, initialValue, onUpdate, onDelete }) {
           }, 80);
         }}
         style={{ flex: 1, borderRadius: 6, fontFamily: 'monospace', fontSize: 12 }}
-        suffix={hasVal ? <CheckCircleFilled style={{ color: '#16a34a', fontSize: 12 }} /> : null}
+        suffix={
+          <CheckCircleFilled 
+            style={{ 
+              color: '#16a34a', 
+              fontSize: 12, 
+              opacity: hasVal ? 1 : 0, 
+              transition: 'opacity 0.2s ease',
+              pointerEvents: 'none'
+            }} 
+          />
+        }
       />
       <Button
         type="text" danger icon={<DeleteOutlined />}
