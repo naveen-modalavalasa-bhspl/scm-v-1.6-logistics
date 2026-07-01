@@ -2742,6 +2742,7 @@ async def list_material_issues(
                 "expiry_date": b.expiry_date.isoformat() if (b and b.expiry_date) else None,
                 "has_batch": bool(item.item.has_batch) if item.item else False,
                 "has_serial": bool(item.item.has_serial) if item.item else False,
+                "serial_numbers": item.serial_numbers,
             })
         items_list.append(mi_dict)
     return build_paginated_response(items_list, total, page, page_size)
